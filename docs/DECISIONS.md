@@ -2,7 +2,7 @@
 
 ## D001 后端用 Go，前端用 React + TypeScript
 - 日期：2026-11-04
-- 理由：Go 适合流式 IO 和安全工具链（gosec、govulncheck）；与撮合引擎共用语言，降低学习成本；前端技术与简历一致
+- 理由：Go 适合流式 IO 和安全工具链（gosec、govulncheck）；与撮合引擎共用语言，降低学习成本；前端沿用已掌握的技术栈
 
 ## D002 只用 Web Crypto API 和成熟库
 - 日期：2026-11-04
