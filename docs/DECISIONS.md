@@ -27,3 +27,13 @@
 - Decision: lint the frontend with oxlint, the default of the current `create-vite` template, and format with Prettier
 - Rationale: one pinned dependency instead of the ESLint plugin set; the React hooks rules are built in; same rule set the official template ships with
 - Trade-off: a smaller rule catalogue than ESLint; revisit if a needed rule is missing
+
+## D007 Configuration through the standard library
+- Date: 2026-11-05
+- Decision: `internal/config` reads `VAULT_*` variables with `os.LookupEnv`; no configuration library
+- Rationale: fewer than ten settings; every invalid value is reported at startup; no extra dependency to justify
+
+## D008 Supported Go toolchain
+- Date: 2026-11-05
+- Decision: `go.mod` pins `go 1.27.3`, the current stable release
+- Rationale: Go 1.24 left support when Go 1.26 shipped and no longer receives security fixes; `GOTOOLCHAIN=auto` downloads the pinned version for any developer and CI reads it from `go.mod`
