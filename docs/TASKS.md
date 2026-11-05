@@ -4,7 +4,7 @@
 - [x] Create `web/` with Vite (React + TypeScript); configure ESLint, Prettier, Vitest
 - [x] Server directory layout: `internal/{api,store,blob,audit,config}`
 - [x] Configuration loading (environment variables) and `.env.example`
-- [ ] Add frontend tests and dependency scanning to CI
+- [x] Add frontend tests and dependency scanning to CI
 - [ ] Docker Compose: service plus Caddy reverse proxy (HTTPS)
 
 ## M1 Crypto Module (frontend; first and most important)
