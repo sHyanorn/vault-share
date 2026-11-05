@@ -4,6 +4,16 @@ Zero-knowledge, end-to-end encrypted file sharing. Files are encrypted in the br
 
 > Status: in development. See [docs/TASKS.md](docs/TASKS.md).
 
+## Quick start
+
+```bash
+docker compose up --build
+```
+
+Then open <https://localhost>. Caddy issues a locally trusted certificate for `localhost`; the browser will warn once unless you run `caddy trust`.
+
+For development without Docker: `cd server && go run ./cmd/vaultd` and `cd web && npm install && npm run dev`. Settings are documented in [.env.example](.env.example).
+
 ## Docs
 
 - [Specification](docs/SPEC.md)

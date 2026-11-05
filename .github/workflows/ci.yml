@@ -35,3 +35,13 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm audit --audit-level=high
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose up --build --detach --wait
+      - run: curl --fail --silent --show-error --insecure --retry 10 --retry-delay 2 --retry-connrefused https://localhost/healthz
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes
