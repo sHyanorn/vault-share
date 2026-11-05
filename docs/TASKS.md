@@ -3,7 +3,7 @@
 ## M0 Setup
 - [x] Create `web/` with Vite (React + TypeScript); configure ESLint, Prettier, Vitest
 - [ ] Server directory layout: `internal/{api,store,blob,audit,config}`
-- [ ] Configuration loading (environment variables) and `.env.example`
+- [x] Configuration loading (environment variables) and `.env.example`
 - [ ] Add frontend tests and dependency scanning to CI
 - [ ] Docker Compose: service plus Caddy reverse proxy (HTTPS)
 
