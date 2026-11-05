@@ -1,49 +1,49 @@
-# 威胁模型
+# Threat Model
 
-方法：STRIDE。每次功能变更时重新审视。
+Method: STRIDE. It is revised with every feature change.
 
-## 1. 资产
+## 1. Assets
 
-| 资产 | 敏感度 |
+| Asset | Sensitivity |
 |---|---|
-| 文件明文和文件名 | 最高 |
-| 主密钥 secret | 最高 |
-| 删除令牌 | 高 |
-| 密文 | 中（无密钥不可读，但大小和时间可被分析） |
-| 审计日志 | 中 |
+| File plaintext and file names | Highest |
+| Master key secret | Highest |
+| Delete token | High |
+| Ciphertext | Medium (unreadable without the key, but size and timing can be analyzed) |
+| Audit log | Medium |
 
-## 2. 信任边界
+## 2. Trust Boundaries
 
-1. 用户浏览器与网络之间
-2. 网络与服务器之间
-3. 服务器与存储之间
-4. 前端代码分发（服务器下发 JS 给浏览器）
+1. Between the user's browser and the network
+2. Between the network and the server
+3. Between the server and storage
+4. Frontend code delivery (the server serves JS to the browser)
 
-## 3. 攻击者
+## 3. Attackers
 
-- A1 网络窃听者
-- A2 拿到分享链接以外信息的普通外部攻击者
-- A3 获取了数据库和存储的攻击者
-- A4 完全控制服务器的攻击者
-- A5 恶意上传者（滥用服务传播恶意文件或耗尽资源）
+- A1 Network eavesdropper
+- A2 Ordinary external attacker holding information other than the share link
+- A3 Attacker who has obtained the database and storage
+- A4 Attacker in full control of the server
+- A5 Malicious uploader (abuses the service to spread malicious files or exhaust resources)
 
-## 4. 威胁与缓解
+## 4. Threats and Mitigations
 
-| 类别 | 威胁 | 缓解 | 状态 |
+| Category | Threat | Mitigation | Status |
 |---|---|---|---|
-| S 仿冒 | 未持有链接的人尝试下载 | authKey 挑战签名 | 待实现 |
-| T 篡改 | 修改或重排密文块 | AES-GCM 认证、块序号进 nonce、结束标记 | 待实现 |
-| R 抵赖 | 上传者否认上传 | 审计日志（哈希后的 IP） | 待实现 |
-| I 信息泄露 | 密钥通过 Referer 或日志泄露 | 密钥只在 URL 片段；Referrer-Policy: no-referrer；日志过滤 | 待实现 |
-| I 信息泄露 | 通过 404 与 403 区别探测文件是否存在 | 统一返回 404 | 待实现 |
-| I 信息泄露 | A3 读取数据库 | 只有密文和验证值，无密钥 | 设计已覆盖 |
-| D 拒绝服务 | 大量上传耗尽磁盘 | 大小限制、限流、过期清理、总容量配额 | 待实现 |
-| D 拒绝服务 | 暴力猜测口令 | 浏览器端 Argon2id 加服务端认证失败锁定 | 待实现 |
-| E 权限提升 | 路径穿越读取任意文件 | 文件 id 严格校验，存储路径不由用户输入拼接 | 待实现 |
-| E 权限提升 | XSS 窃取页面中的密钥 | 严格 CSP、无内联脚本、React 默认转义、不渲染用户 HTML | 待实现 |
+| S Spoofing | Someone without the link tries to download | authKey challenge signature | To do |
+| T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | To do |
+| R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
+| I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | To do |
+| I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | To do |
+| I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
+| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | To do |
+| D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
+| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input | To do |
+| E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | To do |
 
-## 5. 残余风险
+## 5. Residual Risks
 
-- A4 可下发恶意前端代码窃取密钥。这是所有网页端加密产品的共同局限，在 README 中说明
-- 文件大小和上传时间对服务器可见
-- 链接一旦泄露，持有者即可下载
+- A4 can serve malicious frontend code to steal keys. This limitation is shared by all web-based encryption products and must be stated in the README
+- File size and upload time are visible to the server
+- Once a link leaks, anyone holding it can download the file
