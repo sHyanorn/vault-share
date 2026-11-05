@@ -18,6 +18,7 @@ Method: STRIDE. It is revised with every feature change.
 2. Between the network and the server
 3. Between the server and storage
 4. Frontend code delivery (the server serves JS to the browser)
+5. Build and CI pipeline (GitHub Actions, npm and Go modules, container base images)
 
 ## 3. Attackers
 
@@ -33,6 +34,7 @@ Method: STRIDE. It is revised with every feature change.
 |---|---|---|---|
 | S Spoofing | Someone without the link tries to download | authKey challenge signature | To do |
 | T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | To do |
+| T Tampering | Compromised dependency, action or base image injects code at build time | Exact versions, commit SHAs and image digests; Dependabot; npm audit and govulncheck in CI; gosec and Semgrep in M4 | Partial (M0) |
 | R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
 | I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Partial (request log omits the query string) |
 | I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | To do |

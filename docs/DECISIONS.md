@@ -48,3 +48,8 @@
 - Date: 2026-11-05
 - Decision: the request log records method, path, status, size and duration; no query string, no client address
 - Rationale: download tokens travel in the query string (SPEC §7); client addresses belong in the audit log as salted hashes (M4)
+
+## D011 Supply chain pinning
+- Date: 2026-11-05
+- Decision: npm dependencies at exact versions, GitHub Actions at commit SHAs, container base images at digests, govulncheck at a fixed version; Dependabot opens weekly update PRs
+- Rationale: a tag can be moved by whoever controls the upstream; a SHA or digest cannot; Dependabot keeps the pins from rotting
