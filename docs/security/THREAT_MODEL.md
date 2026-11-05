@@ -34,12 +34,12 @@ Method: STRIDE. It is revised with every feature change.
 | S Spoofing | Someone without the link tries to download | authKey challenge signature | To do |
 | T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | To do |
 | R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
-| I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | To do |
+| I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Partial (request log omits the query string) |
 | I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | To do |
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
 | D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | To do |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
-| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input | To do |
+| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served from an `os.DirFS` root with no directory listing | Partial (static handler done, storage in M2) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | To do |
 
 ## 5. Residual Risks
