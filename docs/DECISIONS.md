@@ -21,3 +21,9 @@
 ## D005 Metadata database
 - Date: TBD
 - Decision: start with SQLite and switch to PostgreSQL if multi-instance deployment is needed; confirm at the start of M2
+
+## D006 oxlint instead of ESLint
+- Date: 2026-11-05
+- Decision: lint the frontend with oxlint, the default of the current `create-vite` template, and format with Prettier
+- Rationale: one pinned dependency instead of the ESLint plugin set; the React hooks rules are built in; same rule set the official template ships with
+- Trade-off: a smaller rule catalogue than ESLint; revisit if a needed rule is missing
