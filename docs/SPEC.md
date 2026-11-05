@@ -1,99 +1,99 @@
-# vault-share 项目规格
+# vault-share Specification
 
-## 1. 一句话介绍
+## 1. Summary
 
-一个零知识的端到端加密文件分享服务：文件在浏览器里加密后才上传，分享链接里带着密钥，服务器只保存密文，支持限时、限次和阅后即焚。
+A zero-knowledge, end-to-end encrypted file sharing service: files are encrypted in the browser before upload, the share link carries the key, and the server stores only ciphertext. Supports expiry, download limits and burn-after-reading.
 
-## 2. 要证明的能力
+## 2. Skills Demonstrated
 
-| 能力 | 体现在哪里 |
+| Skill | Where it shows |
 |---|---|
-| 密码学应用 | 分块 AES-GCM、HKDF 密钥派生、口令保护、URL 片段传密钥 |
-| 后端开发 | Go 服务、流式上传下载、数据库、定时清理、Docker 部署 |
-| 安全工程 | 威胁模型、安全响应头、限流、审计日志、依赖扫描 |
-| 安全测试 | 按 OWASP Top 10 自测并出报告 |
+| Applied cryptography | Chunked AES-GCM, HKDF key derivation, password protection, key delivery via URL fragment |
+| Backend development | Go service, streaming upload and download, database, scheduled cleanup, Docker deployment |
+| Security engineering | Threat model, security response headers, rate limiting, audit logging, dependency scanning |
+| Security testing | Self-assessment against the OWASP Top 10 with a written report |
 
-## 3. 功能范围
+## 3. Scope
 
-### 必做
+### Must have
 
-- 匿名上传：选择文件，浏览器内加密，上传密文，得到分享链接
-- 分享链接格式：`https://host/f/{fileId}#{key}`，`#` 后的密钥浏览器不会发给服务器
-- 设置过期时间（1 小时、1 天、7 天）和最大下载次数（1 到 100）
-- 阅后即焚：下载次数用完立即删除密文
-- 可选口令保护：口令在浏览器里派生出包裹密钥，服务器同样看不到
-- 删除令牌：上传者拿到一个删除链接，可提前删除
-- 文件名和类型也加密，服务器只知道密文大小
-- 后台定时清理过期文件
-- 单文件大小上限 1 GB（可配置），大文件分块流式处理，不在内存里一次性加载
+- Anonymous upload: choose a file, encrypt it in the browser, upload the ciphertext, get a share link
+- Share link format: `https://host/f/{fileId}#{key}`; the browser never sends the key after `#` to the server
+- Set an expiry time (1 hour, 1 day, 7 days) and a maximum download count (1 to 100)
+- Burn after reading: the ciphertext is deleted as soon as the download count is used up
+- Optional password protection: the password derives a wrapping key in the browser, so the server never sees it either
+- Delete token: the uploader receives a delete link to remove the file early
+- File name and type are encrypted too; the server knows only the ciphertext size
+- Scheduled background cleanup of expired files
+- Per-file size limit of 1 GB (configurable); large files are processed as streamed chunks and never loaded into memory all at once
 
-### 选做
+### Nice to have
 
-- 用户账户：Argon2id 口令哈希、HttpOnly 会话 Cookie、CSRF 防护、TOTP 两步验证
-- 登录用户查看和管理自己上传的文件
-- 一次分享多个文件
+- User accounts: Argon2id password hashing, HttpOnly session cookies, CSRF protection, TOTP two-factor authentication
+- Logged-in users can view and manage their own uploads
+- Share multiple files at once
 
-### 不做
+### Out of scope
 
-- 文件预览
-- 移动端原生应用
+- File preview
+- Native mobile apps
 
-## 4. 加密方案
+## 4. Encryption Scheme
 
-参考 Firefox Send 的公开设计，自己实现时必须对照理解每一步。
+Based on the public Firefox Send design. When implementing it, work through each step against that design and make sure it is understood.
 
-### 上传
+### Upload
 
-1. 浏览器生成 16 字节随机主密钥 `secret`
-2. 用 HKDF-SHA256 从 `secret` 派生三把密钥：
-   - `fileKey`：加密文件内容
-   - `metaKey`：加密文件名、类型等元数据
-   - `authKey`：下载时向服务器证明持有链接（服务器只保存其验证值）
-3. 文件按 64 KB 分块，每块用 AES-256-GCM 加密；nonce 由随机基值加块序号构成；最后一块带结束标记，防止截断攻击
-4. 元数据 JSON 用 `metaKey` 加密
-5. 上传密文、加密元数据和 `authKey` 的验证值
-6. 链接为 `/f/{id}#{base64url(secret)}`
+1. The browser generates a 16-byte random master key `secret`
+2. HKDF-SHA256 derives three keys from `secret`:
+   - `fileKey`: encrypts the file content
+   - `metaKey`: encrypts metadata such as file name and type
+   - `authKey`: proves possession of the link at download time (the server stores only its verifier)
+3. The file is split into 64 KB chunks, each encrypted with AES-256-GCM; the nonce is a random base value combined with the chunk index; the last chunk carries an end marker to prevent truncation attacks
+4. The metadata JSON is encrypted with `metaKey`
+5. Upload the ciphertext, the encrypted metadata and the `authKey` verifier
+6. The link is `/f/{id}#{base64url(secret)}`
 
-### 口令保护（可选）
+### Password protection (optional)
 
-- 用 Argon2id（浏览器端 WebAssembly 实现）从口令和随机盐派生包裹密钥
-- 用包裹密钥加密 `secret`，链接里不再直接带 `secret`
-- 下载者输入口令后解出 `secret`
+- Argon2id (browser-side WebAssembly implementation) derives a wrapping key from the password and a random salt
+- The wrapping key encrypts `secret`; the link no longer carries `secret` directly
+- The recipient enters the password to recover `secret`
 
-### 下载
+### Download
 
-1. 浏览器从 URL 片段读出 `secret`，派生出三把密钥
-2. 用 `authKey` 对服务器给的随机挑战签名，证明持有链接
-3. 服务器校验通过后，流式返回密文，并原子地扣减下载次数
-4. 浏览器边下载边解密，用 Streams API 直接保存，不在内存堆积
+1. The browser reads `secret` from the URL fragment and derives the three keys
+2. It signs a random challenge from the server with `authKey` to prove possession of the link
+3. Once verification succeeds, the server streams the ciphertext and atomically decrements the download count
+4. The browser decrypts while downloading and saves directly via the Streams API, without accumulating data in memory
 
-### 已知局限（写进威胁模型和 README）
+### Known limitations (to be documented in the threat model and README)
 
-- 网页版的加密代码由服务器下发，如果服务器被攻破，攻击者可以下发恶意代码。缓解：子资源完整性、严格 CSP、可复现构建，并在文档中坦诚说明
-- 链接泄露等于文件泄露，这是链接分享模式的固有特性
+- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: Subresource Integrity, strict CSP, reproducible builds, and candid documentation of the risk
+- A leaked link means a leaked file; this is inherent to link-based sharing
 
-## 5. 架构
+## 5. Architecture
 
 ```
-浏览器 (React)                       服务器 (Go)                 存储
-┌──────────────┐  HTTPS  ┌─────────────────────────┐
-│ crypto/      │────────▶│ 中间件：限流、安全头、日志   │
-│  Web Crypto  │ 只传密文 │ handlers：上传、下载、删除   │──▶ SQLite 或 PostgreSQL（元数据）
-│  Streams API │◀────────│ 清理任务（定时）            │──▶ 本地磁盘或 S3 兼容存储（密文）
-└──────────────┘         └─────────────────────────┘
+Browser (React)                  Server (Go)                                                 Storage
+┌──────────────┐      HTTPS      ┌──────────────────────────────────────────────────────┐
+│ crypto/      │────────────────▶│ Middleware: rate limiting, security headers, logging │
+│  Web Crypto  │ ciphertext only │ Handlers: upload, download, delete                   │──▶ SQLite or PostgreSQL (metadata)
+│  Streams API │◀────────────────│ Cleanup job (scheduled)                              │──▶ Local disk or S3-compatible storage (ciphertext)
+└──────────────┘                 └──────────────────────────────────────────────────────┘
 ```
 
-服务端技术：Go 标准库 `net/http` 加 `chi` 路由，`sqlc` 或手写参数化 SQL，`slog` 结构化日志。存储层定义接口，先实现本地磁盘，再实现 S3 兼容存储（用 MinIO 测试）。
+Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented first for local disk and then for S3-compatible storage (tested with MinIO).
 
-## 6. 数据模型
+## 6. Data Model
 
 ```
 files
-  id               TEXT PRIMARY KEY  -- 128 位随机，base64url
+  id               TEXT PRIMARY KEY  -- 128-bit random, base64url
   size_bytes       INTEGER
   meta_ciphertext  BLOB
   auth_verifier    BLOB
-  owner_token_hash BLOB              -- 删除令牌的哈希
+  owner_token_hash BLOB              -- hash of the delete token
   has_password     BOOLEAN
   password_salt    BLOB NULL
   downloads_left   INTEGER
@@ -104,50 +104,50 @@ audit_log
   id, event_type, file_id, ip_hash, user_agent_hash, created_at
 ```
 
-审计日志中的 IP 只存加盐哈希，兼顾追溯与隐私。
+The audit log stores IPs only as salted hashes, balancing traceability and privacy.
 
-## 7. 接口
+## 7. API
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/files` | 创建上传，返回 id 和上传地址 |
-| PUT | `/api/v1/files/{id}/content` | 流式上传密文 |
-| GET | `/api/v1/files/{id}/meta` | 返回加密元数据和认证挑战 |
-| POST | `/api/v1/files/{id}/download` | 提交挑战签名，返回一次性下载令牌 |
-| GET | `/api/v1/files/{id}/content?token=` | 流式下载密文 |
-| DELETE | `/api/v1/files/{id}` | 用删除令牌删除 |
-| GET | `/healthz` | 健康检查 |
+| POST | `/api/v1/files` | Create an upload; returns the id and upload URL |
+| PUT | `/api/v1/files/{id}/content` | Stream the ciphertext upload |
+| GET | `/api/v1/files/{id}/meta` | Return the encrypted metadata and an auth challenge |
+| POST | `/api/v1/files/{id}/download` | Submit the challenge signature; returns a one-time download token |
+| GET | `/api/v1/files/{id}/content?token=` | Stream the ciphertext download |
+| DELETE | `/api/v1/files/{id}` | Delete using the delete token |
+| GET | `/healthz` | Health check |
 
-所有错误统一返回 `{"error":{"code":"...","message":"..."}}`。不存在、已过期、令牌错误返回同样的 404，避免泄露文件是否存在。
+All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexistent files, expired files and wrong tokens all return the same 404, so file existence is not revealed.
 
-## 8. 安全控制清单
+## 8. Security Controls
 
-- HTTPS（本地用 Caddy 自动证书或自签证书）
-- 安全响应头：严格 CSP（禁止内联脚本）、HSTS、X-Content-Type-Options、Referrer-Policy: no-referrer、Permissions-Policy
-- 限流：按 IP 的令牌桶，上传和下载认证分别设限
-- 下载认证失败多次后锁定该文件一段时间
-- 请求体大小限制和超时设置
-- 文件 id 和令牌使用加密安全随机数
-- CI 中运行 gosec、govulncheck、npm audit、Semgrep，以及 OWASP ZAP 基线扫描
-- 容器以非 root 用户运行，只读文件系统，最小镜像
+- HTTPS (locally via Caddy automatic certificates or a self-signed certificate)
+- Security response headers: strict CSP (no inline scripts), HSTS, X-Content-Type-Options, Referrer-Policy: no-referrer, Permissions-Policy
+- Rate limiting: per-IP token bucket, with separate limits for uploads and download authentication
+- Lock a file for a period of time after repeated failed download authentication attempts
+- Request body size limits and timeouts
+- File ids and tokens use cryptographically secure random numbers
+- CI runs gosec, govulncheck, npm audit, Semgrep, and an OWASP ZAP baseline scan
+- Containers run as a non-root user, with a read-only filesystem and a minimal image
 
-## 9. 安全文档（交付重点）
+## 9. Security Documentation (key deliverable)
 
-- `docs/security/THREAT_MODEL.md`：用 STRIDE 方法分析，列出资产、信任边界、威胁、缓解措施、残余风险
-- `docs/security/TEST_REPORT.md`：按 OWASP Top 10 最新版逐项自测，写测试方法、结果、证据截图、修复情况
-- `docs/security/FINDINGS.md`：开发中发现的问题和修复记录
-- `SECURITY.md`：漏洞报告方式
+- `docs/security/THREAT_MODEL.md`: STRIDE analysis listing assets, trust boundaries, threats, mitigations and residual risks
+- `docs/security/TEST_REPORT.md`: item-by-item self-assessment against the latest OWASP Top 10, covering test method, results, screenshot evidence and remediation status
+- `docs/security/FINDINGS.md`: issues found during development and how they were fixed
+- `SECURITY.md`: how to report vulnerabilities
 
-## 10. 测试策略
+## 10. Testing Strategy
 
-- Go 单元测试和集成测试（含过期、次数用完、并发下载扣减的竞态测试）
-- 前端加密模块单元测试：加密后解密得到原文；篡改任意字节解密失败；截断密文解密失败
-- 端到端测试（Playwright）：上传、分享、下载、阅后即焚完整流程
-- 已知测试向量：HKDF 和 AES-GCM 用标准测试向量验证
+- Go unit and integration tests (including expiry, exhausted download counts, and race tests for concurrent download decrements)
+- Frontend crypto module unit tests: encrypting then decrypting yields the original plaintext; tampering with any byte makes decryption fail; truncated ciphertext makes decryption fail
+- End-to-end tests (Playwright): the full upload, share, download and burn-after-reading flow
+- Known test vectors: verify HKDF and AES-GCM against standard test vectors
 
-## 11. 交付物
+## 11. Deliverables
 
-- Docker compose 一键启动
-- 公开演示站点（限制文件大小和保留时间）
-- 英文 README：一句话介绍、加密流程图、演示 GIF、威胁模型摘要、已知局限
-- 第 9 节的全部安全文档
+- One-command startup with Docker Compose
+- Public demo site (with file size and retention limits)
+- English README: summary, encryption flow diagram, demo GIF, threat model summary, known limitations
+- All security documents listed in Section 9
