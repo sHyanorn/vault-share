@@ -37,3 +37,14 @@
 - Date: 2026-11-05
 - Decision: `go.mod` pins `go 1.27.3`, the current stable release
 - Rationale: Go 1.24 left support when Go 1.26 shipped and no longer receives security fixes; `GOTOOLCHAIN=auto` downloads the pinned version for any developer and CI reads it from `go.mod`
+
+## D009 vaultd serves the web client, Caddy only terminates TLS
+- Date: 2026-11-05
+- Decision: the built frontend is served by vaultd from `VAULT_WEB_DIR`; Caddy reverse proxies every request
+- Rationale: the security headers and CSP of M4 are then set in one place for both the API and the HTML, and trust boundary 4 (frontend code delivery) is owned by code under test; the Caddyfile stays three lines
+- Trade-off: Go serves static files less efficiently than Caddy; irrelevant at this scale
+
+## D010 Request logs carry the path but never the query string
+- Date: 2026-11-05
+- Decision: the request log records method, path, status, size and duration; no query string, no client address
+- Rationale: download tokens travel in the query string (SPEC §7); client addresses belong in the audit log as salted hashes (M4)
