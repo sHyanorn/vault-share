@@ -1,23 +1,23 @@
-# 技术决策记录
+# Technical Decision Log
 
-## D001 后端用 Go，前端用 React + TypeScript
-- 日期：2026-11-04
-- 理由：Go 适合流式 IO 和安全工具链（gosec、govulncheck）；与撮合引擎共用语言，降低学习成本；前端沿用已掌握的技术栈
+## D001 Go for the backend, React + TypeScript for the frontend
+- Date: 2026-11-04
+- Rationale: Go suits streaming IO and works well with security tooling (gosec, govulncheck); sharing a language with the matching engine lowers the learning cost; the frontend reuses an already familiar stack
 
-## D002 只用 Web Crypto API 和成熟库
-- 日期：2026-11-04
-- 理由：自己实现密码学原语极易出错；Web Crypto 由浏览器原生实现，速度快且经过审计
-- 备选：libsodium.js（功能更全，可在需要时引入）
+## D002 Use only the Web Crypto API and mature libraries
+- Date: 2026-11-04
+- Rationale: hand-rolled cryptographic primitives are highly error-prone; Web Crypto is implemented natively by the browser, fast and audited
+- Alternatives: libsodium.js (more complete; can be added if needed)
 
-## D003 密钥放在 URL 片段
-- 日期：2026-11-04
-- 理由：浏览器不会把片段发送给服务器，实现零知识；这是 Firefox Send 等产品的成熟做法
-- 代价：链接即凭证，需在文档中说明
+## D003 Key in the URL fragment
+- Date: 2026-11-04
+- Rationale: browsers do not send the fragment to the server, which enables zero knowledge; this is the established approach of products such as Firefox Send
+- Trade-off: the link is the credential; this must be stated in the documentation
 
-## D004 不区分"不存在"和"无权限"
-- 日期：2026-11-04
-- 理由：防止攻击者探测文件是否存在
+## D004 No distinction between "not found" and "forbidden"
+- Date: 2026-11-04
+- Rationale: prevents attackers from probing whether a file exists
 
-## D005 元数据库
-- 日期：待定
-- 决定：先用 SQLite，若需要部署多实例再换 PostgreSQL；M2 开始时确认
+## D005 Metadata database
+- Date: TBD
+- Decision: start with SQLite and switch to PostgreSQL if multi-instance deployment is needed; confirm at the start of M2
