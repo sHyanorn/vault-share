@@ -1,0 +1,6 @@
+# Caddy terminates TLS and proxies everything to vaultd. Certificates are
+# automatic: a locally trusted one for localhost, Let's Encrypt for real hosts.
+{$VAULT_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy vaultd:8080
+}

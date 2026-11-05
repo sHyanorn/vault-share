@@ -5,7 +5,7 @@
 - [x] Server directory layout: `internal/{api,store,blob,audit,config}`
 - [x] Configuration loading (environment variables) and `.env.example`
 - [x] Add frontend tests and dependency scanning to CI
-- [ ] Docker Compose: service plus Caddy reverse proxy (HTTPS)
+- [x] Docker Compose: service plus Caddy reverse proxy (HTTPS)
 
 ## M1 Crypto Module (frontend; first and most important)
 - [ ] HKDF derivation of fileKey, metaKey, authKey
