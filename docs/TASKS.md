@@ -36,7 +36,7 @@
 - [x] Audit logging
 - [x] Log redaction check
 - [x] Optional password protection (Argon2id WebAssembly)
-- [ ] Add gosec, govulncheck, Semgrep and ZAP baseline scan to CI
+- [x] Add gosec, govulncheck, Semgrep and ZAP baseline scan to CI
 - [ ] Update the status column of the threat model
 - [x] Delete link for the uploader (`/d/{id}#{token}`), so early deletion works after leaving the result page
 
