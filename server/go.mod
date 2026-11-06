@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	github.com/go-chi/chi/v5 v5.5.0
+	golang.org/x/time v0.16.0
 	modernc.org/sqlite v1.61.1
 )
 
@@ -56,7 +57,6 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261010193011-f71dc92da45e // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	golang.org/x/vuln v1.9.0 // indirect
 	google.golang.org/api v0.304.0 // indirect
