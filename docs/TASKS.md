@@ -27,8 +27,8 @@
 ## M3 Frontend Pages
 - [x] Upload page: drag and drop, progress bar, expiry and download-count options, copy link
 - [x] Download page: read the key from the fragment, decryption progress, save file
-- [ ] Error states: invalid link, expired, wrong password
-- [ ] Clean, Apple-style UI
+- [x] Error states: invalid link, expired, wrong password
+- [x] Clean, Apple-style UI
 
 ## M4 Security Hardening
 - [ ] Security response headers and strict CSP
