@@ -31,8 +31,8 @@
 - [x] Clean, Apple-style UI
 
 ## M4 Security Hardening
-- [ ] Security response headers and strict CSP
-- [ ] Rate limiting middleware and lockout after failed authentication
+- [x] Security response headers and strict CSP
+- [x] Rate limiting middleware and lockout after failed authentication
 - [x] Audit logging
 - [ ] Log redaction check
 - [ ] Optional password protection (Argon2id WebAssembly)
