@@ -38,10 +38,10 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | Done (M4: keyed hashes, 30-day retention, D018) |
 | I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Done (M4: no-referrer header, a test drives the whole flow and checks every log line) |
 | I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | Done (M2: every lookup, token and signature failure answers 404) |
-| I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
+| I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design (the audit key sits in the same data directory, so A3 can also invert IPv4 audit hashes, D018) |
 | D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M4: per-client rate limits on creation; no total quota yet, the disk is the limit) |
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
-| D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB, per-client lockout; offline guessing against the link remains, see D019) |
+| D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB bounds offline guessing; the lockout bounds signature forgery, a guess never reaches the server, see D019) |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
 
