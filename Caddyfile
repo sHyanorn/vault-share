@@ -5,6 +5,10 @@
 	http_port 8080
 	https_port 8443
 	admin off
+	# Clients that send no SNI (Java for single-label hosts) still get the site's certificate.
+	default_sni {$VAULT_DOMAIN:localhost}
+	# The container's filesystem is read-only; nothing to install the local root into.
+	skip_install_trust
 }
 
 {$VAULT_DOMAIN:localhost} {
