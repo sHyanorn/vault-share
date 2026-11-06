@@ -2,24 +2,35 @@ package blob
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"time"
 )
 
-// Disk stores each blob as root/<id>. An upload is written to root/tmp and
-// linked into place only once it is complete, so a reader never sees a
-// partial file and an existing blob is never replaced.
+const tmpDir = "tmp"
+
+// Disk stores each blob as <id> inside an os.Root, so no operation can reach
+// outside the directory even through a symlink. An upload is written to
+// tmp/ and linked into place only once it is complete, so a reader never
+// sees a partial file and an existing blob is never replaced.
 type Disk struct {
-	root string
+	root *os.Root
 }
 
-func NewDisk(root string) (*Disk, error) {
-	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o700); err != nil {
+func NewDisk(dir string) (*Disk, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := root.Mkdir(tmpDir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, err
 	}
 	return &Disk{root: root}, nil
@@ -29,13 +40,14 @@ func (d *Disk) Put(ctx context.Context, id string, size int64, r io.Reader) erro
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
-	tmp, err := os.CreateTemp(filepath.Join(d.root, "tmp"), "upload-*")
+	tmpName := tmpDir + "/upload-" + randomSuffix()
+	tmp, err := d.root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	// The temp name is dropped in every case; after a successful link the
 	// blob lives on under its own name.
-	defer os.Remove(tmp.Name())
+	defer d.root.Remove(tmpName) //nolint:errcheck // best effort
 	defer tmp.Close()
 
 	n, err := io.Copy(tmp, r)
@@ -51,20 +63,20 @@ func (d *Disk) Put(ctx context.Context, id string, size int64, r io.Reader) erro
 	if err := tmp.Sync(); err != nil {
 		return err
 	}
-	if err := os.Link(tmp.Name(), filepath.Join(d.root, id)); err != nil {
+	if err := d.root.Link(tmpName, id); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return ErrExists
 		}
 		return err
 	}
-	return syncDir(d.root)
+	return d.syncDir()
 }
 
 func (d *Disk) Open(_ context.Context, id string) (io.ReadCloser, error) {
 	if !ValidID(id) {
 		return nil, ErrInvalidID
 	}
-	f, err := os.Open(filepath.Join(d.root, id))
+	f, err := d.root.Open(id)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNotFound
 	}
@@ -75,7 +87,7 @@ func (d *Disk) Delete(_ context.Context, id string) error {
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
-	err := os.Remove(filepath.Join(d.root, id))
+	err := d.root.Remove(id)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -83,7 +95,7 @@ func (d *Disk) Delete(_ context.Context, id string) error {
 }
 
 func (d *Disk) Sweep(_ context.Context, before time.Time) error {
-	entries, err := os.ReadDir(filepath.Join(d.root, "tmp"))
+	entries, err := fs.ReadDir(d.root.FS(), tmpDir)
 	if err != nil {
 		return err
 	}
@@ -92,7 +104,7 @@ func (d *Disk) Sweep(_ context.Context, before time.Time) error {
 		if err != nil || !info.ModTime().Before(before) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(d.root, "tmp", entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := d.root.Remove(tmpDir + "/" + entry.Name()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("sweep %s: %w", entry.Name(), err)
 		}
 	}
@@ -100,11 +112,19 @@ func (d *Disk) Sweep(_ context.Context, before time.Time) error {
 }
 
 // syncDir makes the link durable.
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
+func (d *Disk) syncDir() error {
+	f, err := d.root.Open(".")
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	return f.Sync()
+}
+
+func randomSuffix() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand never fails on supported platforms
+	}
+	return hex.EncodeToString(b)
 }
