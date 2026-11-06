@@ -37,18 +37,57 @@ const (
 	lockoutWindow   = 15 * time.Minute
 	lockoutPeriod   = 15 * time.Minute
 
-	// Idle entries are dropped once the tables grow past this size.
+	// Past sweepAbove entries a table drops idle ones, at most once per
+	// sweepEvery; at maxEntries an arbitrary entry makes room. Memory and
+	// the cost of an insert therefore stay bounded whatever the key space.
 	sweepAbove = 10_000
+	maxEntries = 50_000
+	sweepEvery = time.Minute
 	idleAfter  = 30 * time.Minute
 )
 
+// table is a map that stays below max entries. Callers hold the lock.
+type table[V any] struct {
+	entries   map[string]V
+	stale     func(V, time.Time) bool
+	lastSweep time.Time
+	soft, max int
+}
+
+func newTable[V any](stale func(V, time.Time) bool) table[V] {
+	return table[V]{entries: map[string]V{}, stale: stale, soft: sweepAbove, max: maxEntries}
+}
+
+// makeRoom runs before an insert. Evicting an arbitrary entry can hand a
+// client a fresh bucket or end its lockout early; reaching that takes tens
+// of thousands of distinct keys, each of which is rate limited itself.
+func (t *table[V]) makeRoom(now time.Time) {
+	if len(t.entries) < t.soft {
+		return
+	}
+	if now.Sub(t.lastSweep) >= sweepEvery {
+		t.lastSweep = now
+		for key, v := range t.entries {
+			if t.stale(v, now) {
+				delete(t.entries, key)
+			}
+		}
+	}
+	for key := range t.entries { // map order is randomised
+		if len(t.entries) < t.max {
+			break
+		}
+		delete(t.entries, key)
+	}
+}
+
 // limiterSet keeps one token bucket per key.
 type limiterSet struct {
-	mu      sync.Mutex
-	entries map[string]*limiterEntry
-	limit   rate.Limit
-	burst   int
-	now     func() time.Time
+	mu    sync.Mutex
+	table table[*limiterEntry]
+	limit rate.Limit
+	burst int
+	now   func() time.Time
 }
 
 type limiterEntry struct {
@@ -57,31 +96,22 @@ type limiterEntry struct {
 }
 
 func newLimiterSet(b Budget, now func() time.Time) *limiterSet {
-	return &limiterSet{entries: map[string]*limiterEntry{}, limit: rate.Limit(b.PerMinute / 60), burst: b.Burst, now: now}
+	stale := func(e *limiterEntry, now time.Time) bool { return now.Sub(e.seen) > idleAfter }
+	return &limiterSet{table: newTable(stale), limit: rate.Limit(b.PerMinute / 60), burst: b.Burst, now: now}
 }
 
 func (s *limiterSet) allow(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	entry, ok := s.entries[key]
+	entry, ok := s.table.entries[key]
 	if !ok {
-		if len(s.entries) >= sweepAbove {
-			s.sweep(now)
-		}
+		s.table.makeRoom(now)
 		entry = &limiterEntry{limiter: rate.NewLimiter(s.limit, s.burst)}
-		s.entries[key] = entry
+		s.table.entries[key] = entry
 	}
 	entry.seen = now
 	return entry.limiter.AllowN(now, 1)
-}
-
-func (s *limiterSet) sweep(now time.Time) {
-	for key, entry := range s.entries {
-		if now.Sub(entry.seen) > idleAfter {
-			delete(s.entries, key)
-		}
-	}
 }
 
 // rateLimit answers 429 once the client's bucket is empty.
@@ -89,7 +119,7 @@ func rateLimit(set *limiterSet) func(http.Handler) http.Handler {
 	retryAfter := strconv.Itoa(int(max(1, time.Duration(float64(time.Second)/float64(set.limit)).Seconds())))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !set.allow(clientFrom(r.Context()).IP) {
+			if !set.allow(bucketFrom(r.Context())) {
 				w.Header().Set("Retry-After", retryAfter)
 				writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 				return
@@ -101,9 +131,9 @@ func rateLimit(set *limiterSet) func(http.Handler) http.Handler {
 
 // lockouts counts failed download authentications per client and file.
 type lockouts struct {
-	mu      sync.Mutex
-	entries map[string]*lockoutEntry
-	now     func() time.Time
+	mu    sync.Mutex
+	table table[*lockoutEntry]
+	now   func() time.Time
 }
 
 type lockoutEntry struct {
@@ -113,14 +143,17 @@ type lockoutEntry struct {
 }
 
 func newLockouts(now func() time.Time) *lockouts {
-	return &lockouts{entries: map[string]*lockoutEntry{}, now: now}
+	stale := func(e *lockoutEntry, now time.Time) bool {
+		return now.After(e.until) && now.Sub(e.first) > lockoutWindow
+	}
+	return &lockouts{table: newTable(stale), now: now}
 }
 
 // locked reports whether the client is currently refused the file.
 func (l *lockouts) locked(client, fileID string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry, ok := l.entries[client+"|"+fileID]
+	entry, ok := l.table.entries[client+"|"+fileID]
 	return ok && l.now().Before(entry.until)
 }
 
@@ -130,13 +163,13 @@ func (l *lockouts) failed(client, fileID string) bool {
 	defer l.mu.Unlock()
 	now := l.now()
 	key := client + "|" + fileID
-	entry, ok := l.entries[key]
+	entry, ok := l.table.entries[key]
 	if !ok || now.Sub(entry.first) > lockoutWindow {
-		if len(l.entries) >= sweepAbove {
-			l.sweep(now)
+		if !ok {
+			l.table.makeRoom(now)
 		}
 		entry = &lockoutEntry{first: now}
-		l.entries[key] = entry
+		l.table.entries[key] = entry
 	}
 	entry.failures++
 	if entry.failures == lockoutFailures {
@@ -144,12 +177,4 @@ func (l *lockouts) failed(client, fileID string) bool {
 		return true
 	}
 	return false
-}
-
-func (l *lockouts) sweep(now time.Time) {
-	for key, entry := range l.entries {
-		if now.After(entry.until) && now.Sub(entry.first) > lockoutWindow {
-			delete(l.entries, key)
-		}
-	}
 }

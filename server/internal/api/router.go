@@ -61,7 +61,7 @@ func NewRouter(opts Options) (http.Handler, error) {
 	r.Use(requestLog(opts.Logger))
 	r.Use(recoverer(opts.Logger))
 	r.Use(securityHeaders)
-	r.Use(withClient(opts.TrustedProxies))
+	r.Use(withClient(opts.TrustedProxies, opts.Logger))
 
 	r.Get("/healthz", healthz)
 	r.Head("/healthz", healthz)
