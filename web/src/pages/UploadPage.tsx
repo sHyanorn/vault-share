@@ -349,6 +349,10 @@ function copyText(text: string) {
 function describe(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === 'too_large') return 'This file is larger than the limit.'
+    if (error.code === 'capacity')
+      return 'The service is full right now. Try again later.'
+    if (error.code === 'rate_limited')
+      return 'Too many uploads from your network. Try again later.'
     if (error.code === 'network') return 'The server could not be reached.'
   }
   return 'Something went wrong. Nothing was shared.'
