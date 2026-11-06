@@ -49,7 +49,12 @@ export async function decryptMetadata(
   } catch {
     throw new Error('metadata authentication failed')
   }
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(plain))
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(plain))
+  } catch {
+    throw new Error('malformed metadata')
+  }
   if (!isFileMetadata(parsed)) throw new Error('malformed metadata')
   return { name: parsed.name, type: parsed.type, size: parsed.size }
 }
