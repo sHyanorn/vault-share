@@ -9,8 +9,8 @@
 
 ## M1 Crypto Module (frontend; first and most important)
 - [x] HKDF derivation of fileKey, metaKey, authKey
-- [ ] Chunked AES-GCM encryption and decryption (Streams API)
-- [ ] Nonce construction and end marker
+- [x] Chunked AES-GCM encryption and decryption (Streams API)
+- [x] Nonce construction and end marker
 - [ ] Metadata encryption
 - [ ] Tests: round-trip correctness, tampering fails, truncation fails, reordering fails, standard test vectors
 - [ ] Document the ciphertext format in DECISIONS.md
