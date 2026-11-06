@@ -12,6 +12,24 @@ describe('safeFileName', () => {
     expect(safeFileName('.hidden')).toBe('hidden')
     expect(safeFileName('x'.repeat(300))).toHaveLength(255)
   })
+
+  it('removes format characters that spoof the extension', () => {
+    expect(safeFileName('invoice\u202efdp.exe')).toBe('invoicefdp.exe')
+    expect(safeFileName('photo\u200b\u200c.jpg\u2069.exe')).toBe(
+      'photo.jpg.exe',
+    )
+    expect(safeFileName('\ufeffnotes.txt')).toBe('notes.txt')
+    expect(safeFileName('family \ud83d\udc68\u200d\ud83d\udc69.png')).toBe(
+      'family \ud83d\udc68\u200d\ud83d\udc69.png',
+    )
+  })
+
+  it('truncates by code point, never inside a surrogate pair', () => {
+    const emoji = '\ud83d\ude00'.repeat(300)
+    const cut = safeFileName(emoji)
+    expect(Array.from(cut)).toHaveLength(255)
+    expect(cut.endsWith('\ud83d\ude00')).toBe(true)
+  })
 })
 
 describe('formatBytes', () => {
