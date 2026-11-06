@@ -1,0 +1,7 @@
+# Caddy as an unprivileged user. It listens on 8080 and 8443 inside the
+# container; Compose maps 80 and 443 to them. The data and config
+# directories are handed to that user so the named volumes inherit the
+# ownership on first use.
+FROM caddy:2.11.9-alpine@sha256:e8d293dca35c033c4eb958d77b9096098e34da2987da3954acc0028267c6cc9b
+RUN chown 65532:65532 /data /config
+USER 65532:65532
