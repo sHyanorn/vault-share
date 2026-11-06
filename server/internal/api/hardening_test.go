@@ -49,6 +49,49 @@ func TestClientAddr(t *testing.T) {
 	}
 }
 
+// Proxies such as HAProxy append their own header line instead of extending
+// the client's, so the first line is the client's own claim (F15).
+func TestClientAddrUsesTheLastHeaderLine(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.1.2.3:4000"
+	r.Header.Add("X-Forwarded-For", "192.0.2.50")                 // the client's claim
+	r.Header.Add("X-Forwarded-For", "198.51.100.1, 198.51.100.7") // the proxy's line
+	if addr, unnamed := clientAddr(r, trusted); addr.String() != "198.51.100.7" || unnamed {
+		t.Errorf("got (%s, %v)", addr, unnamed)
+	}
+	r.Header.Set("X-Forwarded-For", "garbage")
+	r.Header.Add("X-Forwarded-For", "198.51.100.7")
+	if addr, unnamed := clientAddr(r, trusted); addr.String() != "198.51.100.7" || unnamed {
+		t.Errorf("garbage first line: got (%s, %v)", addr, unnamed)
+	}
+}
+
+func TestSpoofedFirstLineGetsNoFreshBucket(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) {
+		o.Limits = nil
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	})
+	body := mustJSON(createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
+		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1})
+	created := 0
+	for i := 1; i <= DefaultLimits.Create.Burst+2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/v1/files", bytes.NewReader(body))
+		req.Header["X-Forwarded-For"] = []string{fmt.Sprintf("203.0.113.%d", i), "198.51.100.7"}
+		resp, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusCreated {
+			created++
+		}
+	}
+	if created != DefaultLimits.Create.Burst {
+		t.Errorf("%d created with a rotating first line, want %d", created, DefaultLimits.Create.Burst)
+	}
+}
+
 func TestBucketKey(t *testing.T) {
 	key := func(s string) string { return bucketKey(netip.MustParseAddr(s)) }
 	if key("203.0.113.9") == key("203.0.113.10") {

@@ -25,8 +25,9 @@ type requester struct {
 const proxyWarnEvery = time.Minute
 
 // withClient resolves the requester. X-Forwarded-For is honoured only when
-// the connection comes from a trusted proxy, and then only its last entry,
-// the one that proxy appended; anything else is attacker-controlled.
+// the connection comes from a trusted proxy, and then only its last entry
+// of its last line, the one that proxy appended; anything else is
+// attacker-controlled. Some proxies append a line, others extend the last.
 func withClient(trusted []netip.Prefix, log *slog.Logger) func(http.Handler) http.Handler {
 	// Measured on the monotonic clock, so a wall-clock step cannot silence it.
 	start := time.Now()
@@ -79,7 +80,10 @@ func clientAddr(r *http.Request, trusted []netip.Prefix) (addr netip.Addr, unnam
 	if !contains(trusted, addr) {
 		return addr, false
 	}
-	forwarded := r.Header.Get("X-Forwarded-For")
+	var forwarded string
+	if lines := r.Header.Values("X-Forwarded-For"); len(lines) > 0 {
+		forwarded = lines[len(lines)-1]
+	}
 	if i := strings.LastIndex(forwarded, ","); i >= 0 {
 		forwarded = forwarded[i+1:]
 	}
