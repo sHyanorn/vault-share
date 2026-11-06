@@ -1,0 +1,30 @@
+vault-share-vaultd-1: image user=65532 read_only=true cap_drop=[ALL] cap_add=[] security_opt=[no-new-privileges:true] privileged=false
+vault-share-caddy-1: image user=65532:65532 read_only=true cap_drop=[ALL] cap_add=[] security_opt=[no-new-privileges:true] privileged=false
+
+vault-share-vaultd-1 processes:
+  UID                 PID                 CMD
+  65532               1847                /vaultd
+vault-share-caddy-1 processes:
+  UID                 PID                 CMD
+  65532               1911                caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+
+published ports:
+caddy: 80/tcp, 443/tcp, 2019/tcp, 443/udp, 0.0.0.0:80->8080/tcp, 0.0.0.0:443->8443/tcp
+vaultd: 8080/tcp
+
+vaultd effective capabilities:
+  CapEff:	0000000000000000
+  NoNewPrivs:	1
+caddy effective capabilities:
+  CapEff:	0000000000000000
+  NoNewPrivs:	1
+
+# Caddy admin endpoint from inside the container (admin off)
+wget: can't connect to remote host (127.0.0.1): Connection refused
+
+# vaultd data directory as copied out of the volume (docker cp keeps modes)
+-rw------- audit.key
+drwx------ blobs
+-rw------- vault.db
+-rw------- vault.db-shm
+-rw------- vault.db-wal

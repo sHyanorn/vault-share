@@ -1,0 +1,11 @@
+$ npm test
+ Test Files  11 passed (11)
+      Tests  84 passed (84)
+exit 0
+
+$ npm run lint
+exit 0
+
+$ npm audit
+found 0 vulnerabilities
+exit 0

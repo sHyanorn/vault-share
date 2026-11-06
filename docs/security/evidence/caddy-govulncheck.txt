@@ -1,0 +1,60 @@
+$ govulncheck -mode=binary caddy  # /usr/bin/caddy from caddy:2.11.9-alpine@sha256:e8d293dc...
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6866
+    Check all ancestor namespace transitions when rendering raw text in html in
+    golang.org/x/net
+  More info: https://pkg.go.dev/vuln/GO-2026-6866
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.60.0
+    Fixed in: golang.org/x/net@v0.62.0
+    Vulnerable symbols found:
+      #1: html.Render
+
+Vulnerability #2: GO-2026-6865
+    Panic on two-block frames in github.com/klauspost/compress
+  More info: https://pkg.go.dev/vuln/GO-2026-6865
+  Module: github.com/klauspost/compress
+    Found in: github.com/klauspost/compress@v1.20.1
+    Fixed in: github.com/klauspost/compress@v1.20.2
+    Vulnerable symbols found:
+      #1: fse.Compress
+      #2: fse.Decompress
+      #3: huff0.Compress1X
+      #4: huff0.Compress4X
+      #5: huff0.EstimateSizes
+      Use '-show traces' to see the other 2 found symbols
+
+Vulnerability #3: GO-2026-6860
+    Avoid quadratic complexity when coalescing text nodes in html in
+    golang.org/x/net
+  More info: https://pkg.go.dev/vuln/GO-2026-6860
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.60.0
+    Fixed in: golang.org/x/net@v0.62.0
+    Vulnerable symbols found:
+      #1: html.Parse
+      #2: html.ParseFragment
+      #3: html.ParseFragmentWithOptions
+      #4: html.ParseWithOptions
+
+Vulnerability #4: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design,
+    and has known security issues
+  More info: https://pkg.go.dev/vuln/GO-2026-5932
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.57.0
+    Fixed in: golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
+    Vulnerable symbols found:
+      #1: armor.golang.org/x/crypto/openpgp/armor/*
+      #2: clearsign.golang.org/x/crypto/openpgp/clearsign/*
+      #3: elgamal.golang.org/x/crypto/openpgp/elgamal/*
+      #4: errors.golang.org/x/crypto/openpgp/errors/*
+      #5: openpgp.golang.org/x/crypto/openpgp/*
+      Use '-show traces' to see the other 2 found symbols
+
+Your code is affected by 4 vulnerabilities from 3 modules.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.
+exit status 3

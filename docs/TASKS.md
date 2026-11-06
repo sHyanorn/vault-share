@@ -41,7 +41,7 @@
 - [x] Delete link for the uploader (`/d/{id}#{token}`), so early deletion works after leaving the result page
 
 ## M5 Security Testing and Report
-- [ ] Self-assess against each OWASP Top 10 item and write `docs/security/TEST_REPORT.md`
+- [x] Self-assess against each OWASP Top 10 item and write `docs/security/TEST_REPORT.md`
 - [x] Fix discovered issues and record them in FINDINGS.md
 - [ ] Write SECURITY.md
 
