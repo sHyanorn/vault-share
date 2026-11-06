@@ -563,3 +563,31 @@ func TestCrossSiteRequestsSpendNoBudget(t *testing.T) {
 		t.Errorf("read past the burst: %d", status)
 	}
 }
+
+// A page that rebinds its name to the server's address looks same-origin to
+// the browser, but it cannot pick the Host its requests carry.
+func TestAPIAnswersOnlyForItsHost(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) { o.Host = "vault.example" })
+	path := "/api/v1/files/" + encoding.EncodeToString(randomContent(16)) + "/meta"
+	for host, want := range map[string]int{
+		"vault.example":      http.StatusNotFound,
+		"vault.example:8443": http.StatusNotFound,
+		"VAULT.example.":     http.StatusNotFound,
+		"attacker.example":   http.StatusMisdirectedRequest,
+		"127.0.0.1":          http.StatusMisdirectedRequest,
+	} {
+		if status, data := e.request(http.MethodGet, path, nil, map[string]string{"Host": host}, nil); status != want {
+			t.Errorf("%s: %d %s", host, status, data)
+		}
+	}
+	rebound := map[string]string{"Host": "attacker.example", "Origin": "http://attacker.example", "Sec-Fetch-Site": "same-origin"}
+	body := createRequest{Size: 100, Meta: encoding.EncodeToString(randomContent(64)),
+		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	if status, data := e.request(http.MethodPost, "/api/v1/files", body, rebound, nil); status != http.StatusMisdirectedRequest ||
+		!strings.Contains(string(data), `"misdirected"`) {
+		t.Errorf("create from a rebound name: %d %s", status, data)
+	}
+	if status, _ := e.request(http.MethodGet, "/healthz", nil, map[string]string{"Host": "attacker.example"}, nil); status != http.StatusOK {
+		t.Errorf("health check under another name: %d", status)
+	}
+}

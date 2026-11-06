@@ -21,6 +21,8 @@ type Config struct {
 	// BaseURL is the public origin used to build share links, without a
 	// trailing slash (VAULT_BASE_URL).
 	BaseURL string
+	// Host is the host name of BaseURL, the only name the API answers for.
+	Host string
 	// DataDir holds the database and ciphertext blobs (VAULT_DATA_DIR).
 	DataDir string
 	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES).
@@ -70,6 +72,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		fail("BASE_URL", errors.New("must be an http(s) origin with an optional path"))
 	} else {
 		cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+		cfg.Host = u.Hostname()
 	}
 
 	if n, err := strconv.ParseInt(get("MAX_FILE_BYTES", "1073741824"), 10, 64); err != nil {
