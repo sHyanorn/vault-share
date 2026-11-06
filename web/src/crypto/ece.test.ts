@@ -20,6 +20,22 @@ async function decrypt(ciphertext: Uint8Array, chunkSize?: number, key = ikm) {
   return collect(decryptStream(streamOf(ciphertext, chunkSize), key))
 }
 
+function corrupted(bytes: Uint8Array, index: number): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(bytes)
+  copy[index] ^= 0x01
+  return copy
+}
+
+function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let offset = 0
+  for (const p of parts) {
+    out.set(p, offset)
+    offset += p.length
+  }
+  return out
+}
+
 describe('round trip', () => {
   const sizes = [
     0,
@@ -64,6 +80,93 @@ describe('round trip', () => {
     await expect(
       decrypt(ciphertext, undefined, randomBytes(32)),
     ).rejects.toThrow('authentication failed')
+  })
+})
+
+describe('tampering', () => {
+  it('any flipped byte is detected', async () => {
+    const ciphertext = await encrypt(randomBytes(PAYLOAD + 5))
+    const positions = [
+      ...Array.from({ length: HEADER }, (_, i) => i),
+      HEADER,
+      HEADER + 1000,
+      HEADER + RECORD_SIZE - 17,
+      HEADER + RECORD_SIZE - 1,
+      HEADER + RECORD_SIZE,
+      ciphertext.length - 17,
+      ciphertext.length - 1,
+    ]
+    for (const index of positions) {
+      await expect(
+        decrypt(corrupted(ciphertext, index)),
+        `byte ${index}`,
+      ).rejects.toThrow()
+    }
+  })
+})
+
+describe('truncation', () => {
+  it('rejects an empty stream and a cut header', async () => {
+    await expect(decrypt(new Uint8Array(0))).rejects.toThrow('truncated header')
+    await expect(decrypt(randomBytes(HEADER - 1))).rejects.toThrow(
+      'truncated header',
+    )
+  })
+
+  it('rejects a stream that stops after the header', async () => {
+    const ciphertext = await encrypt(randomBytes(10))
+    await expect(decrypt(ciphertext.subarray(0, HEADER))).rejects.toThrow(
+      'no records',
+    )
+  })
+
+  it('rejects a cut inside a record', async () => {
+    const ciphertext = await encrypt(randomBytes(PAYLOAD + 5))
+    await expect(
+      decrypt(ciphertext.subarray(0, ciphertext.length - 1)),
+    ).rejects.toThrow()
+    await expect(decrypt(ciphertext.subarray(0, HEADER + 10))).rejects.toThrow()
+  })
+
+  it('rejects a cut at a record boundary', async () => {
+    const ciphertext = await encrypt(randomBytes(2 * PAYLOAD + 5))
+    const firstRecordOnly = ciphertext.subarray(0, HEADER + RECORD_SIZE)
+    await expect(decrypt(firstRecordOnly)).rejects.toThrow('delimiter')
+    const twoRecords = ciphertext.subarray(0, HEADER + 2 * RECORD_SIZE)
+    await expect(decrypt(twoRecords)).rejects.toThrow('delimiter')
+  })
+})
+
+describe('record order', () => {
+  async function records() {
+    const plaintext = randomBytes(2 * PAYLOAD + 5)
+    const ciphertext = await encrypt(plaintext)
+    const header = ciphertext.subarray(0, HEADER)
+    const r0 = ciphertext.subarray(HEADER, HEADER + RECORD_SIZE)
+    const r1 = ciphertext.subarray(
+      HEADER + RECORD_SIZE,
+      HEADER + 2 * RECORD_SIZE,
+    )
+    const r2 = ciphertext.subarray(HEADER + 2 * RECORD_SIZE)
+    return { plaintext, header, r0, r1, r2 }
+  }
+
+  it('accepts the original order', async () => {
+    const { plaintext, header, r0, r1, r2 } = await records()
+    expect(await decrypt(concat(header, r0, r1, r2))).toEqual(plaintext)
+  })
+
+  it('rejects swapped, dropped, duplicated and appended records', async () => {
+    const { header, r0, r1, r2 } = await records()
+    for (const variant of [
+      concat(header, r1, r0, r2),
+      concat(header, r0, r2),
+      concat(header, r0, r0, r1, r2),
+      concat(header, r0, r1, r2, r2),
+      concat(header, r0, r1, r2, r0),
+    ]) {
+      await expect(decrypt(variant)).rejects.toThrow()
+    }
   })
 })
 
