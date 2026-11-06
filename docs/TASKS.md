@@ -34,7 +34,7 @@
 - [x] Security response headers and strict CSP
 - [x] Rate limiting middleware and lockout after failed authentication
 - [x] Audit logging
-- [ ] Log redaction check
+- [x] Log redaction check
 - [ ] Optional password protection (Argon2id WebAssembly)
 - [ ] Add gosec, govulncheck, Semgrep and ZAP baseline scan to CI
 - [ ] Update the status column of the threat model
