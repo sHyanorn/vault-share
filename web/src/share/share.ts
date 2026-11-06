@@ -12,10 +12,11 @@ import {
   generateSecret,
   signChallenge,
   toBase64Url,
+  wrapSecret,
   type DerivedKeys,
 } from '../crypto/index.ts'
 import * as api from './api.ts'
-import { buildLink } from './link.ts'
+import { buildDeleteLink, buildLink } from './link.ts'
 import type { Sink } from './save.ts'
 
 export type ExpiresIn = 3600 | 86400 | 604800
@@ -23,6 +24,8 @@ export type ExpiresIn = 3600 | 86400 | 604800
 export interface UploadOptions {
   expiresIn: ExpiresIn
   maxDownloads: number
+  /** When set, the link carries the secret wrapped under this password. */
+  password?: string
 }
 
 export interface Progress {
@@ -33,8 +36,10 @@ export interface Progress {
 export interface Share {
   id: string
   link: string
+  deleteLink: string
   ownerToken: string
   expiresAt: Date
+  protected: boolean
 }
 
 export async function uploadFile(
@@ -74,12 +79,22 @@ export async function uploadFile(
     created.owner_token,
     (fraction) => onProgress({ phase: 'uploading', fraction }),
   )
+  const key = options.password
+    ? await wrapSecret(secret, options.password)
+    : secret
+  const origin = window.location.origin
   return {
     id: created.id,
-    link: buildLink(window.location.origin, created.id, secret),
+    link: buildLink(origin, created.id, key),
+    deleteLink: buildDeleteLink(origin, created.id, created.owner_token),
     ownerToken: created.owner_token,
     expiresAt: new Date(created.expires_at * 1000),
+    protected: Boolean(options.password),
   }
+}
+
+export function deleteShareById(id: string, ownerToken: string): Promise<void> {
+  return api.deleteFile(id, ownerToken)
 }
 
 export function deleteShare(share: Share): Promise<void> {

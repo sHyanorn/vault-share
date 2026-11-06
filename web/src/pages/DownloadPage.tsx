@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { unwrapSecret } from '../crypto/index.ts'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
 import { parseLocation } from '../share/link.ts'
@@ -14,6 +15,7 @@ import { CheckIcon, DownloadIcon, FileIcon, LinkOffIcon } from '../ui/icons.tsx'
 
 type Phase =
   | { kind: 'loading' }
+  | { kind: 'locked'; wrong: boolean; busy: boolean }
   | { kind: 'invalid' }
   | { kind: 'unavailable' }
   | { kind: 'offline' }
@@ -26,8 +28,13 @@ export default function DownloadPage() {
   const [location] = useState(() =>
     parseLocation(window.location.pathname, window.location.hash),
   )
+  const [secret, setSecret] = useState(location?.secret ?? null)
   const [phase, setPhase] = useState<Phase>(
-    location ? { kind: 'loading' } : { kind: 'invalid' },
+    !location
+      ? { kind: 'invalid' }
+      : location.wrapped
+        ? { kind: 'locked', wrong: false, busy: false }
+        : { kind: 'loading' },
   )
   const [attempt, setAttempt] = useState(0)
   const busy = useRef(false)
@@ -41,9 +48,9 @@ export default function DownloadPage() {
   }, [])
 
   useEffect(() => {
-    if (!location) return
+    if (!location || !secret) return
     let cancelled = false
-    openShare(location.id, location.secret)
+    openShare(location.id, secret)
       .then((info) => {
         if (!cancelled) setPhase({ kind: 'ready', info })
       })
@@ -53,7 +60,22 @@ export default function DownloadPage() {
     return () => {
       cancelled = true
     }
-  }, [location, attempt])
+  }, [location, secret, attempt])
+
+  async function unlock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!location?.wrapped) return
+    const password = new FormData(event.currentTarget).get('password')
+    if (typeof password !== 'string' || password === '') return
+    setPhase({ kind: 'locked', wrong: false, busy: true })
+    const unwrapped = await unwrapSecret(location.wrapped, password)
+    if (!unwrapped) {
+      setPhase({ kind: 'locked', wrong: true, busy: false })
+      return
+    }
+    setPhase({ kind: 'loading' })
+    setSecret(unwrapped)
+  }
 
   function retryOpen() {
     setPhase({ kind: 'loading' })
@@ -106,6 +128,39 @@ export default function DownloadPage() {
             <FileIcon />
             <div className="skeleton" />
           </div>
+        </section>
+      )
+    case 'locked':
+      return (
+        <section key="locked" className="card stack enter">
+          <Hero
+            icon={<FileIcon />}
+            title="This file is password protected"
+            tone="muted"
+          />
+          <form className="stack" onSubmit={unlock}>
+            <label className="field">
+              <span>Password</span>
+              <input
+                className="text"
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                autoFocus
+                required
+                aria-invalid={phase.wrong || undefined}
+                aria-describedby={phase.wrong ? 'password-error' : undefined}
+              />
+              {phase.wrong && (
+                <span id="password-error" className="error" role="alert">
+                  Wrong password. Try again.
+                </span>
+              )}
+            </label>
+            <Button type="submit" disabled={phase.busy}>
+              {phase.busy ? 'Unlocking…' : 'Unlock'}
+            </Button>
+          </form>
         </section>
       )
     case 'invalid':

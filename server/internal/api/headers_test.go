@@ -32,7 +32,9 @@ func TestSecurityHeaders(t *testing.T) {
 			t.Errorf("CSP lacks %q: %s", directive, policy)
 		}
 	}
-	if strings.Contains(policy, "unsafe-inline") || strings.Contains(policy, "unsafe-eval") {
-		t.Errorf("CSP must not allow inline or eval: %s", policy)
+	for _, token := range strings.Fields(policy) {
+		if token == "'unsafe-inline'" || token == "'unsafe-eval'" || token == "'unsafe-inline';" || token == "'unsafe-eval';" {
+			t.Errorf("CSP must not allow inline or eval: %s", policy)
+		}
 	}
 }

@@ -322,6 +322,34 @@ button {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* Text input */
+
+.text {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  transition: border-color 160ms var(--ease);
+}
+
+.text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.text[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.error {
+  color: var(--danger);
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
 /* Buttons */
 
 .btn {
