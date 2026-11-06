@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -46,7 +47,7 @@ func mustCreate(t *testing.T, s *Store, f File, uploaded bool) {
 	}
 }
 
-func TestMigrationsAreIdempotent(t *testing.T) {
+func TestOpenIsIdempotentAndPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	for i := 0; i < 2; i++ {
 		s, err := Open(context.Background(), path)
@@ -54,6 +55,15 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 			t.Fatalf("open %d: %v", i, err)
 		}
 		s.Close()
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if err != nil {
+			continue // WAL files may be removed on close
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s has mode %o, want 600", path+suffix, mode)
+		}
 	}
 }
 
@@ -70,8 +80,6 @@ func TestFileRoundTrip(t *testing.T) {
 	if got.Uploaded || got.Live(t0) {
 		t.Errorf("new file must not be uploaded or live: %+v", got)
 	}
-	f.Uploaded = false
-	got.Uploaded = false
 	if string(got.MetaCiphertext) != "meta" || got.SizeBytes != 1234 || got.DownloadsLeft != 3 ||
 		!got.ExpiresAt.Equal(f.ExpiresAt) || !got.CreatedAt.Equal(f.CreatedAt) {
 		t.Errorf("got %+v, want %+v", got, f)
@@ -99,51 +107,60 @@ func TestFileRoundTrip(t *testing.T) {
 	}
 }
 
-func TestChallengesAreOneTime(t *testing.T) {
+func TestDeleteIfPending(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
-	mustCreate(t, s, sample("file-a"), true)
-	mustCreate(t, s, sample("file-b"), true)
-	nonce := []byte("nonce-1")
-	if err := s.CreateChallenge(ctx, "file-a", nonce, t0.Add(time.Minute)); err != nil {
-		t.Fatal(err)
+	mustCreate(t, s, sample("pending"), false)
+	mustCreate(t, s, sample("uploaded"), true)
+	if ok, err := s.DeleteIfPending(ctx, "uploaded"); err != nil || ok {
+		t.Errorf("uploaded file deleted as pending: ok=%v err=%v", ok, err)
 	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-b", nonce, t0); ok {
-		t.Error("challenge accepted for another file")
+	if ok, err := s.DeleteIfPending(ctx, "pending"); err != nil || !ok {
+		t.Errorf("pending file not deleted: ok=%v err=%v", ok, err)
 	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-a", nonce, t0.Add(2*time.Minute)); ok {
-		t.Error("expired challenge accepted")
-	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-a", nonce, t0); !ok {
-		t.Error("valid challenge rejected")
-	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-a", nonce, t0); ok {
-		t.Error("challenge accepted twice")
+	if ok, _ := s.DeleteIfPending(ctx, "pending"); ok {
+		t.Error("deleted twice")
 	}
 }
 
-func TestChallengesPerFileAreCapped(t *testing.T) {
+func TestDeleteIfBurned(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	f := sample("file-a")
+	f.DownloadsLeft = 2
+	mustCreate(t, s, f, true)
+	if ok, _ := s.DeleteIfBurned(ctx, "file-a", t0); ok {
+		t.Error("deleted with downloads left")
+	}
+	for i := 0; i < 2; i++ {
+		if _, ok, _ := s.ConsumeDownload(ctx, "file-a", t0); !ok {
+			t.Fatal("download not granted")
+		}
+	}
+	if err := s.CreateDownloadToken(ctx, "file-a", []byte("pending"), t0.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.DeleteIfBurned(ctx, "file-a", t0); ok {
+		t.Error("deleted while a token was pending")
+	}
+	if ok, _ := s.DeleteIfBurned(ctx, "file-a", t0.Add(6*time.Minute)); !ok {
+		t.Error("not deleted after the pending token expired")
+	}
+}
+
+func TestDeleteCascadesToTokens(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	mustCreate(t, s, sample("file-a"), true)
-	for i := 0; i < 40; i++ {
-		nonce := []byte{byte(i)}
-		if err := s.CreateChallenge(ctx, "file-a", nonce, t0.Add(time.Duration(i)*time.Second)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM challenges`).Scan(&n); err != nil {
+	hash := []byte("token-hash")
+	if err := s.CreateDownloadToken(ctx, "file-a", hash, t0.Add(5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if n != challengesPerFile {
-		t.Errorf("%d challenges kept, want %d", n, challengesPerFile)
+	if err := s.DeleteFile(ctx, "file-a"); err != nil {
+		t.Fatal(err)
 	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-a", []byte{39}, t0); !ok {
-		t.Error("newest challenge was dropped")
-	}
-	if ok, _ := s.ConsumeChallenge(ctx, "file-a", []byte{0}, t0); ok {
-		t.Error("oldest challenge survived the cap")
+	if ok, _ := s.ConsumeDownloadToken(ctx, "file-a", hash, t0); ok {
+		t.Error("token survived the deletion of its file")
 	}
 }
 
@@ -225,10 +242,9 @@ func TestPurgeable(t *testing.T) {
 	ctx := context.Background()
 	mustCreate(t, s, sample("live"), true)
 	mustCreate(t, s, sample("expired"), true)
-	burned := sample("burned")
-	mustCreate(t, s, burned, true)
-	pendingToken := sample("pending-token")
-	mustCreate(t, s, pendingToken, true)
+	mustCreate(t, s, sample("expired-pending-token"), true)
+	mustCreate(t, s, sample("burned"), true)
+	mustCreate(t, s, sample("burned-pending-token"), true)
 	stale := sample("stale-upload")
 	stale.CreatedAt = t0.Add(-2 * time.Hour)
 	mustCreate(t, s, stale, false)
@@ -236,51 +252,58 @@ func TestPurgeable(t *testing.T) {
 	fresh.CreatedAt = t0.Add(-30 * time.Minute)
 	mustCreate(t, s, fresh, false)
 
-	for _, id := range []string{"burned", "pending-token"} {
+	for _, id := range []string{"burned", "burned-pending-token"} {
 		for i := 0; i < 3; i++ {
 			if _, ok, _ := s.ConsumeDownload(ctx, id, t0); !ok {
 				t.Fatalf("%s: download %d not granted", id, i)
 			}
 		}
 	}
-	if err := s.CreateDownloadToken(ctx, "pending-token", []byte("h"), t0.Add(5*time.Minute)); err != nil {
+	for _, id := range []string{"expired-pending-token", "burned-pending-token"} {
+		if err := s.CreateDownloadToken(ctx, id, []byte(id), t0.Add(5*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateDownloadToken(ctx, "burned", []byte("old"), t0.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateDownloadToken(ctx, "burned", []byte("h2"), t0.Add(-time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`UPDATE files SET expires_at = ? WHERE id = 'expired'`, t0.Add(-time.Second).Unix()); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"expired", "expired-pending-token"} {
+		if _, err := s.db.Exec(`UPDATE files SET expires_at = ? WHERE id = ?`, t0.Add(-time.Second).Unix(), id); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	purgeable := func(now time.Time) map[string]bool {
-		ids, err := s.Purgeable(ctx, now)
+		purges, err := s.Purgeable(ctx, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		got := map[string]bool{}
-		for _, id := range ids {
-			got[id] = true
+		for _, p := range purges {
+			got[p.ID] = p.Pending
 		}
 		return got
 	}
-	// At t0 the fresh upload is inside its grace period and the pending
-	// token keeps its file alive; two hours later both are purgeable.
+	// At t0 the pending tokens keep their files alive and the fresh upload is
+	// inside its grace period; six minutes later only the fresh upload is kept.
 	cases := []struct {
 		now  time.Time
-		want []string
+		want map[string]bool
 	}{
-		{t0, []string{"expired", "burned", "stale-upload"}},
-		{t0.Add(2 * time.Hour), []string{"expired", "burned", "stale-upload", "fresh-upload", "pending-token"}},
+		{t0, map[string]bool{"expired": false, "burned": false, "stale-upload": true}},
+		{t0.Add(6 * time.Minute), map[string]bool{"expired": false, "burned": false, "stale-upload": true,
+			"expired-pending-token": false, "burned-pending-token": false}},
+		{t0.Add(2 * time.Hour), map[string]bool{"expired": false, "burned": false, "stale-upload": true,
+			"expired-pending-token": false, "burned-pending-token": false, "fresh-upload": true}},
 	}
 	for _, tc := range cases {
 		got := purgeable(tc.now)
 		if len(got) != len(tc.want) {
 			t.Errorf("at %v purgeable = %v, want %v", tc.now, got, tc.want)
 		}
-		for _, id := range tc.want {
-			if !got[id] {
-				t.Errorf("at %v %s missing from %v", tc.now, id, got)
+		for id, pending := range tc.want {
+			if p, ok := got[id]; !ok || p != pending {
+				t.Errorf("at %v %s: got (%v,%v), want pending=%v", tc.now, id, ok, p, pending)
 			}
 		}
 	}
@@ -289,7 +312,7 @@ func TestPurgeable(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM download_tokens`).Scan(&n); err != nil || n != 1 {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM download_tokens`).Scan(&n); err != nil || n != 2 {
 		t.Errorf("download tokens after ExpireTokens = %d, err %v", n, err)
 	}
 }

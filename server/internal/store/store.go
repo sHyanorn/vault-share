@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,13 @@ type Store struct {
 
 // Open opens or creates the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
+	// Create the file owner-only; SQLite gives the WAL and shared-memory
+	// files the same mode.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
 	dsn := "file:" + path +
 		"?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
@@ -45,6 +53,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	// SQLite has one writer at a time; a small pool keeps readers concurrent
 	// without piling up connections that would only wait on busy_timeout.
 	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	if err := migrate(ctx, db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -159,41 +168,32 @@ func (s *Store) GetFile(ctx context.Context, id string) (File, error) {
 }
 
 // MarkUploaded records that the content is stored. It reports false when the
-// file is unknown or already marked, so a second upload cannot replace the first.
+// record is gone or already marked.
 func (s *Store) MarkUploaded(ctx context.Context, id string, at time.Time) (bool, error) {
 	return s.changed(s.db.ExecContext(ctx,
 		`UPDATE files SET uploaded_at = ? WHERE id = ? AND uploaded_at IS NULL`, at.Unix(), id))
 }
 
-// DeleteFile removes the record and, through cascades, its challenges and tokens.
+// DeleteFile removes the record and, through the cascade, its download tokens.
 func (s *Store) DeleteFile(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
 	return err
 }
 
-// CreateChallenge stores a one-time nonce for the file, keeping at most the
-// newest challengesPerFile so a flood of metadata requests cannot grow the table.
-func (s *Store) CreateChallenge(ctx context.Context, fileID string, nonce []byte, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM challenges WHERE file_id = ?1 AND nonce NOT IN (
-			SELECT nonce FROM challenges WHERE file_id = ?1 ORDER BY expires_at DESC LIMIT ?2)`,
-		fileID, challengesPerFile-1)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO challenges (nonce, file_id, expires_at) VALUES (?, ?, ?)`,
-		nonce, fileID, expiresAt.Unix())
-	return err
+// DeleteIfPending removes the record only while its content has not arrived,
+// so a purge can never race an upload that just completed.
+func (s *Store) DeleteIfPending(ctx context.Context, id string) (bool, error) {
+	return s.changed(s.db.ExecContext(ctx,
+		`DELETE FROM files WHERE id = ? AND uploaded_at IS NULL`, id))
 }
 
-const challengesPerFile = 16
-
-// ConsumeChallenge deletes the nonce and reports whether it was valid for the file at now.
-func (s *Store) ConsumeChallenge(ctx context.Context, fileID string, nonce []byte, now time.Time) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx,
-		`DELETE FROM challenges WHERE nonce = ? AND file_id = ? AND expires_at > ?`,
-		nonce, fileID, now.Unix()))
+// DeleteIfBurned removes the record once every permitted download has been
+// taken and no download token is still pending.
+func (s *Store) DeleteIfBurned(ctx context.Context, id string, now time.Time) (bool, error) {
+	return s.changed(s.db.ExecContext(ctx, `
+		DELETE FROM files WHERE id = ?1 AND downloads_left = 0 AND NOT EXISTS (
+			SELECT 1 FROM download_tokens t WHERE t.file_id = ?1 AND t.expires_at > ?2)`,
+		id, now.Unix()))
 }
 
 // ConsumeDownload decrements the download count of a live file in one
@@ -228,37 +228,40 @@ func (s *Store) ConsumeDownloadToken(ctx context.Context, fileID string, tokenHa
 		tokenHash, fileID, now.Unix()))
 }
 
-// Purgeable lists files whose content can be deleted: expired ones, ones
-// whose downloads are used up and have no download token still pending, and
-// ones whose content never arrived within the upload grace period.
-func (s *Store) Purgeable(ctx context.Context, now time.Time) ([]string, error) {
+// Purge names a file the cleanup job may remove. Pending means its content
+// never arrived, which changes how it is removed.
+type Purge struct {
+	ID      string
+	Pending bool
+}
+
+// Purgeable lists expired and used-up files that have no download token still
+// pending, and files whose content never arrived within the upload grace period.
+func (s *Store) Purgeable(ctx context.Context, now time.Time) ([]Purge, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id FROM files f
-		WHERE expires_at <= ?1
-		   OR (downloads_left = 0 AND NOT EXISTS (
-		          SELECT 1 FROM download_tokens t WHERE t.file_id = f.id AND t.expires_at > ?1))
+		SELECT id, uploaded_at IS NULL FROM files f
+		WHERE (uploaded_at IS NOT NULL
+		       AND (expires_at <= ?1 OR downloads_left = 0)
+		       AND NOT EXISTS (SELECT 1 FROM download_tokens t WHERE t.file_id = f.id AND t.expires_at > ?1))
 		   OR (uploaded_at IS NULL AND created_at <= ?2)`,
 		now.Unix(), now.Add(-UploadGrace).Unix())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+	var purges []Purge
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var p Purge
+		if err := rows.Scan(&p.ID, &p.Pending); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		purges = append(purges, p)
 	}
-	return ids, rows.Err()
+	return purges, rows.Err()
 }
 
-// ExpireTokens drops challenges and download tokens that are past their expiry.
+// ExpireTokens drops download tokens that are past their expiry.
 func (s *Store) ExpireTokens(ctx context.Context, now time.Time) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM challenges WHERE expires_at <= ?`, now.Unix()); err != nil {
-		return err
-	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM download_tokens WHERE expires_at <= ?`, now.Unix())
 	return err
 }

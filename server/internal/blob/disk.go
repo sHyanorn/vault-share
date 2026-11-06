@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// Disk stores each blob as root/<id>; uploads are written to root/tmp and
-// renamed into place only once complete, so a reader never sees a partial file.
+// Disk stores each blob as root/<id>. An upload is written to root/tmp and
+// linked into place only once it is complete, so a reader never sees a
+// partial file and an existing blob is never replaced.
 type Disk struct {
 	root string
 }
@@ -24,36 +25,39 @@ func NewDisk(root string) (*Disk, error) {
 	return &Disk{root: root}, nil
 }
 
-func (d *Disk) Put(ctx context.Context, id string, r io.Reader) (n int64, err error) {
+func (d *Disk) Put(ctx context.Context, id string, size int64, r io.Reader) error {
 	if !ValidID(id) {
-		return 0, ErrInvalidID
+		return ErrInvalidID
 	}
 	tmp, err := os.CreateTemp(filepath.Join(d.root, "tmp"), "upload-*")
 	if err != nil {
-		return 0, err
+		return err
 	}
-	defer func() {
-		if err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
+	// The temp name is dropped in every case; after a successful link the
+	// blob lives on under its own name.
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	n, err := io.Copy(tmp, r)
+	if err != nil {
+		return err
+	}
+	if n != size {
+		return ErrSize
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), filepath.Join(d.root, id)); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return ErrExists
 		}
-	}()
-	if n, err = io.Copy(tmp, r); err != nil {
-		return n, err
+		return err
 	}
-	if err = ctx.Err(); err != nil {
-		return n, err
-	}
-	if err = tmp.Sync(); err != nil {
-		return n, err
-	}
-	if err = tmp.Close(); err != nil {
-		return n, err
-	}
-	if err = os.Rename(tmp.Name(), filepath.Join(d.root, id)); err != nil {
-		return n, err
-	}
-	return n, syncDir(d.root)
+	return syncDir(d.root)
 }
 
 func (d *Disk) Open(_ context.Context, id string) (io.ReadCloser, error) {
@@ -95,7 +99,7 @@ func (d *Disk) Sweep(_ context.Context, before time.Time) error {
 	return nil
 }
 
-// syncDir makes the rename durable.
+// syncDir makes the link durable.
 func syncDir(dir string) error {
 	f, err := os.Open(dir)
 	if err != nil {

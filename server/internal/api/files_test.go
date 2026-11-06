@@ -36,6 +36,11 @@ type env struct {
 }
 
 func newEnv(t *testing.T) *env {
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith builds the server; mutate adjusts the router options first.
+func newEnvWith(t *testing.T, mutate func(*Options)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
@@ -50,13 +55,17 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, store: st, blobs: blobs, now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
 	logger := slog.New(slog.DiscardHandler)
 	e.job = &cleanup.Job{Store: st, Blobs: blobs, Log: logger, Now: e.clock}
-	h, err := NewRouter(Options{
-		Logger: logger, Store: st, Blobs: blobs, MaxFileBytes: maxTestFileBytes, Sweep: e.job.Run, Now: e.clock,
-	})
+	opts := Options{Logger: logger, Store: st, Blobs: blobs, MaxFileBytes: maxTestFileBytes, Now: e.clock}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	h, err := NewRouter(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv = httptest.NewServer(h)
+	e.srv = httptest.NewUnstartedServer(h)
+	e.srv.Config.WriteTimeout = time.Second // the upload handler must outlive this
+	e.srv.Start()
 	t.Cleanup(e.srv.Close)
 	return e
 }
@@ -329,7 +338,7 @@ func TestCreateValidation(t *testing.T) {
 		{"zero downloads", func(r *createRequest) { r.MaxDownloads = 0 }, http.StatusBadRequest},
 		{"too many downloads", func(r *createRequest) { r.MaxDownloads = 101 }, http.StatusBadRequest},
 		{"size below minimum", func(r *createRequest) { r.Size = 37 }, http.StatusBadRequest},
-		{"size above limit", func(r *createRequest) { r.Size = maxTestFileBytes + 1 }, http.StatusRequestEntityTooLarge},
+		{"size above limit", func(r *createRequest) { r.Size = maxTestFileBytes + 1 }, http.StatusBadRequest},
 		{"short auth key", func(r *createRequest) { r.AuthKey = encoding.EncodeToString(randomContent(31)) }, http.StatusBadRequest},
 		{"standard base64", func(r *createRequest) { r.AuthKey = strings.ReplaceAll(r.AuthKey, "-", "+") + "==" }, http.StatusBadRequest},
 		{"meta too short", func(r *createRequest) { r.Meta = encoding.EncodeToString(randomContent(27)) }, http.StatusBadRequest},
@@ -362,26 +371,38 @@ func TestChallengeRules(t *testing.T) {
 	if _, status := e.download(sh.id, m.Challenge, sign(other.authKey, m.Challenge)); status != http.StatusNotFound {
 		t.Errorf("wrong key: %d", status)
 	}
-	if _, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge)); status != http.StatusNotFound {
-		t.Errorf("challenge reused after a failed attempt: %d", status)
-	}
-	m, _ = e.meta(sh.id)
 	if _, status := e.download(other.id, m.Challenge, sign(other.authKey, m.Challenge)); status != http.StatusNotFound {
 		t.Errorf("challenge of another file: %d", status)
 	}
-	if _, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge)); status != http.StatusOK {
-		t.Errorf("valid challenge: %d", status)
+	tampered, _ := encoding.DecodeString(m.Challenge)
+	tampered[20] ^= 1
+	forged := encoding.EncodeToString(tampered)
+	if _, status := e.download(sh.id, forged, sign(sh.authKey, forged)); status != http.StatusNotFound {
+		t.Errorf("tampered challenge: %d", status)
 	}
-	if _, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge)); status != http.StatusNotFound {
-		t.Errorf("challenge reused after success: %d", status)
+	dl, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge))
+	if status != http.StatusOK || dl.DownloadsLeft != 9 {
+		t.Errorf("valid challenge: %d %+v", status, dl)
 	}
-	m, _ = e.meta(sh.id)
+	// A replay only spends the holder's own download count.
+	if dl, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge)); status != http.StatusOK || dl.DownloadsLeft != 8 {
+		t.Errorf("replayed challenge: %d %+v", status, dl)
+	}
 	e.advance(3 * time.Minute)
 	if _, status := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge)); status != http.StatusNotFound {
 		t.Errorf("expired challenge: %d", status)
 	}
 	if _, status := e.download(sh.id, "short", sign(sh.authKey, m.Challenge)); status != http.StatusBadRequest {
 		t.Errorf("malformed challenge: %d", status)
+	}
+	// A bad request body gets the same answer whether or not the file exists.
+	missing := encoding.EncodeToString(randomContent(16))
+	for _, id := range []string{missing, sh.id} {
+		for name, body := range map[string]any{"malformed": []byte("{"), "empty fields": downloadRequest{}} {
+			if status, _ := e.request(http.MethodPost, "/api/v1/files/"+id+"/download", body, nil, nil); status != http.StatusBadRequest {
+				t.Errorf("%s body on %s: %d", name, id, status)
+			}
+		}
 	}
 }
 
@@ -507,5 +528,124 @@ func TestInvalidIDs(t *testing.T) {
 		if status := e.remove(id, encoding.EncodeToString(randomContent(32))); status != http.StatusNotFound {
 			t.Errorf("delete %q: %d", id, status)
 		}
+	}
+}
+
+// pipeBody is a chunked request body the test feeds piece by piece.
+func pipeBody(t *testing.T, e *env, sh share, owner string) (*io.PipeWriter, <-chan int) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	done := make(chan int, 1)
+	go func() { done <- e.upload(sh, owner, chunkedBody{pr}) }()
+	return pw, done
+}
+
+func TestConcurrentUploadsStoreOneCopy(t *testing.T) {
+	e := newEnv(t)
+	sh := e.create(1000, 1, 3600)
+	slow := randomContent(1000)
+
+	pw, slowDone := pipeBody(t, e, sh, sh.owner)
+	if _, err := pw.Write(slow[:999]); err != nil {
+		t.Fatal(err)
+	}
+	if status := e.upload(sh, sh.owner, sh.content); status != http.StatusNoContent {
+		t.Fatalf("fast upload: %d", status)
+	}
+	pw.Write(slow[999:])
+	pw.Close()
+	if status := <-slowDone; status != http.StatusConflict {
+		t.Errorf("slow upload: %d", status)
+	}
+	dl, _ := e.token(sh)
+	if _, body, _ := e.content(sh.id, dl.Token); !bytes.Equal(body, sh.content) {
+		t.Error("the acknowledged content was replaced")
+	}
+}
+
+func TestDeleteDuringUploadLeavesNothing(t *testing.T) {
+	e := newEnv(t)
+	sh := e.create(1000, 1, 3600)
+
+	pw, done := pipeBody(t, e, sh, sh.owner)
+	if _, err := pw.Write(sh.content[:999]); err != nil {
+		t.Fatal(err)
+	}
+	if status := e.remove(sh.id, sh.owner); status != http.StatusNoContent {
+		t.Fatalf("delete: %d", status)
+	}
+	pw.Write(sh.content[999:])
+	pw.Close()
+	if status := <-done; status != http.StatusNotFound {
+		t.Errorf("upload after delete: %d", status)
+	}
+	if e.blobExists(sh.id) {
+		t.Error("orphaned content left behind")
+	}
+}
+
+func TestSlowUploadStillGetsItsResponse(t *testing.T) {
+	e := newEnv(t)
+	sh := e.create(1000, 1, 3600)
+	pw, done := pipeBody(t, e, sh, sh.owner)
+	if _, err := pw.Write(sh.content[:999]); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond) // past the server's WriteTimeout
+	pw.Write(sh.content[999:])
+	pw.Close()
+	if status := <-done; status != http.StatusNoContent {
+		t.Errorf("slow upload: %d", status)
+	}
+}
+
+func TestGrantedDownloadSurvivesCleanup(t *testing.T) {
+	e := newEnv(t)
+	sh := e.shared(100, 2, 3600)
+	first, _ := e.token(sh)
+	second, _ := e.token(sh)
+	if err := e.job.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status, body, _ := e.content(sh.id, first.Token); status != http.StatusOK || !bytes.Equal(body, sh.content) {
+		t.Errorf("first download after cleanup: %d", status)
+	}
+	if !e.blobExists(sh.id) {
+		t.Fatal("content purged while a token was pending")
+	}
+	if status, body, _ := e.content(sh.id, second.Token); status != http.StatusOK || !bytes.Equal(body, sh.content) {
+		t.Errorf("second download: %d", status)
+	}
+	if e.blobExists(sh.id) {
+		t.Error("content survived the last download")
+	}
+}
+
+type failingBlobs struct{ blob.Store }
+
+func (failingBlobs) Put(context.Context, string, int64, io.Reader) error {
+	return errors.New("disk full")
+}
+
+func TestStorageFailureIsNotTheClientsFault(t *testing.T) {
+	var logs bytes.Buffer
+	e := newEnvWith(t, func(o *Options) {
+		o.Blobs = failingBlobs{o.Blobs}
+		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	})
+	sh := e.create(100, 1, 3600)
+	if status := e.upload(sh, sh.owner, sh.content); status != http.StatusInternalServerError {
+		t.Errorf("storage failure: %d", status)
+	}
+	if !strings.Contains(logs.String(), "disk full") {
+		t.Errorf("storage failure not logged: %s", logs.String())
+	}
+}
+
+func TestJSONBodiesAreBounded(t *testing.T) {
+	e := newEnv(t)
+	huge := []byte(`{"size":1000,"meta":"` + strings.Repeat("A", 20_000) + `"}`)
+	if status, _ := e.request(http.MethodPost, "/api/v1/files", huge, nil, nil); status != http.StatusBadRequest {
+		t.Errorf("oversized JSON: %d", status)
 	}
 }
