@@ -9,9 +9,15 @@
 	default_sni {$VAULT_DOMAIN:localhost}
 	# The container's filesystem is read-only; nothing to install the local root into.
 	skip_install_trust
-	# HTTP/3 would advertise the internal port; TCP only.
 	servers {
+		# HTTP/3 would advertise the internal port; TCP only.
 		protocols h1 h2
+		# vaultd's own limits. Bodies and responses get no fixed deadline here:
+		# vaultd gives each transfer one that grows with the file size.
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
 	}
 }
 
