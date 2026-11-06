@@ -19,8 +19,9 @@
 - Rationale: prevents attackers from probing whether a file exists
 
 ## D005 Metadata database
-- Date: TBD
-- Decision: start with SQLite and switch to PostgreSQL if multi-instance deployment is needed; confirm at the start of M2
+- Date: 2026-11-06
+- Decision: SQLite through `modernc.org/sqlite` (pure Go) in WAL mode, one instance; PostgreSQL only if multi-instance deployment is ever needed
+- Rationale: the image is a static binary built without CGO, which rules out the CGO SQLite driver; one writer at a time is enough here. Migrations are embedded SQL files applied by the standard library and queries are hand-written parameterized SQL (SPEC section 5), so neither a migration tool nor a code generator is needed
 
 ## D006 oxlint instead of ESLint
 - Date: 2026-11-05

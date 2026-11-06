@@ -16,11 +16,11 @@
 - [x] Document the ciphertext format in DECISIONS.md
 
 ## M2 Backend Core
-- [ ] Database tables and migrations
+- [x] Database tables and migrations
 - [ ] Storage interface and local disk implementation
 - [ ] Create-upload and streaming upload endpoints, with size limits
 - [ ] Metadata, challenge, download token and streaming download endpoints
-- [ ] Atomic download count decrement, with concurrency tests
+- [x] Atomic download count decrement, with concurrency tests
 - [ ] Delete token
 - [ ] Expiry cleanup job
 
