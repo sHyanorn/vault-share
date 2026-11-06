@@ -22,6 +22,7 @@
 - Date: 2026-11-06
 - Decision: SQLite through `modernc.org/sqlite` (pure Go) in WAL mode, one instance; PostgreSQL only if multi-instance deployment is ever needed
 - Rationale: the image is a static binary built without CGO, which rules out the CGO SQLite driver; one writer at a time is enough here. Migrations are embedded SQL files applied by the standard library and queries are hand-written parameterized SQL (SPEC section 5), so neither a migration tool nor a code generator is needed
+- Trade-off: `synchronous=NORMAL` with WAL means a power loss can roll back the newest download decrement, granting one extra download; blobs themselves are fsynced
 
 ## D006 oxlint instead of ESLint
 - Date: 2026-11-05
@@ -74,6 +75,7 @@
 
 ## D014 Download accounting
 - Date: 2026-11-06
-- Decision: the download count is taken when a signed challenge is accepted and the one-time download token is issued, in a single conditional UPDATE; the content upload requires the owner token; on the last permitted download the file is purged before the bytes are streamed. A challenge is valid for 2 minutes and a download token for 5 minutes, each for exactly one use
+- Decision: the download count is taken when a signed challenge is accepted and the one-time download token is issued, in a single conditional UPDATE; the content upload requires the owner token; on the last permitted download the file is removed before the bytes are streamed, unless another download token is still pending. A download token is valid for 5 minutes and for one use
+- Challenges are stateless: 32 bytes of expiry, nonce and an HMAC-SHA256 tag under a key drawn at startup, valid for 2 minutes. The server verifies the tag and then the client's signature over the whole challenge; replaying a signed challenge only spends the holder's own download count, so one-time bookkeeping is unnecessary (F8)
 - Rationale: Firefox Send counts a download when the stream finishes and without atomicity, so parallel requests can exceed the limit and an aborted download is free; counting at token issue closes both. The owner token on upload stops a third party from filling a slot it did not create
-- Trade-off: a download interrupted by the network consumes a count and the recipient needs a new link
+- Trade-off: a download interrupted by the network consumes a count and the recipient needs a new link. Transfers must sustain 512 KiB/s or they are cut off at their deadline
