@@ -1,0 +1,23 @@
+# F18: a create sent by a page on another origin (WSTG-v42-SESS-05)
+# scripts/browser_checks.cjs, check "a page on another site sends a create": headless
+# Chromium loads a page from http://127.0.0.1:<port>, which runs
+#   fetch('https://localhost/api/v1/files', {method: 'POST', mode: 'no-cors',
+#         headers: {'Content-Type': 'text/plain'}, body: <create JSON>})
+# The browser sends it without a CORS preflight and gives the page no response.
+# Whether the server acted shows only in the vaultd request log.
+
+## Before the fix: the page saw "TypeError: Failed to fetch", the record was created
+{"time":"2026-11-06T22:37:19.635930095Z","level":"INFO","msg":"request","method":"POST","path":"/api/v1/files","status":201,"bytes":176,"duration_ms":0}
+
+## After the fix: the same request is refused
+{"time":"2026-11-06T23:09:58.98834906Z","level":"INFO","msg":"request","method":"POST","path":"/api/v1/files","status":403,"bytes":75,"duration_ms":0}
+
+## The same case without a browser (scripts/blackbox.py, Compose stack)
+before  FAIL  cross-site   cross-site POST with fetch metadata is refused  (201 None)
+before  FAIL  cross-site   cross-origin POST from an older browser is refused  (201 None)
+before  PASS  cross-site   same-origin POST creates a file
+before  PASS  cross-site   POST from a non-browser client creates a file
+after   PASS  cross-site   cross-site POST with fetch metadata is refused
+after   PASS  cross-site   cross-origin POST from an older browser is refused
+after   PASS  cross-site   same-origin POST creates a file
+after   PASS  cross-site   POST from a non-browser client creates a file

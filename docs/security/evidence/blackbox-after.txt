@@ -1,0 +1,145 @@
+vault-share black-box checks against https://localhost
+PASS  tls          negotiates TLSv1.3 with TLS_AES_128_GCM_SHA256, certificate verified
+PASS  tls          refuses TLS 1.0
+PASS  tls          refuses TLS 1.1
+PASS  tls          refuses TLS 1.2 with CBC or RSA key exchange suites
+PASS  redirect     plain HTTP answers a permanent redirect to the same HTTPS URL
+PASS  headers      GET / [200] carries every security header
+PASS  headers      GET /assets/index-EoXj2U8B.js [200] carries every security header
+PASS  headers      GET /f/c2eTvjpf8rWP8N6IeRu_7g [200] carries every security header
+PASS  headers      GET /healthz [200] carries every security header
+PASS  headers      GET /api/v1/files/ZMOcYe0hoAZ1Uc-7J3JjCA/meta [404] carries every security header
+PASS  headers      PATCH /api/v1/files [405] carries every security header
+PASS  headers      POST /api/v1/nope [404] carries every security header
+PASS  page         index.html has no inline script, event handler or style attribute
+PASS  page         the bundle references no source map
+PASS  page         no source map is served next to the bundle
+PASS  cache        create response is no-store
+PASS  cache        metadata and challenge are no-store
+PASS  cache        download token response is no-store
+PASS  cache        the ciphertext comes back unchanged
+PASS  cache        ciphertext response is no-store
+PASS  cache        ciphertext is an attachment of type application/octet-stream
+PASS  cors         GET /api/v1/files/UnewIDuf6uA2LHuER0NNtA/meta [200] grants no cross-origin read
+PASS  cors         GET /api/v1/files/gVAIHSPm1cY9LdyD1Wzz4Q/meta [404] grants no cross-origin read
+PASS  cors         GET /healthz [200] grants no cross-origin read
+PASS  cors         CORS preflight is refused [405]
+PASS  cross-site   cross-site POST with fetch metadata is refused
+PASS  cross-site   cross-origin POST from an older browser is refused
+PASS  cross-site   same-origin POST creates a file
+PASS  cross-site   POST from a non-browser client creates a file
+PASS  methods      TRACE / is refused [405]
+PASS  methods      OPTIONS / is refused [405]
+PASS  methods      PATCH / is refused [405]
+PASS  methods      PROPFIND / is refused [405]
+PASS  methods      FOO / is refused [405]
+PASS  methods      TRACE /healthz is refused [405]
+PASS  methods      OPTIONS /healthz is refused [405]
+PASS  methods      PATCH /healthz is refused [405]
+PASS  methods      PROPFIND /healthz is refused [405]
+PASS  methods      FOO /healthz is refused [405]
+PASS  methods      TRACE /api/v1/files is refused [405]
+PASS  methods      OPTIONS /api/v1/files is refused [405]
+PASS  methods      PATCH /api/v1/files is refused [405]
+PASS  methods      PROPFIND /api/v1/files is refused [405]
+PASS  methods      FOO /api/v1/files is refused [405]
+PASS  methods      TRACE /api/v1/files/VVPuu7regqlplGsNsQj3Wg/meta is refused [405]
+PASS  methods      OPTIONS /api/v1/files/VVPuu7regqlplGsNsQj3Wg/meta is refused [405]
+PASS  methods      PATCH /api/v1/files/VVPuu7regqlplGsNsQj3Wg/meta is refused [405]
+PASS  methods      PROPFIND /api/v1/files/VVPuu7regqlplGsNsQj3Wg/meta is refused [405]
+PASS  methods      FOO /api/v1/files/VVPuu7regqlplGsNsQj3Wg/meta is refused [405]
+PASS  methods      method override headers and parameters are ignored
+PASS  errors       malformed JSON gets a client error without internals [400]
+PASS  errors       unknown API route gets a client error without internals [404]
+PASS  errors       oversized header gets a client error without internals [431]
+PASS  errors       bad download body gets a client error without internals [400]
+PASS  traversal    GET /../../../../etc/passwd serves no file outside the web root [400]
+PASS  traversal    GET /..%2f..%2f..%2f..%2fetc%2fpasswd serves no file outside the web root [400]
+PASS  traversal    GET /%2e%2e/%2e%2e/%2e%2e/etc/passwd serves no file outside the web root [400]
+PASS  traversal    GET /%252e%252e/%252e%252e/etc/passwd serves no file outside the web root [200, app shell]
+PASS  traversal    GET /assets/../../../../etc/passwd serves no file outside the web root [400]
+PASS  traversal    GET /assets/..%2f..%2f..%2fetc%2fpasswd serves no file outside the web root [400]
+PASS  traversal    GET /..\..\..\etc\passwd serves no file outside the web root [400]
+PASS  traversal    GET /assets/ serves no file outside the web root [200, app shell]
+PASS  traversal    GET /assets serves no file outside the web root [200, app shell]
+PASS  traversal    GET /.git/config serves no file outside the web root [200, app shell]
+PASS  traversal    GET /.env serves no file outside the web root [200, app shell]
+PASS  traversal    GET /vault.db serves no file outside the web root [200, app shell]
+PASS  traversal    GET /data/vault.db serves no file outside the web root [200, app shell]
+PASS  traversal    GET /audit.key serves no file outside the web root [200, app shell]
+PASS  traversal    GET /data/audit.key serves no file outside the web root [200, app shell]
+PASS  traversal    GET /blobs/ serves no file outside the web root [200, app shell]
+PASS  traversal    GET /proc/self/environ serves no file outside the web root [200, app shell]
+PASS  traversal    GET /index.html%00.js serves no file outside the web root [200, app shell]
+PASS  traversal    GET /api/v1/files/..%2f..%2fvault.db/meta is refused [404]
+PASS  traversal    GET /api/v1/files/%2e%2e/meta is refused [404]
+PASS  traversal    GET /api/v1/files/..%2F..%2Fdata%2Faudit.key/content?token=x is refused [404]
+PASS  input        create rejects JSON array [400 invalid_request]
+PASS  input        create rejects unknown field [400 invalid_request]
+PASS  input        create rejects body over 16 KiB [400 invalid_request]
+PASS  input        create rejects meta not base64url [400 invalid_request]
+PASS  input        create rejects meta with padding [400 invalid_request]
+PASS  input        create rejects meta under 28 bytes [400 invalid_request]
+PASS  input        create rejects meta over 4096 bytes [400 invalid_request]
+PASS  input        create rejects SQL in meta [400 invalid_request]
+PASS  input        create rejects size below the ciphertext minimum [400 invalid_request]
+PASS  input        create rejects negative size [400 invalid_request]
+PASS  input        create rejects size over the limit [400 too_large]
+PASS  input        create rejects size as a string [400 invalid_request]
+PASS  input        create rejects fractional size [400 invalid_request]
+PASS  input        create rejects null fields [400 invalid_request]
+PASS  input        create rejects expiry not offered [400 invalid_request]
+PASS  input        create rejects zero downloads [400 invalid_request]
+PASS  input        create rejects 101 downloads [400 invalid_request]
+PASS  input        create rejects 31-byte auth key [400 invalid_request]
+PASS  input        create rejects 33-byte auth key [400 invalid_request]
+PASS  input        GET /api/v1/files/'%20OR%20'1'='1/meta is refused without detail [404]
+PASS  input        GET /api/v1/files/dHzXr3-oPdXE8Zz7djqYgA'--/meta is refused without detail [404]
+PASS  input        GET /api/v1/files/y-rdz3FCkqozCiTkue2Mgw/content?token='%20OR%20'1'='1 is refused without detail [404]
+PASS  input        GET /api/v1/files/%00/meta is refused without detail [404]
+PASS  not-found    content of a live id with a wrong token is the same 404
+PASS  not-found    upload to a live id with a wrong owner token is the same 404
+PASS  not-found    delete of a live id with a wrong owner token is the same 404
+PASS  not-found    download of a live id with a bad signature is the same 404
+PASS  not-found    metadata of a missing id is the same 404
+PASS  not-found    content of a missing id with a wrong token is the same 404
+PASS  not-found    upload to a missing id with a wrong owner token is the same 404
+PASS  not-found    delete of a missing id with a wrong owner token is the same 404
+PASS  not-found    download of a missing id with a bad signature is the same 404
+PASS  not-found    metadata of a deleted id is the same 404
+PASS  not-found    content of a deleted id with a wrong token is the same 404
+PASS  not-found    upload to a deleted id with a wrong owner token is the same 404
+PASS  not-found    delete of a deleted id with a wrong owner token is the same 404
+PASS  not-found    download of a deleted id with a bad signature is the same 404
+PASS  not-found    metadata of a malformed id is the same 404
+PASS  not-found    content of a malformed id with a wrong token is the same 404
+PASS  not-found    upload to a malformed id with a wrong owner token is the same 404
+PASS  not-found    delete of a malformed id with a wrong owner token is the same 404
+PASS  not-found    download of a malformed id with a bad signature is the same 404
+PASS  not-found    a malformed download body gets 400 for live and missing ids alike
+PASS  access       upload without the owner token is refused
+PASS  access       another file's owner token cannot upload
+PASS  access       the owner token uploads its own file
+PASS  access       a signature with another file's key is refused
+PASS  access       a download token is bound to its file
+PASS  access       a download token works once
+PASS  access       the owner token is no download token
+PASS  access       another file's owner token cannot delete
+PASS  access       the owner token deletes, the file is gone
+PASS  access       the last permitted download still completes, and the file is gone at once
+PASS  upload       a body that differs from the declared size is refused
+PASS  upload       the exact size uploads after failed attempts
+PASS  upload       a second upload is refused and cannot replace the content
+PASS  upload       the stored content is the first complete upload
+PASS  lockout      five bad signatures each get the plain 404
+PASS  lockout      the correct signature is refused while the file is locked
+PASS  lockout      the lock covers that one file only
+PASS  rate-limit   creates answer 429 with Retry-After once the client's bucket is empty
+PASS  rate-limit   five more creates, each naming a new client address in forwarding headers, get 429 too
+PASS  framing      a request with two different Content-Length values is refused [HTTP/1.1 400 Bad Request]
+PASS  framing      a request with a Transfer-Encoding with a space before the colon is refused [HTTP/1.1 400 Bad Request: invalid header name]
+PASS  framing      a request with an unsupported transfer coding is refused [HTTP/1.1 501 Not Implemented]
+PASS  host         a foreign Host header is not reflected [200]
+PASS  slow-headers a connection that never finishes its headers is closed within 15 s
+
+142 passed, 0 failed, 0 skipped

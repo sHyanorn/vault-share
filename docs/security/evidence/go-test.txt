@@ -1,0 +1,14 @@
+$ go vet ./...
+exit 0
+
+$ go test -race -count=1 ./...
+?   	github.com/sHyanorn/vault-share/server/cmd/vaultd	[no test files]
+ok  	github.com/sHyanorn/vault-share/server/internal/api	5.284s
+ok  	github.com/sHyanorn/vault-share/server/internal/audit	1.264s
+ok  	github.com/sHyanorn/vault-share/server/internal/blob	1.028s
+?   	github.com/sHyanorn/vault-share/server/internal/cleanup	[no test files]
+ok  	github.com/sHyanorn/vault-share/server/internal/config	1.015s
+ok  	github.com/sHyanorn/vault-share/server/internal/store	1.625s
+exit 0
+
+top-level tests: 72

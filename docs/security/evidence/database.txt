@@ -1,0 +1,14 @@
+files columns: ['id', 'size_bytes', 'meta_ciphertext', 'auth_key', 'owner_token_hash', 'downloads_left', 'expires_at', 'created_at', 'uploaded_at', 'charge']
+audit_log columns: ['id', 'event', 'file_id', 'ip_hash', 'ua_hash', 'created_at']
+download_tokens columns: ['token_hash', 'file_id', 'expires_at']
+
+audit events by type: {'client.locked': 1, 'download.denied': 7, 'download.granted': 10, 'file.created': 28, 'file.deleted': 14, 'file.uploaded': 19}
+distinct client hashes: 1
+
+latest audit rows (event, file id, client hash, user agent hash):
+   file.created pLlgFxyzhUjWgs8TXz0I-Q 4938B79EFEB31C82... C8B3DF55D77D0747...
+   download.granted JLuEIaIPIDVKXjrHrihyKg 4938B79EFEB31C82... C8B3DF55D77D0747...
+   file.uploaded JLuEIaIPIDVKXjrHrihyKg 4938B79EFEB31C82... C8B3DF55D77D0747...
+   file.created JLuEIaIPIDVKXjrHrihyKg 4938B79EFEB31C82... C8B3DF55D77D0747...
+
+a files row holds: meta ciphertext 40 B, auth key 32 B, owner token hash 32 B
