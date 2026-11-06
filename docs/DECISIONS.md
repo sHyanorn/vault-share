@@ -111,12 +111,14 @@
 - Decision: with a password, the link carries the 16-byte secret wrapped with AES-256-GCM under a key derived from the password by Argon2id (64 MiB, 2 passes, 1 lane, 16-byte salt) using `hash-wasm` 4.12.0 (MIT, WebAssembly inlined, no further dependencies). The server is unchanged and does not know whether a password exists
 - Rationale: SPEC section 4; the OWASP Password Storage Cheat Sheet lists 19 MiB with 2 passes as the minimum and 46 MiB with 1 pass as an equivalent, and 64 MiB with 2 passes stays above both while taking well under a second in Chromium. Firefox Send only re-keyed the server-side authentication with PBKDF2 at 100 iterations, so its link still carried the file key
 - Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess, and the server never sees a guess, so no lockout applies. A weak password remains a weak password. Browser password managers may offer to save the per-file password under the site origin
+- Minimum (F21): wrapping needs a password of at least 8 code points, the floor of OWASP ASVS 5.0 (6.2.1) and of NIST SP 800-63B-4 for a password used with another factor, here the link; unwrapping accepts any length, so links made before the minimum still open
 
 ## D020 Caddy runs unprivileged
 - Date: 2026-11-06
 - Decision: `Dockerfile.caddy` runs Caddy as uid 65532 with a read-only root filesystem and no capabilities; it listens on 8080 and 8443 inside the container and Compose maps 80 and 443 to them
 - Rationale: SPEC section 8 asks every container to run as a non-root user; binding the privileged ports would have required a capability, and Caddy's `http_port` and `https_port` options exist for exactly this port-forwarding setup
 - Note: HTTP/3 is off because Caddy would advertise the internal port in `Alt-Svc`; a deployment that upgrades from the root-owned Caddy needs fresh `caddy-data` and `caddy-config` volumes
+- Timeouts (F19): `read_header 10s` and `idle 2m`, the values of vaultd's own server; bodies and responses are left to vaultd, which gives each transfer a deadline from its size
 
 ## D021 Storage quota and per-client storage budget
 - Date: 2026-11-06
@@ -124,3 +126,16 @@
 - Rationale: F17 showed creation had no global bound. The overhead charge makes the quota a bound on disk for small files too and caps the record count at quota / 64 KiB; the per-client budget stops one client from holding the whole quota by re-reserving large uploads that never arrive. The disk a deployment needs is about the quota plus the audit cap (D018)
 - Rejected: a global cap on records awaiting their content. With the per-client creation limit two ordinary clients could fill a cap of 1,000 and block every upload for an hour, and it would not have protected audit retention, because small files that are actually uploaded leave the pending state
 - Trade-off: a group of clients with real upload bandwidth (five at the defaults) can fill the quota in a day and keep uploads unavailable until their files expire, up to seven days. Public instances need protection upstream; operators size the quota to the disk
+
+## D022 Cross-origin writes are refused
+- Date: 2026-11-06
+- Decision: the API runs behind Go's `http.CrossOriginProtection`. A write (any method but GET, HEAD and OPTIONS) is refused when its `Sec-Fetch-Site` is neither `same-origin` nor `none`, or, from a browser that sends no Fetch Metadata, when its `Origin` host differs from `Host`. Refusals answer 403 with code `cross_origin` before the rate limiter, so they spend no client budget. Requests with neither header, such as scripts, pass
+- Rationale: F18. The check is in the standard library since Go 1.25 and follows the Fetch Metadata isolation policy that OWASP recommends against CSRF; the API has no sessions, so no token is needed. Requiring `application/json` would also force a preflight, but only through the CORS rules, without stating the rule
+- Trade-off: a web client served from another origin than the API would need `AddTrustedOrigin`
+
+## D023 No Subresource Integrity
+- Date: 2026-11-06
+- Decision: the client's scripts and styles carry no `integrity` attributes, and SPEC section 4 no longer lists Subresource Integrity as a mitigation
+- Rationale: every asset comes from the same origin as the page that references it. SRI protects a page against a third party that alters a sub-resource, such as a CDN; an attacker in control of the server (A4) serves index.html as well and rewrites the hashes along with the scripts
+- Revisit: if assets move to another origin
+
