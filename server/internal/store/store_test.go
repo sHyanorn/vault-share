@@ -344,3 +344,23 @@ func TestAuditLog(t *testing.T) {
 		t.Errorf("after purge: %+v", got)
 	}
 }
+
+func TestTrimAuditKeepsTheNewest(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		if err := s.RecordAudit(ctx, AuditEntry{Event: "e", FileID: string(rune('a' + i)), At: t0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.TrimAudit(ctx, 20); err != nil || n != 0 {
+		t.Errorf("under the cap: dropped %d, err %v", n, err)
+	}
+	if n, err := s.TrimAudit(ctx, 4); err != nil || n != 6 {
+		t.Errorf("over the cap: dropped %d, err %v", n, err)
+	}
+	got, _ := s.RecentAudit(ctx, 100)
+	if len(got) != 4 || got[0].FileID != "j" || got[3].FileID != "g" {
+		t.Errorf("kept %+v", got)
+	}
+}

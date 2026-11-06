@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,5 +88,63 @@ func TestPurgeKeepsRecentEntries(t *testing.T) {
 	entries, _ := st.RecentAudit(ctx, 10)
 	if len(entries) != 1 || entries[0].FileID != "new" {
 		t.Errorf("after purge: %+v", entries)
+	}
+}
+
+func TestFailureEventsShareABudget(t *testing.T) {
+	r, st := newRecorder(t, t.TempDir())
+	var logs bytes.Buffer
+	r.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx := context.Background()
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	r.Now = func() time.Time { return now }
+
+	for i := 0; i < failureBurst+40; i++ {
+		r.Record(ctx, DownloadDenied, "file", Client{IP: "203.0.113.1"})
+	}
+	r.Record(ctx, ClientLocked, "file", Client{IP: "203.0.113.1"})
+	r.Record(ctx, FileCreated, "file", Client{IP: "203.0.113.1"})
+
+	entries, _ := st.RecentAudit(ctx, 1000)
+	counts := map[string]int{}
+	for _, e := range entries {
+		counts[e.Event]++
+	}
+	if counts[DownloadDenied] != failureBurst || counts[ClientLocked] != 0 || counts[FileCreated] != 1 {
+		t.Errorf("counts %v", counts)
+	}
+	if err := r.Purge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `"count":41`) || strings.Contains(logs.String(), "203.0.113.1") {
+		t.Errorf("skip log %s", logs.String())
+	}
+	now = now.Add(10 * time.Second)
+	for i := 0; i < 20; i++ {
+		r.Record(ctx, DownloadDenied, "file", Client{})
+	}
+	entries, _ = st.RecentAudit(ctx, 1000)
+	if got := len(entries); got != failureBurst+1+10 {
+		t.Errorf("%d entries after the budget refilled for 10s, want %d", got, failureBurst+1+10)
+	}
+}
+
+func TestPurgeTrimsToTheCap(t *testing.T) {
+	r, st := newRecorder(t, t.TempDir())
+	var logs bytes.Buffer
+	r.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	r.max = 5
+	ctx := context.Background()
+	for i := 0; i < 8; i++ {
+		r.Record(ctx, FileCreated, "f", Client{})
+	}
+	if err := r.Purge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := st.RecentAudit(ctx, 100); len(entries) != 5 {
+		t.Errorf("%d entries, cap 5", len(entries))
+	}
+	if !strings.Contains(logs.String(), "over capacity") || !strings.Contains(logs.String(), `"count":3`) {
+		t.Errorf("trim log %s", logs.String())
 	}
 }
