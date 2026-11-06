@@ -481,9 +481,9 @@ func TestStorageRefundWithARealClock(t *testing.T) {
 	}
 }
 
-// Another site must not write through its visitors' browsers; reads and
+// Another site must not reach the API through its visitors' browsers;
 // non-browser clients are unaffected.
-func TestCrossOriginWritesAreRefused(t *testing.T) {
+func TestCrossOriginRequestsAreRefused(t *testing.T) {
 	e := newEnv(t)
 	create := func(headers map[string]string) (int, []byte) {
 		body := createRequest{Size: 100, Meta: encoding.EncodeToString(randomContent(64)),
@@ -513,7 +513,7 @@ func TestCrossOriginWritesAreRefused(t *testing.T) {
 		}
 	}
 
-	// Every write is refused even with valid credentials; reads pass.
+	// Requests are refused even with valid credentials, reads included.
 	pending := e.create(100, 1, 3600)
 	cross := map[string]string{"Sec-Fetch-Site": "cross-site", "Authorization": "Bearer " + pending.owner}
 	if status, _ := e.request(http.MethodPut, "/api/v1/files/"+pending.id+"/content", pending.content, cross, nil); status != http.StatusForbidden {
@@ -524,9 +524,12 @@ func TestCrossOriginWritesAreRefused(t *testing.T) {
 	if status, _ := e.request(http.MethodDelete, "/api/v1/files/"+sh.id, nil, cross, nil); status != http.StatusForbidden {
 		t.Errorf("cross-site delete: %d", status)
 	}
-	var m metaResponse
-	if status, _ := e.request(http.MethodGet, "/api/v1/files/"+sh.id+"/meta", nil, cross, &m); status != http.StatusOK {
-		t.Fatalf("cross-site metadata read: %d", status)
+	if status, _ := e.request(http.MethodGet, "/api/v1/files/"+sh.id+"/meta", nil, cross, nil); status != http.StatusForbidden {
+		t.Errorf("cross-site metadata read: %d", status)
+	}
+	m, status := e.meta(sh.id)
+	if status != http.StatusOK {
+		t.Fatalf("same-origin metadata read: %d", status)
 	}
 	signed := downloadRequest{Challenge: m.Challenge, Signature: sign(sh.authKey, m.Challenge)}
 	if status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download", signed, cross, nil); status != http.StatusForbidden {
@@ -534,5 +537,29 @@ func TestCrossOriginWritesAreRefused(t *testing.T) {
 	}
 	if _, status := e.download(sh.id, m.Challenge, signed.Signature); status != http.StatusOK {
 		t.Errorf("same-origin download after the refusals: %d", status)
+	}
+}
+
+// Refused requests never reach the limiter, so another site cannot drain a
+// visitor's budget with reads it is not allowed to see.
+func TestCrossSiteRequestsSpendNoBudget(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) {
+		o.Limits = &Limits{General: Budget{PerMinute: 1, Burst: 3}, Create: Budget{PerMinute: 1000, Burst: 1000},
+			Download: Budget{PerMinute: 1000, Burst: 1000}, Storage: Budget{PerMinute: 1e12, Burst: 1 << 40}}
+	})
+	path := "/api/v1/files/" + encoding.EncodeToString(randomContent(16)) + "/meta"
+	cross := map[string]string{"Sec-Fetch-Site": "cross-site"}
+	for i := 0; i < 10; i++ {
+		if status, _ := e.request(http.MethodGet, path, nil, cross, nil); status != http.StatusForbidden {
+			t.Fatalf("cross-site read %d: %d", i, status)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if status, _ := e.request(http.MethodGet, path, nil, nil, nil); status != http.StatusNotFound {
+			t.Fatalf("read %d of the burst: %d", i, status)
+		}
+	}
+	if status, _ := e.request(http.MethodGet, path, nil, nil, nil); status != http.StatusTooManyRequests {
+		t.Errorf("read past the burst: %d", status)
 	}
 }
