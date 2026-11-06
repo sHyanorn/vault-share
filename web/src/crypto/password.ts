@@ -20,13 +20,23 @@ const TAG_LENGTH = 16
 export const WRAPPED_LENGTH =
   SALT_LENGTH + IV_LENGTH + SECRET_LENGTH + TAG_LENGTH
 
+/** In code points. Offline guessing makes a short password nearly worthless. */
+export const MIN_PASSWORD_LENGTH = 8
+
+export function passwordTooShort(password: string): boolean {
+  return Array.from(password).length < MIN_PASSWORD_LENGTH
+}
+
 export async function wrapSecret(
   secret: Uint8Array<ArrayBuffer>,
   password: string,
 ): Promise<Uint8Array<ArrayBuffer>> {
   if (secret.length !== SECRET_LENGTH)
     throw new Error('secret must be 16 bytes')
-  if (password === '') throw new Error('password must not be empty')
+  if (passwordTooShort(password))
+    throw new Error(
+      `password must have at least ${MIN_PASSWORD_LENGTH} characters`,
+    )
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH))
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
   const key = await wrappingKey(password, salt)
@@ -44,7 +54,10 @@ export async function wrapSecret(
   return out
 }
 
-/** Returns null for a wrong password; throws only on a malformed input. */
+/**
+ * Returns null for a wrong password; throws only on a malformed input. Any
+ * length is tried, so links made before the minimum length still open.
+ */
 export async function unwrapSecret(
   wrapped: Uint8Array<ArrayBuffer>,
   password: string,

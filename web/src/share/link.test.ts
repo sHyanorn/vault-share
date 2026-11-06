@@ -48,7 +48,7 @@ describe('share link', () => {
 describe('password-protected link', () => {
   it('carries the wrapped secret and never the secret itself', async () => {
     const secret = generateSecret()
-    const wrapped = await wrapSecret(secret, 'pw')
+    const wrapped = await wrapSecret(secret, 'open sesame')
     const link = new URL(buildLink('https://share.example', id, wrapped))
     expect(link.hash).not.toContain(toBase64Url(secret))
     const parsed = parseLocation(link.pathname, link.hash)
