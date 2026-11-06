@@ -10,7 +10,7 @@ Zero-knowledge, end-to-end encrypted file sharing. Files are encrypted in the br
 docker compose up --build
 ```
 
-Then open <https://localhost>. Caddy issues a locally trusted certificate for `localhost`; the browser will warn once unless you run `caddy trust`.
+Then open <https://localhost>. Caddy signs the `localhost` certificate with its own local CA, so the browser warns once; accept it for local use.
 
 For development without Docker: `cd server && go run ./cmd/vaultd` and `cd web && npm install && npm run dev`. Settings are documented in [.env.example](.env.example).
 
