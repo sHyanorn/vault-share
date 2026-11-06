@@ -1,0 +1,1 @@
+# ZAP baseline rules: <rule id><TAB>IGNORE|WARN|FAIL<TAB>(name). Everything not listed stays WARN.
