@@ -26,7 +26,7 @@ export interface UploadOptions {
 }
 
 export interface Progress {
-  phase: 'encrypting' | 'uploading' | 'downloading'
+  phase: 'encrypting' | 'uploading' | 'decrypting'
   fraction: number
 }
 
@@ -64,9 +64,12 @@ export async function uploadFile(
         onProgress({ phase: 'encrypting', fraction }),
       ),
     )
-  const ciphertext = await collect(encryptStream(counted, keys.fileKey))
+  // The browser streams the Blob into its own storage as records are sealed.
+  const ciphertext = await new Response(encryptStream(counted, keys.fileKey), {
+    headers: { 'Content-Type': 'application/octet-stream' },
+  }).blob()
   await api.uploadContent(
-    created.upload_url,
+    created.id,
     ciphertext,
     created.owner_token,
     (fraction) => onProgress({ phase: 'uploading', fraction }),
@@ -86,8 +89,8 @@ export function deleteShare(share: Share): Promise<void> {
 export interface ShareInfo {
   id: string
   name: string
-  type: string
   size: number
+  ciphertextSize: number
   downloadsLeft: number
   expiresAt: Date
   keys: DerivedKeys
@@ -102,33 +105,46 @@ export async function openShare(
   return {
     id,
     name: file.name,
-    type: file.type,
     size: file.size,
+    ciphertextSize: meta.size,
     downloadsLeft: meta.downloads_left,
     expiresAt: new Date(meta.expires_at * 1000),
     keys,
   }
 }
 
+/**
+ * Takes one download and streams the file into the sink. onGranted reports
+ * the downloads left once the count is spent, which happens before any byte
+ * arrives; a failure after that point cannot be retried for free.
+ */
 export async function downloadShare(
   info: ShareInfo,
   sink: Sink,
   onProgress: (progress: Progress) => void,
+  onGranted: (downloadsLeft: number) => void = () => {},
 ): Promise<void> {
-  const meta = await api.getMeta(info.id) // a fresh challenge
-  const signature = await signChallenge(
-    info.keys.authKey,
-    fromBase64Url(meta.challenge),
-  )
-  const granted = await api.requestDownload(
-    info.id,
-    meta.challenge,
-    toBase64Url(signature),
-  )
-  const body = await api.downloadContent(info.id, granted.token)
+  let body: ReadableStream<Uint8Array>
+  try {
+    const meta = await api.getMeta(info.id) // a fresh challenge
+    const signature = await signChallenge(
+      info.keys.authKey,
+      fromBase64Url(meta.challenge),
+    )
+    const granted = await api.requestDownload(
+      info.id,
+      meta.challenge,
+      toBase64Url(signature),
+    )
+    onGranted(granted.downloads_left)
+    body = await api.downloadContent(info.id, granted.token)
+  } catch (error) {
+    await sink.discard().catch(() => {})
+    throw error
+  }
   const counted = body.pipeThrough(
-    counter(encryptedSize(info.size), (fraction) =>
-      onProgress({ phase: 'downloading', fraction }),
+    counter(info.ciphertextSize, (fraction) =>
+      onProgress({ phase: 'decrypting', fraction }),
     ),
   )
   await sink.consume(decryptStream(counted, info.keys.fileKey))
@@ -143,18 +159,4 @@ function counter(total: number, onFraction: (fraction: number) => void) {
       controller.enqueue(chunk)
     },
   })
-}
-
-/** Gathers the stream into a Blob; browsers page large Blobs out to disk. */
-async function collect(
-  stream: ReadableStream<Uint8Array<ArrayBuffer>>,
-): Promise<Blob> {
-  const parts: Uint8Array<ArrayBuffer>[] = []
-  const reader = stream.getReader()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    parts.push(value)
-  }
-  return new Blob(parts, { type: 'application/octet-stream' })
 }

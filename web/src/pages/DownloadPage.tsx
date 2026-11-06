@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
 import { parseLocation } from '../share/link.ts'
-import { chooseSink } from '../share/save.ts'
+import { chooseSink, type Sink } from '../share/save.ts'
 import {
   downloadShare,
   openShare,
@@ -16,9 +16,10 @@ type Phase =
   | { kind: 'loading' }
   | { kind: 'invalid' }
   | { kind: 'unavailable' }
+  | { kind: 'offline' }
   | { kind: 'ready'; info: ShareInfo }
   | { kind: 'downloading'; info: ShareInfo; progress: ShareProgress }
-  | { kind: 'done'; info: ShareInfo }
+  | { kind: 'done'; info: ShareInfo; sink: Sink['kind'] }
   | { kind: 'failed'; info: ShareInfo; message: string }
 
 export default function DownloadPage() {
@@ -28,6 +29,16 @@ export default function DownloadPage() {
   const [phase, setPhase] = useState<Phase>(
     location ? { kind: 'loading' } : { kind: 'invalid' },
   )
+  const [attempt, setAttempt] = useState(0)
+  const busy = useRef(false)
+  const granted = useRef<number | null>(null)
+
+  // A corrected link pasted into the same tab changes only the fragment.
+  useEffect(() => {
+    const reload = () => window.location.reload()
+    window.addEventListener('hashchange', reload)
+    return () => window.removeEventListener('hashchange', reload)
+  }, [])
 
   useEffect(() => {
     if (!location) return
@@ -37,44 +48,60 @@ export default function DownloadPage() {
         if (!cancelled) setPhase({ kind: 'ready', info })
       })
       .catch((error: unknown) => {
-        if (cancelled) return
-        setPhase(
-          error instanceof ApiError
-            ? { kind: 'unavailable' }
-            : { kind: 'invalid' },
-        )
+        if (!cancelled) setPhase(openFailure(error))
       })
     return () => {
       cancelled = true
     }
-  }, [location])
+  }, [location, attempt])
+
+  function retryOpen() {
+    setPhase({ kind: 'loading' })
+    setAttempt((n) => n + 1)
+  }
 
   async function download(info: ShareInfo) {
-    const sink = await chooseSink(safeFileName(info.name), info.type)
-    if (!sink) return
-    setPhase({
-      kind: 'downloading',
-      info,
-      progress: { phase: 'downloading', fraction: 0 },
-    })
+    if (busy.current) return
+    busy.current = true
+    granted.current = null
     try {
-      await downloadShare(info, sink, (progress) =>
-        setPhase({ kind: 'downloading', info, progress }),
+      const sink = await chooseSink(safeFileName(info.name))
+      if (!sink) return
+      setPhase({
+        kind: 'downloading',
+        info,
+        progress: { phase: 'decrypting', fraction: 0 },
+      })
+      await downloadShare(
+        info,
+        sink,
+        (progress) => {
+          if (busy.current) setPhase({ kind: 'downloading', info, progress })
+        },
+        (left) => {
+          granted.current = left
+        },
       )
-      setPhase({ kind: 'done', info })
+      setPhase({ kind: 'done', info, sink: sink.kind })
     } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
+      // Gone, or this was the last permitted download: nothing to retry.
+      if (
+        (error instanceof ApiError && error.status === 404) ||
+        granted.current === 0
+      ) {
         setPhase({ kind: 'unavailable' })
-        return
+      } else {
+        setPhase({ kind: 'failed', info, message: describe(error) })
       }
-      setPhase({ kind: 'failed', info, message: describe(error) })
+    } finally {
+      busy.current = false
     }
   }
 
   switch (phase.kind) {
     case 'loading':
       return (
-        <section className="card stack" aria-busy="true">
+        <section key="loading" className="card stack" aria-busy="true">
           <div className="hero">
             <FileIcon />
             <div className="skeleton" />
@@ -83,7 +110,7 @@ export default function DownloadPage() {
       )
     case 'invalid':
       return (
-        <section className="card stack enter" role="alert">
+        <section key="invalid" className="card stack enter" role="alert">
           <Hero
             icon={<LinkOffIcon />}
             title="This link is incomplete"
@@ -94,7 +121,7 @@ export default function DownloadPage() {
       )
     case 'unavailable':
       return (
-        <section className="card stack enter" role="alert">
+        <section key="unavailable" className="card stack enter" role="alert">
           <Hero
             icon={<LinkOffIcon />}
             title="This file is no longer available"
@@ -103,9 +130,20 @@ export default function DownloadPage() {
           />
         </section>
       )
+    case 'offline':
+      return (
+        <section key="offline" className="card stack enter" role="alert">
+          <Hero
+            icon={<LinkOffIcon />}
+            title="The server could not be reached"
+            tone="muted"
+          />
+          <Button onClick={retryOpen}>Try again</Button>
+        </section>
+      )
     case 'ready':
       return (
-        <section className="card stack enter">
+        <section key="ready" className="card stack enter">
           <FileHero info={phase.info} />
           <Button onClick={() => download(phase.info)}>
             <DownloadIcon /> Download
@@ -114,25 +152,27 @@ export default function DownloadPage() {
       )
     case 'downloading':
       return (
-        <section className="card stack" aria-live="polite">
+        <section key="downloading" className="card stack">
           <FileHero info={phase.info} />
           <Progress label="Decrypting" fraction={phase.progress.fraction} />
         </section>
       )
     case 'done':
       return (
-        <section className="card stack enter">
+        <section key="done" className="card stack enter">
           <Hero
             icon={<CheckIcon />}
             title={safeFileName(phase.info.name)}
-            text="Saved to your device."
+            text={
+              phase.sink === 'file' ? 'Saved to your device.' : 'Downloaded.'
+            }
             tone="ok"
           />
         </section>
       )
     case 'failed':
       return (
-        <section className="card stack enter" role="alert">
+        <section key="failed" className="card stack enter" role="alert">
           <Hero
             icon={<LinkOffIcon />}
             title="Download failed"
@@ -159,8 +199,15 @@ function FileHero({ info }: { info: ShareInfo }) {
   )
 }
 
+function openFailure(error: unknown): Phase {
+  if (error instanceof ApiError)
+    return error.status === 404 ? { kind: 'unavailable' } : { kind: 'offline' }
+  return { kind: 'invalid' }
+}
+
 function describe(error: unknown): string {
-  if (error instanceof ApiError && error.code === 'network')
-    return 'The server could not be reached.'
-  return 'The file could not be decrypted. Nothing was saved.'
+  if (error instanceof ApiError) return 'The server could not be reached.'
+  if (error instanceof TypeError)
+    return 'The connection was interrupted. The download was discarded.'
+  return 'The file could not be decrypted. The download was discarded.'
 }

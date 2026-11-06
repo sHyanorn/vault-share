@@ -47,14 +47,14 @@ export function createFile(req: CreateRequest): Promise<CreateResponse> {
 
 /** Streams the ciphertext with XMLHttpRequest, the one transport with upload progress everywhere. */
 export function uploadContent(
-  url: string,
+  id: string,
   body: Blob,
   ownerToken: string,
   onProgress: (fraction: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open('PUT', url)
+    xhr.open('PUT', `${base}/files/${id}/content`)
     xhr.setRequestHeader('Authorization', `Bearer ${ownerToken}`)
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total)

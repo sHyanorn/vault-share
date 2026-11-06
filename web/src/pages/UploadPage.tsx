@@ -1,4 +1,11 @@
-import { useState, type ChangeEvent, type DragEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from 'react'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
 import {
@@ -56,7 +63,7 @@ export default function UploadPage() {
   switch (phase.kind) {
     case 'working':
       return (
-        <section className="card stack enter" aria-live="polite">
+        <section key="working" className="card stack enter">
           <FileRow file={file!} />
           <Progress
             label={
@@ -69,6 +76,7 @@ export default function UploadPage() {
     case 'done':
       return (
         <Result
+          key="done"
           share={phase.share}
           maxDownloads={maxDownloads}
           onDeleted={() => setPhase({ kind: 'deleted' })}
@@ -77,7 +85,7 @@ export default function UploadPage() {
       )
     case 'deleted':
       return (
-        <section className="card stack enter">
+        <section key="deleted" className="card stack enter">
           <Hero
             icon={<LinkOffIcon />}
             title="Deleted"
@@ -91,7 +99,7 @@ export default function UploadPage() {
       )
     case 'error':
       return (
-        <section className="card stack enter" role="alert">
+        <section key="error" className="card stack enter" role="alert">
           <Hero
             icon={<LinkOffIcon />}
             title="Upload failed"
@@ -106,7 +114,7 @@ export default function UploadPage() {
       )
     default:
       return (
-        <section className="card stack">
+        <section key="pick" className="card stack enter">
           {file ? (
             <FileRow file={file} onChange={() => setFile(null)} />
           ) : (
@@ -196,27 +204,53 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
   const [copied, setCopied] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
+  const linkRef = useRef<HTMLElement>(null)
+  const deleteRef = useRef<HTMLButtonElement>(null)
+  const returnFocus = useRef(false)
+
+  useEffect(() => {
+    if (!confirming && returnFocus.current) {
+      returnFocus.current = false
+      deleteRef.current?.focus()
+    }
+  }, [confirming])
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(share.link)
     } catch {
       // No clipboard access: leave the link selected for a manual copy.
-      const code = document.querySelector('.share-link code')
-      if (code) window.getSelection()?.selectAllChildren(code)
+      if (linkRef.current)
+        window.getSelection()?.selectAllChildren(linkRef.current)
       return
     }
     setCopied(true)
     setTimeout(() => setCopied(false), 1800)
   }
 
+  function openConfirm() {
+    setDeleteError(false)
+    setConfirming(true)
+  }
+
+  function keep() {
+    returnFocus.current = true
+    setConfirming(false)
+  }
+
   async function remove() {
     try {
       await deleteShare(share)
       onDeleted()
-    } catch {
-      setDeleteError(true)
+    } catch (error) {
+      // Already gone counts as deleted.
+      if (error instanceof ApiError && error.status === 404) onDeleted()
+      else setDeleteError(true)
     }
+  }
+
+  function onConfirmKey(event: KeyboardEvent) {
+    if (event.key === 'Escape') keep()
   }
 
   const downloads =
@@ -225,7 +259,7 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
     <section className="card stack enter">
       <Hero icon={<CheckIcon />} title="Your link is ready" tone="ok" />
       <div className="share-link">
-        <code>{share.link}</code>
+        <code ref={linkRef}>{share.link}</code>
         <Button variant="quiet" onClick={copy}>
           {copied ? 'Copied' : 'Copy'}
         </Button>
@@ -240,14 +274,16 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
           className="confirm"
           role="alertdialog"
           aria-label="Delete this file"
+          aria-describedby="confirm-text"
+          onKeyDown={onConfirmKey}
         >
-          <span>
+          <span id="confirm-text">
             {deleteError
               ? 'Could not delete. Try again.'
               : 'Delete now? The link stops working.'}
           </span>
           <div>
-            <Button variant="quiet" onClick={() => setConfirming(false)}>
+            <Button variant="quiet" onClick={keep} autoFocus>
               Keep
             </Button>
             <Button variant="danger" onClick={remove}>
@@ -262,9 +298,9 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
           </button>
           <button
             type="button"
-            className="link-btn"
-            style={{ color: 'var(--danger)' }}
-            onClick={() => setConfirming(true)}
+            className="link-btn danger"
+            ref={deleteRef}
+            onClick={openConfirm}
           >
             Delete file
           </button>

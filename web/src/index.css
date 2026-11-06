@@ -101,7 +101,6 @@ button {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
-  animation: rise 360ms var(--ease);
 }
 
 .stack {
@@ -299,11 +298,28 @@ button {
   cursor: default;
 }
 
-.stepper output {
-  min-width: 40px;
+.stepper input {
+  width: 48px;
+  min-width: 0;
+  border: 0;
+  background: none;
   text-align: center;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.stepper input::-webkit-outer-spin-button,
+.stepper input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.stepper input:focus {
+  outline: none;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* Buttons */
@@ -368,6 +384,10 @@ button {
   font-weight: 500;
 }
 
+.link-btn.danger {
+  color: var(--danger);
+}
+
 /* Progress */
 
 .progress {
@@ -427,12 +447,6 @@ button {
   gap: 8px;
   color: var(--muted);
   font-size: 15px;
-}
-
-.summary .icon {
-  width: 20px;
-  height: 20px;
-  color: var(--success);
 }
 
 .confirm {
@@ -531,7 +545,7 @@ button {
     justify-content: space-between;
   }
 
-  .stepper output {
+  .stepper input {
     flex: 1;
   }
 }
