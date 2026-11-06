@@ -63,6 +63,14 @@ func TestBucketKey(t *testing.T) {
 	if got := key("2001:db8:1:2:3:4:5:6"); got != "2001:db8:1:2::/64" {
 		t.Errorf("key %q", got)
 	}
+	// Ranges whose /64 spans many IPv4 clients count the embedded client.
+	if key("64:ff9b::203.0.113.9") != key("203.0.113.9") || key("64:ff9b::203.0.113.9") == key("64:ff9b::203.0.113.10") {
+		t.Error("NAT64 addresses are not keyed by their IPv4 client")
+	}
+	// RFC 4380's example: client 192.0.2.45 behind Teredo server 65.54.227.120.
+	if got := key("2001:0:4136:e378:8000:63bf:3fff:fdd2"); got != "192.0.2.45" {
+		t.Errorf("Teredo key %q", got)
+	}
 }
 
 func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
@@ -80,6 +88,15 @@ func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "trusted proxy sent no usable X-Forwarded-For"); n != 1 {
 		t.Errorf("%d warnings, want exactly one per minute", n)
+	}
+	quiet := newEnvWith(t, func(o *Options) {
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	})
+	logs.Reset()
+	quiet.request(http.MethodGet, "/healthz", nil, nil, nil)
+	if strings.Contains(logs.String(), "X-Forwarded-For") {
+		t.Error("a health probe, which is not rate limited, triggered the warning")
 	}
 	if strings.Contains(logs.String(), "127.0.0.1") || strings.Contains(logs.String(), "198.51.100.1") {
 		t.Error("an address reached the log")
@@ -265,21 +282,43 @@ func TestLockoutCoversTheWholeIPv6Prefix(t *testing.T) {
 	if status := attempt("2001:db8:1:3::1", sh.authKey); status != http.StatusOK {
 		t.Errorf("neighbouring /64: %d", status)
 	}
+	// The /64 is only the bucket: the audit log still tells the addresses apart.
+	entries, err := e.store.RecentAudit(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Event == audit.DownloadDenied {
+			hashes[string(entry.IPHash)] = true
+		}
+	}
+	if len(hashes) != lockoutFailures {
+		t.Errorf("%d distinct addresses audited for %d denials", len(hashes), lockoutFailures)
+	}
+}
+
+// fill drives n fresh keys with the clock advancing a millisecond per key,
+// so the once-a-minute sweep runs; it stops at the first key past the deadline.
+func fill(t *testing.T, n int, now *time.Time, insert func(key string)) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for i := 0; i < n; i++ {
+		*now = now.Add(time.Millisecond)
+		insert(strconv.Itoa(i))
+		// Quadratic sweeping took minutes here; bounded inserts take well under a second.
+		if i%1000 == 0 && time.Now().After(deadline) {
+			t.Fatalf("%d fresh keys took over 10s", i)
+		}
+	}
 }
 
 func TestLimiterTableStaysBounded(t *testing.T) {
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	set := newLimiterSet(Budget{PerMinute: 60, Burst: 1}, func() time.Time { return now })
-	start := time.Now()
-	for i := 0; i < 3*maxEntries; i++ {
-		set.allow(strconv.Itoa(i))
-	}
+	fill(t, 3*maxEntries, &now, func(key string) { set.allow(key) })
 	if n := len(set.table.entries); n > maxEntries {
 		t.Errorf("%d entries, cap %d", n, maxEntries)
-	}
-	// Quadratic sweeping took minutes here; bounded inserts take well under a second.
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Errorf("%d fresh keys took %v", 3*maxEntries, elapsed)
 	}
 	if !set.allow("fresh") {
 		t.Error("a new client was refused")
@@ -294,15 +333,9 @@ func TestLimiterTableStaysBounded(t *testing.T) {
 func TestLockoutTableStaysBounded(t *testing.T) {
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	l := newLockouts(func() time.Time { return now })
-	start := time.Now()
-	for i := 0; i < 3*maxEntries; i++ {
-		l.failed(strconv.Itoa(i), "file")
-	}
+	fill(t, 3*maxEntries, &now, func(key string) { l.failed(key, "file") })
 	if n := len(l.table.entries); n > maxEntries {
 		t.Errorf("%d entries, cap %d", n, maxEntries)
-	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Errorf("%d fresh keys took %v", 3*maxEntries, elapsed)
 	}
 	// Below the cap nothing is evicted: a lockout holds.
 	small := newLockouts(func() time.Time { return now })

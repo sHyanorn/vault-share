@@ -104,3 +104,21 @@ func TestLoadInvalid(t *testing.T) {
 		}
 	})
 }
+
+func TestTrustedProxiesMatchHowClientsAreSeen(t *testing.T) {
+	cases := map[string]string{
+		"::ffff:10.0.0.0/104": "10.0.0.0/8",
+		"::ffff:10.0.0.1":     "10.0.0.1/32",
+		"fe80::1%eth0":        "fe80::1/128",
+		"10.1.2.3/8":          "10.0.0.0/8",
+	}
+	for in, want := range cases {
+		cfg, err := Load(lookupFrom(map[string]string{"VAULT_TRUSTED_PROXIES": in}))
+		if err != nil || len(cfg.TrustedProxies) != 1 || cfg.TrustedProxies[0].String() != want {
+			t.Errorf("%q: got %v, err %v, want %s", in, cfg.TrustedProxies, err, want)
+		}
+	}
+	if _, err := Load(lookupFrom(map[string]string{"VAULT_TRUSTED_PROXIES": "::ffff:0.0.0.0/90"})); err == nil {
+		t.Error("a mapped prefix wider than the mapped range was accepted")
+	}
+}

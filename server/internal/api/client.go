@@ -28,12 +28,16 @@ const proxyWarnEvery = time.Minute
 // the connection comes from a trusted proxy, and then only its last entry,
 // the one that proxy appended; anything else is attacker-controlled.
 func withClient(trusted []netip.Prefix, log *slog.Logger) func(http.Handler) http.Handler {
+	// Measured on the monotonic clock, so a wall-clock step cannot silence it.
+	start := time.Now()
 	var lastWarn atomic.Int64
+	lastWarn.Store(-int64(proxyWarnEvery))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			addr, unnamed := clientAddr(r, trusted)
-			if unnamed {
-				now := time.Now().UnixNano()
+			// Only API requests are rate limited; a health probe without the header is expected.
+			if unnamed && strings.HasPrefix(r.URL.Path, "/api/") {
+				now := int64(time.Since(start))
 				last := lastWarn.Load()
 				if now-last >= int64(proxyWarnEvery) && lastWarn.CompareAndSwap(last, now) {
 					log.Warn("trusted proxy sent no usable X-Forwarded-For; its clients share one rate limit")
@@ -86,14 +90,27 @@ func clientAddr(r *http.Request, trusted []netip.Prefix) (addr netip.Addr, unnam
 	return fwd.Unmap().WithZone(""), false
 }
 
+var (
+	nat64  = netip.MustParsePrefix("64:ff9b::/96")
+	teredo = netip.MustParsePrefix("2001::/32")
+)
+
 // bucketKey groups the addresses one client can be expected to hold: a
 // single IPv4 address, or an IPv6 /64, the smallest prefix a network hands
-// to a home or a phone.
+// to a home or a phone. Addresses that carry an IPv4 client inside them
+// count as that IPv4 address, since their /64 spans many clients.
 func bucketKey(addr netip.Addr) string {
-	if addr.Is6() {
+	b := addr.As16()
+	switch {
+	case addr.Is4():
+		return addr.String()
+	case nat64.Contains(addr): // RFC 6052: the IPv4 address is the low 32 bits
+		return netip.AddrFrom4([4]byte(b[12:])).String()
+	case teredo.Contains(addr): // RFC 4380: the client's IPv4 address, inverted
+		return netip.AddrFrom4([4]byte{^b[12], ^b[13], ^b[14], ^b[15]}).String()
+	default:
 		return netip.PrefixFrom(addr, 64).Masked().String()
 	}
-	return addr.String()
 }
 
 func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
