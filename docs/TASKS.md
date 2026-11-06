@@ -17,7 +17,7 @@
 
 ## M2 Backend Core
 - [x] Database tables and migrations
-- [ ] Storage interface and local disk implementation
+- [x] Storage interface and local disk implementation
 - [ ] Create-upload and streaming upload endpoints, with size limits
 - [ ] Metadata, challenge, download token and streaming download endpoints
 - [x] Atomic download count decrement, with concurrency tests
