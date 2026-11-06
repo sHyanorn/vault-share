@@ -85,3 +85,29 @@
 - Decision: the upload encrypts the file stream into a Blob and sends it with XMLHttpRequest; the download decrypts the response stream and writes it through `showSaveFilePicker` where the browser offers it, otherwise into a Blob that is handed to the browser's download
 - Rationale: streaming request bodies with `fetch` work only in Chromium over HTTP/2, so Firefox Send streamed uploads over a WebSocket instead; a Blob body works everywhere and XMLHttpRequest is the one transport with upload progress. Encryption and decryption themselves stay streaming with constant memory
 - Trade-off: browsers keep large Blobs in memory until they page them to disk, so a file near the 1 GB limit can be heavy on low-memory devices; on browsers without `showSaveFilePicker` the decrypted file is buffered the same way. A streaming upload for browsers that support it is a candidate for M6
+
+## D016 Security headers set by vaultd
+- Date: 2026-11-06
+- Decision: every response carries `Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`, HSTS for two years with subdomains, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin` and `X-Frame-Options: DENY`
+- Rationale: the built client has no inline script or style, and React sets styles through the CSSOM, which the policy does not govern, so nothing needs `unsafe-inline`. `'wasm-unsafe-eval'` is required for the Argon2id WebAssembly module and permits WebAssembly compilation only, not JavaScript eval. Setting the headers in Go rather than Caddy keeps them tested (D009)
+
+## D017 Client address, rate limits and lockout
+- Date: 2026-11-06
+- Decision: the client address is the connecting address unless it falls inside `VAULT_TRUSTED_PROXIES`, in which case the last `X-Forwarded-For` entry counts. Three token buckets per client: 120 requests per minute with a burst of 60 on the API, 10 per minute for creating files, 30 per minute for download authentication. Five failed signatures on one file lock that client out of the file for fifteen minutes. State lives in memory and resets on restart
+- Rationale: Firefox Send trusted `X-Forwarded-For` unconditionally, which lets any client choose its own address; the Compose network is private and only Caddy can reach vaultd, so it is trusted there. A per-client, per-file lockout cannot be used to lock other recipients out. One instance (D005) makes in-memory state sufficient
+
+## D018 Audit log hashing
+- Date: 2026-11-06
+- Decision: audit entries store the client address and user agent as the first 16 bytes of HMAC-SHA256 under a 32-byte key created in the data directory on first start; entries are kept for 30 days
+- Rationale: a keyed hash still groups events by client for abuse investigation, but the table cannot be turned back into addresses without the key, and the key never leaves the host. An unkeyed hash of an IPv4 address would be trivially reversible
+
+## D019 Password protection
+- Date: 2026-11-06
+- Decision: with a password, the link carries the 16-byte secret wrapped with AES-256-GCM under a key derived from the password by Argon2id (64 MiB, 2 passes, 1 lane, 16-byte salt) using `hash-wasm` 4.12.0 (MIT, WebAssembly inlined, no further dependencies). The server is unchanged and does not know whether a password exists
+- Rationale: SPEC section 4; the OWASP Password Storage Cheat Sheet lists 19 MiB with 2 passes as the minimum and 46 MiB with 1 pass as an equivalent, and 64 MiB with 2 passes stays above both while taking well under a second in Chromium. Firefox Send only re-keyed the server-side authentication with PBKDF2 at 100 iterations, so its link still carried the file key
+- Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess; the server lockout (D017) only bounds online attempts. A weak password remains a weak password
+
+## D020 Caddy runs unprivileged
+- Date: 2026-11-06
+- Decision: `Dockerfile.caddy` runs Caddy as uid 65532 with a read-only root filesystem and no capabilities; it listens on 8080 and 8443 inside the container and Compose maps 80 and 443 to them
+- Rationale: SPEC section 8 asks every container to run as a non-root user; binding the privileged ports would have required a capability, and Caddy's `http_port` and `https_port` options exist for exactly this port-forwarding setup

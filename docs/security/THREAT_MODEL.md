@@ -34,19 +34,21 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 |---|---|---|---|
 | S Spoofing | Someone without the link tries to download | authKey challenge signature | Done (M2) |
 | T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | Done (M1, tests for tampering, truncation, reordering, duplication) |
-| T Tampering | Compromised dependency, action or base image injects code at build time | Exact versions, commit SHAs and image digests; Dependabot; npm audit and govulncheck in CI; gosec and Semgrep in M4 | Partial (M0) |
-| R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
-| I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Partial (request log omits the query string) |
+| T Tampering | Compromised dependency, action or base image injects code at build time | Exact versions, commit SHAs and image digests; Dependabot; npm audit, govulncheck, gosec and Semgrep in CI | Done (M4) |
+| R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | Done (M4: keyed hashes, 30-day retention, D018) |
+| I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Done (M4: no-referrer header, a test drives the whole flow and checks every log line) |
 | I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | Done (M2: every lookup, token and signature failure answers 404) |
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
-| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M2: per-file limit, declared size enforced, abandoned uploads purged after an hour, no blob without a record; rate limiting and quota in M4) |
+| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M4: per-client rate limits on creation; no total quota yet, the disk is the limit) |
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
-| D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
+| D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB, per-client lockout; offline guessing against the link remains, see D019) |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
-| E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Partial (M3: React escaping, file names sanitised before display and download; CSP in M4) |
+| E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
 
 ## 5. Residual Risks
 
 - A4 can serve malicious frontend code to steal keys. This limitation is shared by all web-based encryption products and must be stated in the README
 - File size and upload time are visible to the server
-- Once a link leaks, anyone holding it can download the file
+- Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
+- Rate limits and lockouts are per client address; an attacker with many addresses is bounded only by the per-file download count and the total disk
+- The server is a single instance; its in-memory limiter state resets on restart
