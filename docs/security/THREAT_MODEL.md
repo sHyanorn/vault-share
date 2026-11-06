@@ -43,7 +43,7 @@ Method: STRIDE. It is revised with every feature change.
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
-| E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | To do |
+| E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Partial (M3: React escaping, file names sanitised before display and download; CSP in M4) |
 
 ## 5. Residual Risks
 

@@ -79,3 +79,9 @@
 - Challenges are stateless: 32 bytes of expiry, nonce and an HMAC-SHA256 tag under a key drawn at startup, valid for 2 minutes. The server verifies the tag and then the client's signature over the whole challenge; replaying a signed challenge only spends the holder's own download count, so one-time bookkeeping is unnecessary (F8)
 - Rationale: Firefox Send counts a download when the stream finishes and without atomicity, so parallel requests can exceed the limit and an aborted download is free; counting at token issue closes both. The owner token on upload stops a third party from filling a slot it did not create
 - Trade-off: a download interrupted by the network consumes a count and the recipient needs a new link. Transfers must sustain 512 KiB/s or they are cut off at their deadline
+
+## D015 Browser transport for uploads and downloads
+- Date: 2026-11-06
+- Decision: the upload encrypts the file stream into a Blob and sends it with XMLHttpRequest; the download decrypts the response stream and writes it through `showSaveFilePicker` where the browser offers it, otherwise into a Blob that is handed to the browser's download
+- Rationale: streaming request bodies with `fetch` work only in Chromium over HTTP/2, so Firefox Send streamed uploads over a WebSocket instead; a Blob body works everywhere and XMLHttpRequest is the one transport with upload progress. Encryption and decryption themselves stay streaming with constant memory
+- Trade-off: browsers keep large Blobs in memory until they page them to disk, so a file near the 1 GB limit can be heavy on low-memory devices; on browsers without `showSaveFilePicker` the decrypted file is buffered the same way. A streaming upload for browsers that support it is a candidate for M6
