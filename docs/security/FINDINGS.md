@@ -15,6 +15,9 @@ Issues found during development, how they were found and how they were fixed. Se
 | F9 | 2026-11-06 | Low | Independent review of M2 | A file expiring while a download token was pending was purged under the recipient | Fixed |
 | F10 | 2026-11-06 | Low | Independent review of M3 | Bidi override characters in a file name spoofed the extension shown on the download page | Fixed |
 | F11 | 2026-11-06 | Low | Independent review of M3 | The uploader's MIME type became the type of the decrypted Blob | Fixed |
+| F12 | 2026-11-06 | Medium | Independent review of M4 | Rate limits and lockouts counted every IPv6 address separately, so one client could rotate through its /64 | Fixed |
+| F13 | 2026-11-06 | Medium | Independent review of M4 | Limiter and lockout tables grew without bound and rescanned on every insert past 10,000 keys | Fixed |
+| F14 | 2026-11-06 | Low | Independent review of M4 | A trusted proxy without a usable X-Forwarded-For silently merged every client into one bucket | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -59,3 +62,16 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F11 Uploader-controlled MIME type in the decrypted Blob (Low)
 - Impact: the Blob handed to the browser carried the uploader's declared type, `text/html` included. The `download` attribute kept browsers from rendering it, so there was no exploit, but a same-origin `blob:` URL of `text/html` is executable in the application origin if it is ever navigated to.
 - Fix: the Blob is always `application/octet-stream`; the type is no longer passed through.
+
+
+## F12 IPv6 clients bypassed rate limits and lockouts (Medium)
+- Impact: buckets and lockouts were keyed by the full address. A home or mobile IPv6 connection holds at least a /64, 2^64 addresses, so one client rotated through fresh buckets at will: twelve creates from twelve addresses of one /64 got eleven successes against a burst of ten. Zoned literals from a trusted proxy (`fe80::1%eth0`, `%eth1`) also counted as distinct clients.
+- Fix: zones are dropped, and rate limits and lockouts key one IPv4 address or one IPv6 /64. The audit log keeps the full address, hashed (D018).
+
+## F13 Unbounded limiter tables (Medium)
+- Impact: the tables swept only when inserting past 10,000 entries and only freed entries idle for 30 minutes, so a stream of fresh keys freed nothing and rescanned the whole table under the table's lock on every insert: 148 µs per insert at 20,000 keys, an 80,000-key run did not finish in ten minutes, and memory grew at about 180 bytes per key. Combined with F12 this was a memory and CPU denial of service at a few hundred requests per second.
+- Fix: a sweep runs at most once a minute, and a table never exceeds 50,000 entries: an arbitrary entry is evicted to make room. Tests insert 150,000 fresh keys into each table and fail if the cap is exceeded or the inserts take more than ten seconds.
+
+## F14 Silent collapse behind a misconfigured proxy (Low)
+- Impact: when a trusted proxy sent no usable `X-Forwarded-For`, every client got the proxy's address. The whole service then shared one bucket, and five bad signatures from anyone locked everyone out of a file. The shipped Compose file could reach this on an IPv6-enabled network, which it did not trust.
+- Fix: vaultd logs a warning, at most once a minute and without addresses, when a trusted proxy names no client; Compose also trusts the unique local IPv6 range `fd00::/8`; D017 states that clients behind one address share their limits.

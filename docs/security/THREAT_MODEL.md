@@ -50,5 +50,5 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - A4 can serve malicious frontend code to steal keys. This limitation is shared by all web-based encryption products and must be stated in the README
 - File size and upload time are visible to the server
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
-- Rate limits and lockouts are per client address; an attacker with many addresses is bounded only by the per-file download count and the total disk
+- Rate limits and lockouts count one IPv4 address or one IPv6 /64 as one client; an attacker holding many of those is bounded only by the per-file download count and the total disk. Clients behind one address share their limits
 - The server is a single instance; its in-memory limiter state resets on restart

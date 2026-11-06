@@ -7,7 +7,7 @@ services:
       VAULT_LOG_LEVEL: ${VAULT_LOG_LEVEL:-info}
       # Only Caddy can reach vaultd: its port is not published and the
       # Compose network is private, so forwarded addresses from it are trusted.
-      VAULT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      VAULT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8
     volumes:
       - vault-data:/data
     read_only: true
