@@ -342,12 +342,18 @@ button {
   border-color: var(--danger);
 }
 
-.field > .error {
+.field > .error,
+.field > .hint {
   color: var(--danger);
   font-size: 15px;
   text-transform: none;
   letter-spacing: 0;
   font-weight: 500;
+}
+
+.field > .hint {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 /* Buttons */

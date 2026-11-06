@@ -2,7 +2,9 @@ import { argon2id } from 'hash-wasm'
 import { describe, expect, it } from 'vitest'
 import {
   ARGON2_PARAMS,
+  MIN_PASSWORD_LENGTH,
   WRAPPED_LENGTH,
+  passwordTooShort,
   unwrapSecret,
   wrapSecret,
 } from './password.ts'
@@ -24,15 +26,40 @@ describe('password wrapping', () => {
 
   it('uses a fresh salt and iv per wrap and rejects tampering', async () => {
     const secret = randomBytes(16)
-    const a = await wrapSecret(secret, 'pw')
-    const b = await wrapSecret(secret, 'pw')
+    const a = await wrapSecret(secret, 'password')
+    const b = await wrapSecret(secret, 'password')
     expect(toHex(a)).not.toBe(toHex(b))
     for (const index of [0, 16, 28, WRAPPED_LENGTH - 1]) {
       const bad = new Uint8Array(a)
       bad[index] ^= 1
-      expect(await unwrapSecret(bad, 'pw'), `byte ${index}`).toBeNull()
+      expect(await unwrapSecret(bad, 'password'), `byte ${index}`).toBeNull()
     }
-    await expect(unwrapSecret(a.subarray(1), 'pw')).rejects.toThrow('length')
+    await expect(unwrapSecret(a.subarray(1), 'password')).rejects.toThrow(
+      'length',
+    )
+  }, 30_000)
+
+  it('wraps only under passwords of 8 code points or more', async () => {
+    expect(MIN_PASSWORD_LENGTH).toBe(8)
+    const secret = randomBytes(16)
+    for (const short of ['', '1234567', '🔑'.repeat(7)]) {
+      expect(passwordTooShort(short), short).toBe(true)
+      await expect(wrapSecret(secret, short)).rejects.toThrow('8 characters')
+    }
+    // Eight emoji are 16 UTF-16 units but eight characters.
+    expect(passwordTooShort('🔑'.repeat(8))).toBe(false)
+    expect(await wrapSecret(secret, '🔑'.repeat(8))).toHaveLength(
+      WRAPPED_LENGTH,
+    )
+  }, 30_000)
+
+  it('still opens a link wrapped under a short password before the minimum', async () => {
+    const legacy = fromHex(
+      '917e83a7c3568b5e021ad6f62ee03b445a45b0dbdd7c025fa6d619af6bca29aaf55d798c834af312bfe095838bfeac268d183d2e546c7acd6214f5c5',
+    )
+    expect(await unwrapSecret(legacy, 'pw')).toEqual(
+      fromHex('00112233445566778899aabbccddeeff'),
+    )
   }, 30_000)
 
   it('derives the wrapping key with the pinned Argon2id parameters', async () => {

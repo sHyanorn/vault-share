@@ -6,6 +6,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from 'react'
+import { MIN_PASSWORD_LENGTH, passwordTooShort } from '../crypto/index.ts'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
 import {
@@ -37,6 +38,7 @@ export default function UploadPage() {
   const [maxDownloads, setMaxDownloads] = useState(1)
   const [password, setPassword] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'pick' })
+  const shortPassword = password !== null && passwordTooShort(password)
 
   async function start() {
     if (!file) return
@@ -152,12 +154,17 @@ export default function UploadPage() {
                 type="password"
                 autoComplete="new-password"
                 autoFocus
+                minLength={MIN_PASSWORD_LENGTH}
+                aria-describedby="password-hint"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
+              <span id="password-hint" className="hint">
+                At least {MIN_PASSWORD_LENGTH} characters
+              </span>
             </label>
           )}
-          <Button onClick={start} disabled={!file || password === ''}>
+          <Button onClick={start} disabled={!file || shortPassword}>
             Create link
           </Button>
         </section>
