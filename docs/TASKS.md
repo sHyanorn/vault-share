@@ -12,7 +12,7 @@
 - [x] Chunked AES-GCM encryption and decryption (Streams API)
 - [x] Nonce construction and end marker
 - [x] Metadata encryption
-- [ ] Tests: round-trip correctness, tampering fails, truncation fails, reordering fails, standard test vectors
+- [x] Tests: round-trip correctness, tampering fails, truncation fails, reordering fails, standard test vectors
 - [ ] Document the ciphertext format in DECISIONS.md
 
 ## M2 Backend Core
