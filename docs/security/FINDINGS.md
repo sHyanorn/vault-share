@@ -13,6 +13,8 @@ Issues found during development, how they were found and how they were fixed. Se
 | F7 | 2026-11-06 | Low | Independent review of M2 | Storage failures during upload were reported as client errors and not logged | Fixed |
 | F8 | 2026-11-06 | Low | Independent review of M2 | Anyone holding a file id could evict pending challenges through the per-file cap | Fixed |
 | F9 | 2026-11-06 | Low | Independent review of M2 | A file expiring while a download token was pending was purged under the recipient | Fixed |
+| F10 | 2026-11-06 | Low | Independent review of M3 | Bidi override characters in a file name spoofed the extension shown on the download page | Fixed |
+| F11 | 2026-11-06 | Low | Independent review of M3 | The uploader's MIME type became the type of the decrypted Blob | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -49,3 +51,11 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F9 Expiry ignored pending tokens (Low)
 - Impact: a token issued shortly before expiry answered 404 after the next cleanup although the count was taken.
 - Fix: expired files are kept until their pending tokens pass.
+
+## F10 File name spoofing through format characters (Low)
+- Impact: `safeFileName` removed control characters only. A name such as `invoice\u202Efdp.exe` rendered as `invoiceexe.pdf` on the download page, so the recipient decided to download a program believing it was a document. The browser sanitised the name on disk, so the saved file was honest; the deception was in the decision. This is threat model attacker A5.
+- Fix: invisible format characters are stripped before display and download, except the joiner that emoji sequences need, and the length cap counts code points so a surrogate pair is never split.
+
+## F11 Uploader-controlled MIME type in the decrypted Blob (Low)
+- Impact: the Blob handed to the browser carried the uploader's declared type, `text/html` included. The `download` attribute kept browsers from rendering it, so there was no exploit, but a same-origin `blob:` URL of `text/html` is executable in the application origin if it is ever navigated to.
+- Fix: the Blob is always `application/octet-stream`; the type is no longer passed through.
