@@ -51,5 +51,5 @@
 
 ## D011 Supply chain pinning
 - Date: 2026-11-05
-- Decision: npm dependencies at exact versions, GitHub Actions at commit SHAs, container base images at digests, govulncheck at a fixed version; Dependabot opens weekly update PRs
+- Decision: npm dependencies at exact versions, GitHub Actions at commit SHAs, container base images at digests, govulncheck as a `tool` dependency in `go.mod`; Dependabot opens weekly update PRs for all of them
 - Rationale: a tag can be moved by whoever controls the upstream; a SHA or digest cannot; Dependabot keeps the pins from rotting
