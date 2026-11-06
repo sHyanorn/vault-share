@@ -124,7 +124,7 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 
 - HTTPS (locally via Caddy automatic certificates or a self-signed certificate)
 - Security response headers: strict CSP (no inline scripts), HSTS, X-Content-Type-Options, Referrer-Policy: no-referrer, Permissions-Policy
-- Rate limiting: per-IP token bucket, with separate limits for uploads and download authentication
+- Rate limiting: per-client token bucket (one IPv4 address or one IPv6 /64, D017), with separate limits for uploads and download authentication
 - Lock a file for a period of time after repeated failed download authentication attempts
 - Request body size limits and timeouts
 - File ids and tokens use cryptographically secure random numbers
