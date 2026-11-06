@@ -66,3 +66,14 @@
 - Differences from Firefox Send: the decrypter rejects a header whose `rs` differs from 65536 or that carries a key id instead of ignoring it; an empty file still produces a last record, so a stream cut after the header fails instead of decrypting to nothing; metadata uses a random IV instead of all zeros; password protection (M4) will use Argon2id instead of PBKDF2 with 100 iterations
 - Bound: the 16-byte secret caps every key at 128 bits of entropy (SPEC section 4); AES-256 adds no strength beyond that and costs nothing
 - Contract for consumers (M3): `decryptStream` emits each authenticated record as soon as it is verified, so a stream error can arrive after plaintext has been written; the download page must treat any error as fatal and discard the partial file (RFC 8188 section 4.2). `name` and `type` from `decryptMetadata` are uploader-controlled strings that only pass a type check; sanitize them before display and before use in `Content-Disposition`
+
+## D013 Tokens are random secrets hashed with SHA-256
+- Date: 2026-11-06
+- Decision: the owner token and download tokens are 32 random bytes; the server stores their SHA-256 and compares hashes in constant time. Challenge nonces are 32 random bytes stored as is and deleted on first use
+- Rationale: Argon2id (CLAUDE.md) protects low-entropy passwords; a 256-bit random token cannot be guessed, so a fast hash is enough and still keeps a database leak from yielding usable tokens
+
+## D014 Download accounting
+- Date: 2026-11-06
+- Decision: the download count is taken when a signed challenge is accepted and the one-time download token is issued, in a single conditional UPDATE; the content upload requires the owner token; on the last permitted download the file is purged before the bytes are streamed. A challenge is valid for 2 minutes and a download token for 5 minutes, each for exactly one use
+- Rationale: Firefox Send counts a download when the stream finishes and without atomicity, so parallel requests can exceed the limit and an aborted download is free; counting at token issue closes both. The owner token on upload stops a third party from filling a slot it did not create
+- Trade-off: a download interrupted by the network consumes a count and the recipient needs a new link

@@ -2,19 +2,32 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/sHyanorn/vault-share/server/internal/blob"
+	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
 // Options configures NewRouter.
 type Options struct {
 	Logger *slog.Logger
+	Store  *store.Store
+	Blobs  blob.Store
+	// MaxFileBytes caps the declared ciphertext size of an upload.
+	MaxFileBytes int64
+	// Sweep purges expired and used-up files; it runs after a last download.
+	Sweep func(context.Context) error
+	// Now defaults to time.Now; tests move it.
+	Now func() time.Time
 	// WebDir is the built frontend served for every path outside /api and
 	// /healthz. Empty disables static serving.
 	WebDir string
@@ -22,14 +35,34 @@ type Options struct {
 
 // NewRouter returns the root handler of vaultd.
 func NewRouter(opts Options) (http.Handler, error) {
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	h := &files{
+		store:        opts.Store,
+		blobs:        opts.Blobs,
+		maxFileBytes: opts.MaxFileBytes,
+		now:          now,
+		sweep:        opts.Sweep,
+		log:          opts.Logger,
+	}
+
 	r := chi.NewRouter()
 	r.Use(requestLog(opts.Logger))
 	r.Use(recoverer(opts.Logger))
-	r.Use(middleware.GetHead)
 
 	r.Get("/healthz", healthz)
+	r.Head("/healthz", healthz)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.NotFound(notFound)
+		r.MethodNotAllowed(methodNotAllowed)
+		r.Post("/files", h.create)
+		r.Put("/files/{id}/content", h.upload)
+		r.Get("/files/{id}/meta", h.meta)
+		r.Post("/files/{id}/download", h.download)
+		r.Get("/files/{id}/content", h.content)
+		r.Delete("/files/{id}", h.remove)
 	})
 
 	if opts.WebDir != "" {
@@ -91,4 +124,8 @@ func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func strconvInt(n int64) string {
+	return strconv.FormatInt(n, 10)
 }

@@ -166,8 +166,12 @@ func TestSPA(t *testing.T) {
 	}
 
 	t.Run("api paths never fall back to index", func(t *testing.T) {
-		rec := do(h, http.MethodGet, "/api/v1/files/x")
+		rec := do(h, http.MethodGet, "/api/v1/nope")
 		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
+			t.Errorf("status %d body %q", rec.Code, rec.Body.String())
+		}
+		rec = do(h, http.MethodGet, "/api/v1/files/x")
+		if rec.Code != http.StatusMethodNotAllowed || !strings.Contains(rec.Body.String(), "method_not_allowed") {
 			t.Errorf("status %d body %q", rec.Code, rec.Body.String())
 		}
 	})

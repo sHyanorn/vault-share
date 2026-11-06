@@ -8,12 +8,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/sHyanorn/vault-share/server/internal/api"
+	"github.com/sHyanorn/vault-share/server/internal/blob"
+	"github.com/sHyanorn/vault-share/server/internal/cleanup"
 	"github.com/sHyanorn/vault-share/server/internal/config"
+	"github.com/sHyanorn/vault-share/server/internal/store"
 )
+
+const cleanupInterval = time.Minute
 
 func main() {
 	if err := run(); err != nil {
@@ -29,10 +35,32 @@ func run() error {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("data dir: %w", err)
 	}
-	handler, err := api.NewRouter(api.Options{Logger: logger, WebDir: cfg.WebDir})
+	st, err := store.Open(ctx, filepath.Join(cfg.DataDir, "vault.db"))
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer st.Close()
+	blobs, err := blob.NewDisk(filepath.Join(cfg.DataDir, "blobs"))
+	if err != nil {
+		return fmt.Errorf("blob dir: %w", err)
+	}
+	job := &cleanup.Job{Store: st, Blobs: blobs, Log: logger}
+	go job.Loop(ctx, cleanupInterval)
+
+	handler, err := api.NewRouter(api.Options{
+		Logger:       logger,
+		Store:        st,
+		Blobs:        blobs,
+		MaxFileBytes: cfg.MaxFileBytes,
+		Sweep:        job.Run,
+		WebDir:       cfg.WebDir,
+	})
 	if err != nil {
 		return err
 	}
@@ -40,7 +68,7 @@ func run() error {
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,
-		// Streaming handlers (M2) extend these per request through
+		// Streaming handlers extend these per request through
 		// http.ResponseController; every other request must finish quickly.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -49,9 +77,6 @@ func run() error {
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errc := make(chan error, 1)
 	go func() {

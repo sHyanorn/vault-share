@@ -22,8 +22,7 @@ type Config struct {
 	BaseURL string
 	// DataDir holds the database and ciphertext blobs (VAULT_DATA_DIR).
 	DataDir string
-	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES);
-	// enforced by the upload endpoints of M2.
+	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES).
 	MaxFileBytes int64
 	// WebDir, when set, is the built frontend served for non-API paths (VAULT_WEB_DIR).
 	WebDir string
