@@ -21,6 +21,11 @@ Issues found during development, how they were found and how they were fixed. Se
 | F15 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Only the first X-Forwarded-For line was read, so behind a proxy that appends a line the client chose its own address | Fixed |
 | F16 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Failed download authentications from many addresses wrote audit rows with no global bound | Fixed |
 | F17 | 2026-11-06 | Medium | Adversarial verification of F15 and F16 | File creation had no global bound, so many addresses could fill the disk and push the audit history out | Fixed |
+| F18 | 2026-11-06 | Medium | OWASP Top 10 self-assessment (M5) | A page on another site could create files through its visitors' browsers | Fixed |
+| F19 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | Caddy held slow and idle connections longer than vaultd | Fixed |
+| F20 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | The database holds the keys that pass the download check, which the docs denied | Fixed (documentation) |
+| F21 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | Password protection accepted passwords of any length | Fixed |
+| F22 | 2026-11-06 | Info | OWASP Top 10 self-assessment (M5) | The pinned Caddy release carries modules with published advisories | Accepted |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -92,3 +97,22 @@ Issues found during development, how they were found and how they were fixed. Se
 - Fix: a global storage quota (`VAULT_MAX_TOTAL_BYTES`, default 20 GiB) charges every record its size, its metadata and 64 KiB of overhead, enforced in the same statement as the insert; a per-client budget of 4 GiB a day stops one client from holding the quota. Tests cover the quota under 32 concurrent creates, the release on every delete path, the backfill of existing records, the budget, and its refund when the quota refuses a create.
 - Design change from the proposal: a global cap of 1,000 records awaiting content was proposed and dropped, see D021. The availability trade-off is also larger than first stated: a group of clients with upload bandwidth can keep uploads unavailable for up to seven days, not one hour, which the threat model lists as a residual risk.
 
+## F18 Cross-site creates through visitors' browsers (Medium)
+- Impact: `POST /api/v1/files` accepted any content type from any origin. A page on another site can send it as a simple request, which browsers send without a CORS preflight; the page cannot read the answer, but the record is created. Each visitor is a separate client (D017), so the page turns its visitors into the group of clients of D021: a new visitor reserves up to 4 GiB for the hour a record may wait for its content, about five new visitors an hour keep the default 20 GiB quota full, and each visitor loses their own budget for the day while the audit log attributes the creates to them. Reproduced in Chromium from another origin: the page saw a network error, vaultd logged 201. Nothing was exposed: the page reads no response and never gets an owner token.
+- Fix: Go's `http.CrossOriginProtection` wraps the API ahead of the rate limiter (D022). It refuses writes whose `Sec-Fetch-Site` is neither `same-origin` nor `none` and, from browsers without that header, writes whose `Origin` host differs from `Host`; requests without either header, such as scripts, pass. Refusals answer 403 `cross_origin`. A test covers each case, the write endpoints with valid credentials and the unaffected read; the black-box and browser checks repeat it against the Compose stack.
+
+## F19 Slow connections held longer at Caddy (Low)
+- Impact: Caddy closed a connection whose headers never finished after 60 s and kept idle keep-alive connections for 5 minutes, against 10 s and 2 minutes in vaultd, so holding connections open at the TLS front took a sixth of the effort it took against vaultd.
+- Fix: the Caddyfile sets `read_header 10s` and `idle 2m`; measured afterwards at 10 s and 120 s. Bodies and responses keep no fixed deadline at Caddy, because vaultd gives each transfer one from its size (F3).
+
+## F20 Download keys in the database (Low)
+- Impact: SPEC section 4 said the server stores only a verifier of `authKey`, and the threat model said a database leak exposes no keys. The stored value is the HMAC key itself, as in Firefox Send, so whoever copies the database can sign challenges for every live file: fetch the ciphertexts and spend the download counts until the shares burn. Decryption still needs the secret in the link.
+- Fix: the SPEC and the threat model say so. An asymmetric verifier would close the gap but changes the protocol, which is out of scope.
+
+## F21 No minimum password length (Low)
+- Impact: a link holder guesses offline at Argon2id cost per guess and no lockout applies (D019), so a four-digit password fell in seconds.
+- Fix: the upload form requires 8 characters and wrapping refuses shorter passwords, counted in code points. Unwrapping accepts any length so earlier links still open, which a fixture test pins. The server never sees the password, so the rule lives in the client.
+
+## F22 Advisories in the pinned Caddy (Info)
+- Impact: govulncheck in binary mode reports GO-2026-6866 and GO-2026-6860 (`golang.org/x/net/html`), GO-2026-6865 (`klauspost/compress`) and GO-2026-5932 (`golang.org/x/crypto/openpgp`) in the Caddy 2.11.9 binary. The Caddyfile enables none of the handlers that use these packages (templates, Markdown, response compression), though binary mode cannot prove that no path reaches them.
+- Status: accepted until upstream ships a fixed release; 2.11.9 is the latest, and Dependabot proposes the next image.

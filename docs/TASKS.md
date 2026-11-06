@@ -42,7 +42,7 @@
 
 ## M5 Security Testing and Report
 - [ ] Self-assess against each OWASP Top 10 item and write `docs/security/TEST_REPORT.md`
-- [ ] Fix discovered issues and record them in FINDINGS.md
+- [x] Fix discovered issues and record them in FINDINGS.md
 - [ ] Write SECURITY.md
 
 ## M6 Showcase and Deployment

@@ -48,10 +48,10 @@ Based on the public Firefox Send design. When implementing it, work through each
 2. HKDF-SHA256 derives three keys from `secret`:
    - `fileKey`: encrypts the file content
    - `metaKey`: encrypts metadata such as file name and type
-   - `authKey`: proves possession of the link at download time (the server stores only its verifier)
+   - `authKey`: proves possession of the link at download time; the server keeps it to verify signatures, and it decrypts nothing
 3. The file is split into 64 KB chunks, each encrypted with AES-256-GCM; the nonce is a random base value combined with the chunk index; the last chunk carries an end marker to prevent truncation attacks
 4. The metadata JSON is encrypted with `metaKey`
-5. Upload the ciphertext, the encrypted metadata and the `authKey` verifier
+5. Upload the ciphertext, the encrypted metadata and the `authKey`
 6. The link is `/f/{id}#{base64url(secret)}`
 
 ### Password protection (optional)
@@ -69,7 +69,7 @@ Based on the public Firefox Send design. When implementing it, work through each
 
 ### Known limitations (to be documented in the threat model and README)
 
-- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: Subresource Integrity, strict CSP, reproducible builds, and candid documentation of the risk
+- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: strict CSP, reproducible builds, and candid documentation of the risk. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
 - A leaked link means a leaked file; this is inherent to link-based sharing
 
 ## 5. Architecture
@@ -92,19 +92,22 @@ files
   id               TEXT PRIMARY KEY  -- 128-bit random, base64url
   size_bytes       INTEGER
   meta_ciphertext  BLOB
-  auth_verifier    BLOB
-  owner_token_hash BLOB              -- hash of the delete token
-  has_password     BOOLEAN
-  password_salt    BLOB NULL
+  auth_key         BLOB              -- HMAC key that verifies download signatures
+  owner_token_hash BLOB              -- SHA-256 of the delete token
   downloads_left   INTEGER
   expires_at       TIMESTAMP
   created_at       TIMESTAMP
+  uploaded_at      TIMESTAMP NULL    -- set once the ciphertext is stored
+  charge           INTEGER           -- bytes counted against the storage quota
+
+download_tokens
+  token_hash, file_id, expires_at
 
 audit_log
-  id, event_type, file_id, ip_hash, user_agent_hash, created_at
+  id, event, file_id, ip_hash, ua_hash, created_at
 ```
 
-The audit log stores IPs only as salted hashes, balancing traceability and privacy.
+The server does not know whether a file has a password (D019). The audit log stores the client address and user agent only as keyed hashes, balancing traceability and privacy (D018).
 
 ## 7. API
 
@@ -126,6 +129,7 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - Security response headers: strict CSP (no inline scripts), HSTS, X-Content-Type-Options, Referrer-Policy: no-referrer, Permissions-Policy
 - Rate limiting: per-client token bucket (one IPv4 address or one IPv6 /64, D017), with separate limits for uploads and download authentication
 - Lock a file for a period of time after repeated failed download authentication attempts
+- Writes from other origins are refused (D022)
 - Request body size limits and timeouts
 - Total storage quota and a per-client daily storage budget
 - File ids and tokens use cryptographically secure random numbers
