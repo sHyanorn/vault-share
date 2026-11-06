@@ -18,11 +18,11 @@
 ## M2 Backend Core
 - [x] Database tables and migrations
 - [x] Storage interface and local disk implementation
-- [ ] Create-upload and streaming upload endpoints, with size limits
-- [ ] Metadata, challenge, download token and streaming download endpoints
+- [x] Create-upload and streaming upload endpoints, with size limits
+- [x] Metadata, challenge, download token and streaming download endpoints
 - [x] Atomic download count decrement, with concurrency tests
-- [ ] Delete token
-- [ ] Expiry cleanup job
+- [x] Delete token
+- [x] Expiry cleanup job
 
 ## M3 Frontend Pages
 - [ ] Upload page: drag and drop, progress bar, expiry and download-count options, copy link

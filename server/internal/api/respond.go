@@ -29,3 +29,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 func notFound(w http.ResponseWriter, _ *http.Request) {
 	writeError(w, http.StatusNotFound, "not_found", "not found")
 }
+
+func methodNotAllowed(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+}
