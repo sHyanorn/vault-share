@@ -1,7 +1,7 @@
 # Task List
 
 ## M0 Setup
-- [x] Create `web/` with Vite (React + TypeScript); configure ESLint, Prettier, Vitest
+- [x] Create `web/` with Vite (React + TypeScript); configure oxlint, Prettier, Vitest
 - [x] Server directory layout: `internal/{api,store,blob,audit,config}`
 - [x] Configuration loading (environment variables) and `.env.example`
 - [x] Add frontend tests and dependency scanning to CI
