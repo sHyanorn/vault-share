@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/sHyanorn/vault-share/server/internal/audit"
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
@@ -45,7 +46,9 @@ var encoding = base64.RawURLEncoding.Strict()
 type files struct {
 	store        *store.Store
 	blobs        blob.Store
+	audit        *audit.Recorder
 	challenges   *challenger
+	locks        *lockouts
 	maxFileBytes int64
 	now          func() time.Time
 	log          *slog.Logger
@@ -115,6 +118,7 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, "create file", err)
 		return
 	}
+	h.audit.Record(r.Context(), audit.FileCreated, id, clientFrom(r.Context()))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, createResponse{
 		ID:         id,
@@ -168,6 +172,7 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
+	h.audit.Record(ctx, audit.FileUploaded, f.ID, clientFrom(ctx))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -225,9 +230,18 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	now := h.now()
+	client := clientFrom(ctx)
+	if h.locks.locked(client.IP, f.ID) {
+		notFound(w, r)
+		return
+	}
 	mac := hmac.New(sha256.New, f.AuthKey)
 	mac.Write(challenge)
 	if !h.challenges.valid(f.ID, challenge, now) || !hmac.Equal(mac.Sum(nil), signature) {
+		h.audit.Record(ctx, audit.DownloadDenied, f.ID, client)
+		if h.locks.failed(client.IP, f.ID) {
+			h.audit.Record(ctx, audit.ClientLocked, f.ID, client)
+		}
 		notFound(w, r)
 		return
 	}
@@ -245,6 +259,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, "create download token", err)
 		return
 	}
+	h.audit.Record(ctx, audit.DownloadGranted, f.ID, client)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, downloadResponse{
 		Token:         encoding.EncodeToString(token),
@@ -338,6 +353,7 @@ func (h *files) remove(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, "delete file", err)
 		return
 	}
+	h.audit.Record(ctx, audit.FileDeleted, f.ID, clientFrom(ctx))
 	w.WriteHeader(http.StatusNoContent)
 }
 

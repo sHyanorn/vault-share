@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -26,6 +27,10 @@ type Config struct {
 	MaxFileBytes int64
 	// WebDir, when set, is the built frontend served for non-API paths (VAULT_WEB_DIR).
 	WebDir string
+	// TrustedProxies are the sources whose X-Forwarded-For is believed
+	// (VAULT_TRUSTED_PROXIES, comma-separated addresses or CIDRs). Empty
+	// means the connecting address is the client.
+	TrustedProxies []netip.Prefix
 	// LogLevel is the minimum level written to the log (VAULT_LOG_LEVEL).
 	LogLevel slog.Level
 }
@@ -74,6 +79,23 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 
 	if err := cfg.LogLevel.UnmarshalText([]byte(get("LOG_LEVEL", "info"))); err != nil {
 		fail("LOG_LEVEL", err)
+	}
+
+	for _, item := range strings.Split(get("TRUSTED_PROXIES", ""), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(item)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(item)
+			if addrErr != nil {
+				fail("TRUSTED_PROXIES", fmt.Errorf("%q is not an address or CIDR", item))
+				continue
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
 	}
 
 	return cfg, errors.Join(errs...)

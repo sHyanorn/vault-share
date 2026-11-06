@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/vault-share/server/internal/api"
+	"github.com/sHyanorn/vault-share/server/internal/audit"
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/cleanup"
 	"github.com/sHyanorn/vault-share/server/internal/config"
@@ -50,15 +51,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("blob dir: %w", err)
 	}
-	job := &cleanup.Job{Store: st, Blobs: blobs, Log: logger}
+	auditor, err := audit.New(cfg.DataDir, st, logger)
+	if err != nil {
+		return fmt.Errorf("audit key: %w", err)
+	}
+	job := &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
 	go job.Loop(ctx, cleanupInterval)
 
 	handler, err := api.NewRouter(api.Options{
-		Logger:       logger,
-		Store:        st,
-		Blobs:        blobs,
-		MaxFileBytes: cfg.MaxFileBytes,
-		WebDir:       cfg.WebDir,
+		Logger:         logger,
+		Store:          st,
+		Blobs:          blobs,
+		Audit:          auditor,
+		TrustedProxies: cfg.TrustedProxies,
+		MaxFileBytes:   cfg.MaxFileBytes,
+		WebDir:         cfg.WebDir,
 	})
 	if err != nil {
 		return err

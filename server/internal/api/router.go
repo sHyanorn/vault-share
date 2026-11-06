@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/sHyanorn/vault-share/server/internal/audit"
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
@@ -20,8 +22,13 @@ type Options struct {
 	Logger *slog.Logger
 	Store  *store.Store
 	Blobs  blob.Store
+	Audit  *audit.Recorder
+	// TrustedProxies are the sources whose X-Forwarded-For names the client.
+	TrustedProxies []netip.Prefix
 	// MaxFileBytes caps the declared ciphertext size of an upload.
 	MaxFileBytes int64
+	// Limits default to DefaultLimits.
+	Limits *Limits
 	// Now defaults to time.Now; tests move it.
 	Now func() time.Time
 	// WebDir is the built frontend served for every path outside /api and
@@ -35,10 +42,16 @@ func NewRouter(opts Options) (http.Handler, error) {
 	if now == nil {
 		now = time.Now
 	}
+	limits := DefaultLimits
+	if opts.Limits != nil {
+		limits = *opts.Limits
+	}
 	h := &files{
 		store:        opts.Store,
 		blobs:        opts.Blobs,
+		audit:        opts.Audit,
 		challenges:   newChallenger(),
+		locks:        newLockouts(now),
 		maxFileBytes: opts.MaxFileBytes,
 		now:          now,
 		log:          opts.Logger,
@@ -47,16 +60,19 @@ func NewRouter(opts Options) (http.Handler, error) {
 	r := chi.NewRouter()
 	r.Use(requestLog(opts.Logger))
 	r.Use(recoverer(opts.Logger))
+	r.Use(securityHeaders)
+	r.Use(withClient(opts.TrustedProxies))
 
 	r.Get("/healthz", healthz)
 	r.Head("/healthz", healthz)
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(rateLimit(newLimiterSet(limits.General, now)))
 		r.NotFound(notFound)
 		r.MethodNotAllowed(methodNotAllowed)
-		r.Post("/files", h.create)
+		r.With(rateLimit(newLimiterSet(limits.Create, now))).Post("/files", h.create)
 		r.Put("/files/{id}/content", h.upload)
 		r.Get("/files/{id}/meta", h.meta)
-		r.Post("/files/{id}/download", h.download)
+		r.With(rateLimit(newLimiterSet(limits.Download, now))).Post("/files/{id}/download", h.download)
 		r.Get("/files/{id}/content", h.content)
 		r.Delete("/files/{id}", h.remove)
 	})
