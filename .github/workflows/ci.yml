@@ -16,7 +16,7 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: go tool govulncheck ./...
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose up --build --detach --wait
-      - run: curl --fail --silent --show-error --insecure --retry 10 --retry-delay 2 --retry-connrefused https://localhost/healthz
+      - run: curl --fail --silent --show-error --insecure --retry 10 --retry-delay 2 --retry-all-errors https://localhost/healthz
       - if: failure()
         run: docker compose logs
       - if: always()

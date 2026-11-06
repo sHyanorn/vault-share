@@ -1,7 +1,7 @@
 .git
 .github
 docs
-data
+**/data
 web/node_modules
 web/dist
 server/bin
