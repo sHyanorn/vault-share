@@ -16,6 +16,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Node major versions move together with CI and package.json engines.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker-compose
     directory: /
     schedule:
