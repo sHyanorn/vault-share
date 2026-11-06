@@ -4,18 +4,8 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'quiet' | 'danger'
 }
 
-export function Button({
-  variant = 'primary',
-  className = '',
-  ...props
-}: ButtonProps) {
-  return (
-    <button
-      type="button"
-      className={`btn ${variant} ${className}`}
-      {...props}
-    />
-  )
+export function Button({ variant = 'primary', ...props }: ButtonProps) {
+  return <button type="button" className={`btn ${variant}`} {...props} />
 }
 
 interface SegmentedProps<T extends string | number> {
@@ -32,7 +22,7 @@ export function Segmented<T extends string | number>({
   onChange,
 }: SegmentedProps<T>) {
   return (
-    <label className="field">
+    <div className="field">
       <span>{label}</span>
       <div className="segmented" role="group" aria-label={label}>
         {options.map((option) => (
@@ -46,7 +36,7 @@ export function Segmented<T extends string | number>({
           </button>
         ))}
       </div>
-    </label>
+    </div>
   )
 }
 
@@ -59,10 +49,19 @@ interface StepperProps {
 }
 
 export function Stepper({ label, value, min, max, onChange }: StepperProps) {
+  // The field is uncontrolled while typing and commits on blur or Enter;
+  // the key remounts it when the buttons change the value.
+  function commit(input: HTMLInputElement) {
+    const n = Number(input.value)
+    if (input.value !== '' && Number.isInteger(n))
+      onChange(Math.min(max, Math.max(min, n)))
+    else input.value = String(value)
+  }
+
   return (
-    <div className="field">
+    <label className="field">
       <span>{label}</span>
-      <div className="stepper" role="group" aria-label={label}>
+      <div className="stepper">
         <button
           type="button"
           aria-label="Fewer"
@@ -71,7 +70,18 @@ export function Stepper({ label, value, min, max, onChange }: StepperProps) {
         >
           −
         </button>
-        <output aria-live="polite">{value}</output>
+        <input
+          key={value}
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          defaultValue={value}
+          onBlur={(event) => commit(event.target)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+          }}
+        />
         <button
           type="button"
           aria-label="More"
@@ -81,7 +91,7 @@ export function Stepper({ label, value, min, max, onChange }: StepperProps) {
           +
         </button>
       </div>
-    </div>
+    </label>
   )
 }
 

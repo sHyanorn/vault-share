@@ -1,7 +1,6 @@
 // The share link is https://host/f/{id}#{secret}; the fragment never reaches the server.
 
-import { SECRET_LENGTH } from '../crypto/index.ts'
-import { fromBase64Url, toBase64Url } from '../crypto/index.ts'
+import { SECRET_LENGTH, fromBase64Url, toBase64Url } from '../crypto/index.ts'
 
 export interface ShareLocation {
   id: string
