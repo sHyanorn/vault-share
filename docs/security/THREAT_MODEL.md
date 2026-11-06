@@ -33,7 +33,7 @@ Method: STRIDE. It is revised with every feature change.
 | Category | Threat | Mitigation | Status |
 |---|---|---|---|
 | S Spoofing | Someone without the link tries to download | authKey challenge signature | To do |
-| T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | To do |
+| T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | Done (M1, tests for tampering, truncation, reordering, duplication) |
 | T Tampering | Compromised dependency, action or base image injects code at build time | Exact versions, commit SHAs and image digests; Dependabot; npm audit and govulncheck in CI; gosec and Semgrep in M4 | Partial (M0) |
 | R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
 | I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Partial (request log omits the query string) |
