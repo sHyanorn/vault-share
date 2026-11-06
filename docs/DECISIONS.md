@@ -102,8 +102,8 @@
 ## D018 Audit log hashing
 - Date: 2026-11-06
 - Decision: audit entries store the client address and user agent as the first 16 bytes of HMAC-SHA256 under a 32-byte key created in the data directory on first start; entries are kept for 30 days
-- Bounds (F16): the table holds at most 1,000,000 entries, about 100 MB; the cleanup job drops the oldest beyond that every minute and logs the count. Failure events (download denied, client locked), which anyone can produce at will from many addresses, share one process-wide budget of one per second with a burst of 60, so a flood of them cannot push the other events out; skipped ones are logged as a count once a minute
-- Trade-off: under a sustained flood the oldest entries and most failure events are lost; the counts in the log say how many
+- Bounds (F16): the table holds at most 1,000,000 entries, about 100 MB; the cleanup job drops the oldest beyond that every minute and logs the count. Failure events (download denied, client locked), which anyone can produce at will from many addresses, share one process-wide budget of one per second with a burst of 60, so a flood of failures cannot push the other events out; skipped ones are logged as a count once a minute, without file or client by design
+- Trade-off: under a sustained flood the oldest entries and most failure events are lost; the counts in the log say how many. The budget is shared, so one client's failure flood also hides other clients' failures for its duration; the lockout itself is unaffected. Successful events such as file creation are not budgeted, see the threat model
 - Rationale: a keyed hash still groups events by client for abuse investigation, but the table cannot be turned back into addresses without the key, and the key never leaves the host. An unkeyed hash of an IPv4 address would be trivially reversible
 
 ## D019 Password protection
