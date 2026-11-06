@@ -39,7 +39,7 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Done (M4: no-referrer header, a test drives the whole flow and checks every log line) |
 | I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | Done (M2: every lookup, token and signature failure answers 404) |
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design (the audit key sits in the same data directory, so A3 can also invert IPv4 audit hashes, D018) |
-| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M4: per-client rate limits on creation; no total quota yet, the disk is the limit) |
+| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Done (M4, F17: quota with per-record overhead, per-client daily storage budget, D021) |
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
 | D Denial of service | Failures from many addresses fill the audit log | Process-wide budget for failure events, 1,000,000-row cap (D018) | Done (M4, F16) |
 | S Spoofing | A client names itself in X-Forwarded-For behind a proxy that appends a header line | Only the last entry of the last line counts (D017) | Done (M4, F15) |
@@ -54,4 +54,5 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
 - Rate limits and lockouts count one IPv4 address or one IPv6 /64 as one client; an attacker holding many of those is bounded only by the per-file download count and the total disk. Clients behind one address share their limits
 - The server is a single instance; its in-memory limiter state resets on restart
+- A group of clients with upload bandwidth can fill the storage quota and keep uploads unavailable until their files expire, up to seven days; their creates also push older audit entries out, at most a few entries per record and quota / 64 KiB records at a time (D021)
 - An attacker with many IPv6 /64s can saturate the CPU: a measured flood raised another client's p99 latency from under 1 ms to 37 ms. Per-client limits cannot stop this; it needs protection upstream of the server

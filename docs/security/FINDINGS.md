@@ -20,6 +20,7 @@ Issues found during development, how they were found and how they were fixed. Se
 | F14 | 2026-11-06 | Low | Independent review of M4 | A trusted proxy without a usable X-Forwarded-For silently merged every client into one bucket | Fixed |
 | F15 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Only the first X-Forwarded-For line was read, so behind a proxy that appends a line the client chose its own address | Fixed |
 | F16 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Failed download authentications from many addresses wrote audit rows with no global bound | Fixed |
+| F17 | 2026-11-06 | Medium | Adversarial verification of F15 and F16 | File creation had no global bound, so many addresses could fill the disk and push the audit history out | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -85,3 +86,9 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F16 Unbounded audit writes (Medium)
 - Impact: every failed download authentication wrote an audit row. Per client that is bounded by the download budget and the lockout, but an attacker with an IPv6 /48 holds 65,536 /64s: a 60-second flood wrote 339,321 rows, about 50 MB, kept for 30 days. Mass file creation from many addresses grew the table the same way.
 - Fix: the audit table is capped at 1,000,000 rows, trimmed oldest first every minute; failure events share a process-wide budget of one per second with a burst of 60 so they cannot push the other events out. Skipped and dropped entries are logged as counts. The CPU saturation the same flood causes is a residual risk in the threat model.
+
+## F17 No global bound on file creation (Medium)
+- Impact: creation was limited per client only. With distinct /64s a flood created about 308,000 records a minute without a single 429: the audit table reached its 1,000,000-row cap in 3.2 minutes, which cut its 30-day retention to minutes and let an uploader push out its own earlier entries, and vault.db grew to 404 MB in under four minutes, bounded only by the disk.
+- Fix: a global storage quota (`VAULT_MAX_TOTAL_BYTES`, default 20 GiB) charges every record its size, its metadata and 64 KiB of overhead, enforced in the same statement as the insert; a per-client budget of 4 GiB a day stops one client from holding the quota. Tests cover the quota under 32 concurrent creates, the release on every delete path, the backfill of existing records, the budget, and its refund when the quota refuses a create.
+- Design change from the proposal: a global cap of 1,000 records awaiting content was proposed and dropped, see D021. The availability trade-off is also larger than first stated: a group of clients with upload bandwidth can keep uploads unavailable for up to seven days, not one hour, which the threat model lists as a residual risk.
+
