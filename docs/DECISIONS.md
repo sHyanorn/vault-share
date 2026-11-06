@@ -53,7 +53,8 @@
 
 ## D011 Supply chain pinning
 - Date: 2026-11-05
-- Decision: npm dependencies at exact versions, GitHub Actions at commit SHAs, container base images at digests, govulncheck as a `tool` dependency in `go.mod`; Dependabot opens weekly update PRs for all of them
+- Decision: npm dependencies at exact versions, GitHub Actions at commit SHAs, container base images at digests, govulncheck and gosec as `tool` dependencies of a separate `server/tools` module run with `-modfile`; Dependabot opens weekly update PRs for all of them
+- Note: the scanners live in their own module because gosec alone pulls about 150 modules that vaultd never compiles; keeping them out of the server module keeps `go.sum` honest about what ships
 - Rationale: a tag can be moved by whoever controls the upstream; a SHA or digest cannot; Dependabot keeps the pins from rotting
 
 ## D012 Ciphertext format
@@ -94,7 +95,8 @@
 ## D017 Client address, rate limits and lockout
 - Date: 2026-11-06
 - Decision: the client address is the connecting address unless it falls inside `VAULT_TRUSTED_PROXIES`, in which case the last `X-Forwarded-For` entry counts. Three token buckets per client: 120 requests per minute with a burst of 60 on the API, 10 per minute for creating files, 30 per minute for download authentication. Five failed signatures on one file lock that client out of the file for fifteen minutes. State lives in memory and resets on restart
-- Rationale: Firefox Send trusted `X-Forwarded-For` unconditionally, which lets any client choose its own address; the Compose network is private and only Caddy can reach vaultd, so it is trusted there. A per-client, per-file lockout cannot be used to lock other recipients out. One instance (D005) makes in-memory state sufficient
+- Rationale: Firefox Send trusted `X-Forwarded-For` unconditionally, which lets any client choose its own address; the Compose network is private and only Caddy can reach vaultd, so it is trusted there. A per-client, per-file lockout cannot be used by one address to lock other addresses out. One instance (D005) makes in-memory state sufficient
+- Trade-off: clients behind one address (NAT, VPN egress) share buckets and lockouts; a trusted proxy that sends no usable `X-Forwarded-For` collapses everyone onto its own address, which the server logs. The lockout bounds signature forgery and audit noise; it does not bound password guessing, which never reaches the server (D019)
 
 ## D018 Audit log hashing
 - Date: 2026-11-06
@@ -105,9 +107,10 @@
 - Date: 2026-11-06
 - Decision: with a password, the link carries the 16-byte secret wrapped with AES-256-GCM under a key derived from the password by Argon2id (64 MiB, 2 passes, 1 lane, 16-byte salt) using `hash-wasm` 4.12.0 (MIT, WebAssembly inlined, no further dependencies). The server is unchanged and does not know whether a password exists
 - Rationale: SPEC section 4; the OWASP Password Storage Cheat Sheet lists 19 MiB with 2 passes as the minimum and 46 MiB with 1 pass as an equivalent, and 64 MiB with 2 passes stays above both while taking well under a second in Chromium. Firefox Send only re-keyed the server-side authentication with PBKDF2 at 100 iterations, so its link still carried the file key
-- Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess; the server lockout (D017) only bounds online attempts. A weak password remains a weak password
+- Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess, and the server never sees a guess, so no lockout applies. A weak password remains a weak password. Browser password managers may offer to save the per-file password under the site origin
 
 ## D020 Caddy runs unprivileged
 - Date: 2026-11-06
 - Decision: `Dockerfile.caddy` runs Caddy as uid 65532 with a read-only root filesystem and no capabilities; it listens on 8080 and 8443 inside the container and Compose maps 80 and 443 to them
 - Rationale: SPEC section 8 asks every container to run as a non-root user; binding the privileged ports would have required a capability, and Caddy's `http_port` and `https_port` options exist for exactly this port-forwarding setup
+- Note: HTTP/3 is off because Caddy would advertise the internal port in `Alt-Svc`; a deployment that upgrades from the root-owned Caddy needs fresh `caddy-data` and `caddy-config` volumes
