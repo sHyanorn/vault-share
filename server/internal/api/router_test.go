@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -38,6 +39,53 @@ func TestHealthz(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestHealthzMethods(t *testing.T) {
+	for _, webDir := range []string{"", t.TempDir()} {
+		if webDir != "" {
+			writeFile(t, filepath.Join(webDir, "index.html"), "INDEX")
+		}
+		h := newTestRouter(t, webDir)
+		if rec := do(h, http.MethodHead, "/healthz"); rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("webDir=%q HEAD: status %d type %q", webDir, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if rec := do(h, http.MethodPost, "/healthz"); rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("webDir=%q POST: status %d", webDir, rec.Code)
+		}
+	}
+}
+
+func TestRequestLogOmitsQueryString(t *testing.T) {
+	var buf bytes.Buffer
+	h, err := NewRouter(Options{Logger: slog.New(slog.NewJSONHandler(&buf, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do(h, http.MethodGet, "/healthz?token=secret")
+	line := buf.String()
+	if !strings.Contains(line, `"path":"/healthz"`) || !strings.Contains(line, `"status":200`) {
+		t.Errorf("unexpected log line %q", line)
+	}
+	if strings.Contains(line, "token") || strings.Contains(line, "secret") {
+		t.Errorf("query string leaked into the log: %q", line)
+	}
+}
+
+func TestPanicIsLoggedAndAnswered(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	h := requestLog(log)(recoverer(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	})))
+	rec := do(h, http.MethodGet, "/boom")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"internal"`) {
+		t.Errorf("status %d body %q", rec.Code, rec.Body.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"msg":"panic"`) || !strings.Contains(out, `"value":"boom"`) || !strings.Contains(out, `"status":500`) {
+		t.Errorf("log output %q", out)
 	}
 }
 
@@ -82,7 +130,11 @@ func TestSPA(t *testing.T) {
 	web := filepath.Join(root, "dist")
 	writeFile(t, filepath.Join(web, "index.html"), "INDEX")
 	writeFile(t, filepath.Join(web, "assets", "app-abc123.js"), "console.log(1)")
+	writeFile(t, filepath.Join(web, "favicon.svg"), "<svg/>")
 	writeFile(t, filepath.Join(root, "secret.txt"), "SECRET")
+	if err := os.Symlink(filepath.Join(root, "secret.txt"), filepath.Join(web, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
 	h := newTestRouter(t, web)
 
 	cases := []struct {
@@ -94,6 +146,7 @@ func TestSPA(t *testing.T) {
 		{"root", "/", http.StatusOK, "INDEX", "no-cache"},
 		{"client route", "/f/abc", http.StatusOK, "INDEX", "no-cache"},
 		{"asset", "/assets/app-abc123.js", http.StatusOK, "console.log(1)", "public, max-age=31536000, immutable"},
+		{"unhashed file", "/favicon.svg", http.StatusOK, "<svg/>", "no-cache"},
 		{"missing asset", "/assets/nope.js", http.StatusOK, "INDEX", "no-cache"},
 		{"directory is not listed", "/assets/", http.StatusOK, "INDEX", "no-cache"},
 	}
@@ -120,7 +173,7 @@ func TestSPA(t *testing.T) {
 	})
 
 	t.Run("traversal cannot leave the web dir", func(t *testing.T) {
-		for _, target := range []string{"/../secret.txt", "/assets/../../secret.txt", "/%2e%2e/secret.txt"} {
+		for _, target := range []string{"/../secret.txt", "/assets/../../secret.txt", "/%2e%2e/secret.txt", "/link.txt"} {
 			rec := do(h, http.MethodGet, target)
 			if strings.Contains(rec.Body.String(), "SECRET") {
 				t.Errorf("%s: served a file outside the web dir", target)
@@ -129,9 +182,11 @@ func TestSPA(t *testing.T) {
 	})
 
 	t.Run("only GET and HEAD", func(t *testing.T) {
-		rec := do(h, http.MethodPost, "/f/abc")
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("status %d", rec.Code)
+		if rec := do(h, http.MethodHead, "/f/abc"); rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+			t.Errorf("HEAD: status %d body %q", rec.Code, rec.Body.String())
+		}
+		if rec := do(h, http.MethodPost, "/f/abc"); rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST: status %d", rec.Code)
 		}
 	})
 }
