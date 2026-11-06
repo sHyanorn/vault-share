@@ -480,3 +480,59 @@ func TestStorageRefundWithARealClock(t *testing.T) {
 		t.Error("a take above the burst was granted")
 	}
 }
+
+// Another site must not write through its visitors' browsers; reads and
+// non-browser clients are unaffected.
+func TestCrossOriginWritesAreRefused(t *testing.T) {
+	e := newEnv(t)
+	create := func(headers map[string]string) (int, []byte) {
+		body := createRequest{Size: 100, Meta: encoding.EncodeToString(randomContent(64)),
+			AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+		return e.request(http.MethodPost, "/api/v1/files", body, headers, nil)
+	}
+	for _, headers := range []map[string]string{
+		{"Sec-Fetch-Site": "cross-site", "Content-Type": "text/plain"},
+		{"Sec-Fetch-Site": "same-site"},
+		{"Origin": "https://attacker.example"},
+	} {
+		status, data := create(headers)
+		if status != http.StatusForbidden || !strings.Contains(string(data), `"cross_origin"`) {
+			t.Errorf("%v: %d %s", headers, status, data)
+		}
+	}
+	if used, _ := e.store.Usage(context.Background()); used != 0 {
+		t.Errorf("refused creates were charged %d bytes", used)
+	}
+	for _, headers := range []map[string]string{
+		{"Sec-Fetch-Site": "same-origin"},
+		{"Origin": e.srv.URL},
+		nil,
+	} {
+		if status, data := create(headers); status != http.StatusCreated {
+			t.Errorf("%v: %d %s", headers, status, data)
+		}
+	}
+
+	// Every write is refused even with valid credentials; reads pass.
+	pending := e.create(100, 1, 3600)
+	cross := map[string]string{"Sec-Fetch-Site": "cross-site", "Authorization": "Bearer " + pending.owner}
+	if status, _ := e.request(http.MethodPut, "/api/v1/files/"+pending.id+"/content", pending.content, cross, nil); status != http.StatusForbidden {
+		t.Errorf("cross-site upload: %d", status)
+	}
+	sh := e.shared(100, 5, 3600)
+	cross["Authorization"] = "Bearer " + sh.owner
+	if status, _ := e.request(http.MethodDelete, "/api/v1/files/"+sh.id, nil, cross, nil); status != http.StatusForbidden {
+		t.Errorf("cross-site delete: %d", status)
+	}
+	var m metaResponse
+	if status, _ := e.request(http.MethodGet, "/api/v1/files/"+sh.id+"/meta", nil, cross, &m); status != http.StatusOK {
+		t.Fatalf("cross-site metadata read: %d", status)
+	}
+	signed := downloadRequest{Challenge: m.Challenge, Signature: sign(sh.authKey, m.Challenge)}
+	if status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download", signed, cross, nil); status != http.StatusForbidden {
+		t.Errorf("cross-site download: %d", status)
+	}
+	if _, status := e.download(sh.id, m.Challenge, signed.Signature); status != http.StatusOK {
+		t.Errorf("same-origin download after the refusals: %d", status)
+	}
+}

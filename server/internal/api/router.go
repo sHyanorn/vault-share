@@ -77,9 +77,19 @@ func NewRouter(opts Options) (http.Handler, error) {
 	r.Use(securityHeaders)
 	r.Use(withClient(opts.TrustedProxies, opts.Logger))
 
+	// A page on another site can send a write that looks like a form post
+	// without a CORS preflight. It cannot read the answer, but the write still
+	// happens, so another site could create files through its visitors.
+	crossOrigin := http.NewCrossOriginProtection()
+	crossOrigin.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "cross_origin", "cross-origin request refused")
+	}))
+
 	r.Get("/healthz", healthz)
 	r.Head("/healthz", healthz)
 	r.Route("/api/v1", func(r chi.Router) {
+		// Before the limiter, so refused requests spend no client budget.
+		r.Use(crossOrigin.Handler)
 		r.Use(rateLimit(newLimiterSet(limits.General, now)))
 		r.NotFound(notFound)
 		r.MethodNotAllowed(methodNotAllowed)
