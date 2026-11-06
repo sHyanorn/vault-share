@@ -318,6 +318,18 @@ func (s *Store) PurgeAudit(ctx context.Context, before time.Time) error {
 	return err
 }
 
+// TrimAudit keeps at most the newest max entries and reports how many it
+// dropped. Ids only grow and only the oldest rows are ever deleted, so the
+// newest max entries are the ids above MAX(id) - max.
+func (s *Store) TrimAudit(ctx context.Context, max int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM audit_log WHERE id <= (SELECT MAX(id) FROM audit_log) - ?`, max)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func nullIfEmpty(s string) any {
 	if s == "" {
 		return nil
