@@ -85,4 +85,3 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F16 Unbounded audit writes (Medium)
 - Impact: every failed download authentication wrote an audit row. Per client that is bounded by the download budget and the lockout, but an attacker with an IPv6 /48 holds 65,536 /64s: a 60-second flood wrote 339,321 rows, about 50 MB, kept for 30 days. Mass file creation from many addresses grew the table the same way.
 - Fix: the audit table is capped at 1,000,000 rows, trimmed oldest first every minute; failure events share a process-wide budget of one per second with a burst of 60 so they cannot push the other events out. Skipped and dropped entries are logged as counts. The CPU saturation the same flood causes is a residual risk in the threat model.
-
