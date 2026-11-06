@@ -1,5 +1,12 @@
 # Caddy terminates TLS and proxies everything to vaultd. Certificates are
 # automatic: a locally trusted one for localhost, Let's Encrypt for real hosts.
+# The ports are internal (see Dockerfile.caddy); clients still use 80 and 443.
+{
+	http_port 8080
+	https_port 8443
+	admin off
+}
+
 {$VAULT_DOMAIN:localhost} {
 	reverse_proxy vaultd:8080
 }
