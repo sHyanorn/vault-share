@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
+	"math"
 	"time"
 )
 
@@ -29,7 +30,7 @@ func newChallenger() *challenger {
 
 func (c *challenger) issue(fileID string, expiresAt time.Time) []byte {
 	challenge := make([]byte, challengeBytes)
-	binary.BigEndian.PutUint64(challenge[:8], uint64(expiresAt.Unix()))
+	binary.BigEndian.PutUint64(challenge[:8], uint64(max(expiresAt.Unix(), 0)))
 	copy(challenge[8:16], randomBytes(8))
 	copy(challenge[16:], c.tag(fileID, challenge[:16]))
 	return challenge
@@ -39,7 +40,11 @@ func (c *challenger) valid(fileID string, challenge []byte, now time.Time) bool 
 	if len(challenge) != challengeBytes {
 		return false
 	}
-	expiresAt := time.Unix(int64(binary.BigEndian.Uint64(challenge[:8])), 0)
+	raw := binary.BigEndian.Uint64(challenge[:8])
+	if raw > math.MaxInt64 {
+		return false
+	}
+	expiresAt := time.Unix(int64(raw), 0)
 	return now.Before(expiresAt) && hmac.Equal(challenge[16:], c.tag(fileID, challenge[:16]))
 }
 
