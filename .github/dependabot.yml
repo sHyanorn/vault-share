@@ -8,6 +8,10 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    ignore:
+      # The Node types follow the Node major the build runs on (22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: gomod
     directories: ["/server", "/server/tools"]
     schedule:
