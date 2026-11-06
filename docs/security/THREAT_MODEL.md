@@ -41,6 +41,8 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design (the audit key sits in the same data directory, so A3 can also invert IPv4 audit hashes, D018) |
 | D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M4: per-client rate limits on creation; no total quota yet, the disk is the limit) |
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
+| D Denial of service | Failures from many addresses fill the audit log | Process-wide budget for failure events, 1,000,000-row cap (D018) | Done (M4, F16) |
+| S Spoofing | A client names itself in X-Forwarded-For behind a proxy that appends a header line | Only the last entry of the last line counts (D017) | Done (M4, F15) |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB bounds offline guessing; the lockout bounds signature forgery, a guess never reaches the server, see D019) |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
@@ -52,3 +54,4 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
 - Rate limits and lockouts count one IPv4 address or one IPv6 /64 as one client; an attacker holding many of those is bounded only by the per-file download count and the total disk. Clients behind one address share their limits
 - The server is a single instance; its in-memory limiter state resets on restart
+- An attacker with many IPv6 /64s can saturate the CPU: a measured flood raised another client's p99 latency from under 1 ms to 37 ms. Per-client limits cannot stop this; it needs protection upstream of the server

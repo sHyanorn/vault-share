@@ -18,6 +18,8 @@ Issues found during development, how they were found and how they were fixed. Se
 | F12 | 2026-11-06 | Medium | Independent review of M4 | Rate limits and lockouts counted every IPv6 address separately, so one client could rotate through its /64 | Fixed |
 | F13 | 2026-11-06 | Medium | Independent review of M4 | Limiter and lockout tables grew without bound and rescanned on every insert past 10,000 keys | Fixed |
 | F14 | 2026-11-06 | Low | Independent review of M4 | A trusted proxy without a usable X-Forwarded-For silently merged every client into one bucket | Fixed |
+| F15 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Only the first X-Forwarded-For line was read, so behind a proxy that appends a line the client chose its own address | Fixed |
+| F16 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Failed download authentications from many addresses wrote audit rows with no global bound | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -75,3 +77,12 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F14 Silent collapse behind a misconfigured proxy (Low)
 - Impact: when a trusted proxy sent no usable `X-Forwarded-For`, every client got the proxy's address. The whole service then shared one bucket, and five bad signatures from anyone locked everyone out of a file. The shipped Compose file could reach this on an IPv6-enabled network, which it did not trust.
 - Fix: vaultd logs a warning, at most once a minute on the monotonic clock and without addresses, when a trusted proxy names no client on an API request; Compose also trusts the unique local IPv6 range `fd00::/8`; IPv4-mapped and zoned entries in `VAULT_TRUSTED_PROXIES` are normalised so they match. D017 states that clients behind one address share their limits and that a proxy missing from the list still collapses its clients silently.
+
+## F15 First X-Forwarded-For line read (Medium)
+- Impact: `Header.Get` returns the first header line, but proxies such as HAProxy with `option forwardfor` pass the client's lines through and append their own. The first line was therefore the client's claim: through HAProxy one client got 40 of 40 creates against a burst of 10, escaped its own lockout, and locked a victim out of a file with five bad signatures sent in the victim's name. The shipped Caddy always replaces the header with a single line, so the shipped deployment was not affected. Present since the first M4 commit.
+- Fix: the last entry of the last line counts. Tests cover a spoofed first line, a garbage first line and a rotating first line against the create limit.
+
+## F16 Unbounded audit writes (Medium)
+- Impact: every failed download authentication wrote an audit row. Per client that is bounded by the download budget and the lockout, but an attacker with an IPv6 /48 holds 65,536 /64s: a 60-second flood wrote 339,321 rows, about 50 MB, kept for 30 days. Mass file creation from many addresses grew the table the same way.
+- Fix: the audit table is capped at 1,000,000 rows, trimmed oldest first every minute; failure events share a process-wide budget of one per second with a burst of 60 so they cannot push the other events out. Skipped and dropped entries are logged as counts. The CPU saturation the same flood causes is a residual risk in the threat model.
+
