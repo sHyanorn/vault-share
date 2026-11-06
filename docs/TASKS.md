@@ -13,7 +13,7 @@
 - [x] Nonce construction and end marker
 - [x] Metadata encryption
 - [x] Tests: round-trip correctness, tampering fails, truncation fails, reordering fails, standard test vectors
-- [ ] Document the ciphertext format in DECISIONS.md
+- [x] Document the ciphertext format in DECISIONS.md
 
 ## M2 Backend Core
 - [ ] Database tables and migrations
