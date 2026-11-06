@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,18 +17,22 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/audit"
 )
 
-func TestClientIP(t *testing.T) {
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+func TestClientAddr(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("fe80::/10")}
 	cases := []struct {
 		name, remote, forwarded, want string
+		unnamed                       bool
 	}{
-		{"no proxy", "203.0.113.9:4000", "198.51.100.1", "203.0.113.9"},
-		{"trusted proxy", "10.1.2.3:4000", "198.51.100.1", "198.51.100.1"},
-		{"trusted proxy, chain", "10.1.2.3:4000", "198.51.100.1, 192.0.2.2", "192.0.2.2"},
-		{"trusted proxy, garbage", "10.1.2.3:4000", "not-an-ip", "10.1.2.3"},
-		{"trusted proxy, no header", "10.1.2.3:4000", "", "10.1.2.3"},
-		{"ipv6", "[2001:db8::1]:4000", "198.51.100.1", "2001:db8::1"},
-		{"mapped ipv4", "[::ffff:203.0.113.9]:4000", "", "203.0.113.9"},
+		{"no proxy", "203.0.113.9:4000", "198.51.100.1", "203.0.113.9", false},
+		{"trusted proxy", "10.1.2.3:4000", "198.51.100.1", "198.51.100.1", false},
+		{"trusted proxy, chain", "10.1.2.3:4000", "198.51.100.1, 192.0.2.2", "192.0.2.2", false},
+		{"trusted proxy, garbage", "10.1.2.3:4000", "not-an-ip", "10.1.2.3", true},
+		{"trusted proxy, no header", "10.1.2.3:4000", "", "10.1.2.3", true},
+		{"ipv6", "[2001:db8::1]:4000", "198.51.100.1", "2001:db8::1", false},
+		{"mapped ipv4", "[::ffff:203.0.113.9]:4000", "", "203.0.113.9", false},
+		{"zone on the connection", "[fe80::9%eth0]:4000", "", "fe80::9", true},
+		{"zone in the header", "10.1.2.3:4000", "fe80::1%eth0", "fe80::1", false},
+		{"zone in the header, encoded", "10.1.2.3:4000", "fe80::1%25eth2", "fe80::1", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,10 +41,48 @@ func TestClientIP(t *testing.T) {
 			if tc.forwarded != "" {
 				r.Header.Set("X-Forwarded-For", tc.forwarded)
 			}
-			if got := clientIP(r, trusted); got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
+			addr, unnamed := clientAddr(r, trusted)
+			if addr.String() != tc.want || unnamed != tc.unnamed {
+				t.Errorf("got (%q, %v), want (%q, %v)", addr, unnamed, tc.want, tc.unnamed)
 			}
 		})
+	}
+}
+
+func TestBucketKey(t *testing.T) {
+	key := func(s string) string { return bucketKey(netip.MustParseAddr(s)) }
+	if key("203.0.113.9") == key("203.0.113.10") {
+		t.Error("two IPv4 addresses share a bucket")
+	}
+	if key("2001:db8:1:2::1") != key("2001:db8:1:2:ffff:ffff:ffff:ffff") {
+		t.Error("one IPv6 /64 spans two buckets")
+	}
+	if key("2001:db8:1:2::1") == key("2001:db8:1:3::1") {
+		t.Error("two IPv6 /64s share a bucket")
+	}
+	if got := key("2001:db8:1:2:3:4:5:6"); got != "2001:db8:1:2::/64" {
+		t.Errorf("key %q", got)
+	}
+}
+
+func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
+	var logs bytes.Buffer
+	e := newEnvWith(t, func(o *Options) {
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	})
+	e.request(http.MethodGet, "/api/v1/nope", nil, map[string]string{"X-Forwarded-For": "198.51.100.1"}, nil)
+	if strings.Contains(logs.String(), "X-Forwarded-For") {
+		t.Fatal("warned although the proxy named the client")
+	}
+	for i := 0; i < 3; i++ {
+		e.request(http.MethodGet, "/api/v1/nope", nil, nil, nil)
+	}
+	if n := strings.Count(logs.String(), "trusted proxy sent no usable X-Forwarded-For"); n != 1 {
+		t.Errorf("%d warnings, want exactly one per minute", n)
+	}
+	if strings.Contains(logs.String(), "127.0.0.1") || strings.Contains(logs.String(), "198.51.100.1") {
+		t.Error("an address reached the log")
 	}
 }
 
@@ -174,4 +219,100 @@ func mustJSON(v any) []byte {
 		panic(err)
 	}
 	return b
+}
+
+func TestRateLimitsCountAnIPv6PrefixOnce(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) {
+		o.Limits = nil // the defaults
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	})
+	valid := createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
+		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	created := 0
+	for i := 1; i <= DefaultLimits.Create.Burst+2; i++ {
+		from := map[string]string{"X-Forwarded-For": fmt.Sprintf("2001:db8:1:2::%x", i)}
+		if status, _ := e.request(http.MethodPost, "/api/v1/files", valid, from, nil); status == http.StatusCreated {
+			created++
+		}
+	}
+	if created != DefaultLimits.Create.Burst {
+		t.Errorf("%d created from one /64, want %d", created, DefaultLimits.Create.Burst)
+	}
+	other := map[string]string{"X-Forwarded-For": "2001:db8:1:3::1"}
+	if status, _ := e.request(http.MethodPost, "/api/v1/files", valid, other, nil); status != http.StatusCreated {
+		t.Errorf("neighbouring /64: %d", status)
+	}
+}
+
+func TestLockoutCoversTheWholeIPv6Prefix(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) {
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	})
+	sh := e.shared(100, 50, 3600)
+	attempt := func(from string, key []byte) int {
+		m, _ := e.meta(sh.id)
+		status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download",
+			downloadRequest{Challenge: m.Challenge, Signature: sign(key, m.Challenge)},
+			map[string]string{"X-Forwarded-For": from}, nil)
+		return status
+	}
+	for i := 1; i <= lockoutFailures; i++ {
+		attempt(fmt.Sprintf("2001:db8:1:2::%x", i), randomContent(32))
+	}
+	if status := attempt("2001:db8:1:2::ffff", sh.authKey); status != http.StatusNotFound {
+		t.Errorf("fresh address in the locked /64: %d", status)
+	}
+	if status := attempt("2001:db8:1:3::1", sh.authKey); status != http.StatusOK {
+		t.Errorf("neighbouring /64: %d", status)
+	}
+}
+
+func TestLimiterTableStaysBounded(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	set := newLimiterSet(Budget{PerMinute: 60, Burst: 1}, func() time.Time { return now })
+	start := time.Now()
+	for i := 0; i < 3*maxEntries; i++ {
+		set.allow(strconv.Itoa(i))
+	}
+	if n := len(set.table.entries); n > maxEntries {
+		t.Errorf("%d entries, cap %d", n, maxEntries)
+	}
+	// Quadratic sweeping took minutes here; bounded inserts take well under a second.
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("%d fresh keys took %v", 3*maxEntries, elapsed)
+	}
+	if !set.allow("fresh") {
+		t.Error("a new client was refused")
+	}
+	now = now.Add(idleAfter + time.Minute)
+	set.allow("after-idle")
+	if n := len(set.table.entries); n != 1 {
+		t.Errorf("%d entries after everyone went idle, want 1", n)
+	}
+}
+
+func TestLockoutTableStaysBounded(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	l := newLockouts(func() time.Time { return now })
+	start := time.Now()
+	for i := 0; i < 3*maxEntries; i++ {
+		l.failed(strconv.Itoa(i), "file")
+	}
+	if n := len(l.table.entries); n > maxEntries {
+		t.Errorf("%d entries, cap %d", n, maxEntries)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("%d fresh keys took %v", 3*maxEntries, elapsed)
+	}
+	// Below the cap nothing is evicted: a lockout holds.
+	small := newLockouts(func() time.Time { return now })
+	for i := 0; i < lockoutFailures; i++ {
+		small.failed("attacker", "file")
+	}
+	for i := 0; i < 1000; i++ {
+		small.failed(strconv.Itoa(i), "file")
+	}
+	if !small.locked("attacker", "file") {
+		t.Error("lockout lost below the cap")
+	}
 }
