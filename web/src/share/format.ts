@@ -1,14 +1,18 @@
 // Presentation helpers for uploader-controlled strings and numbers.
 
-/** Strips what a file system or a Content-Disposition header could misread. */
+/**
+ * Strips what a file system or a Content-Disposition header could misread,
+ * and the invisible format characters (bidi overrides, zero-width marks)
+ * that let "invoice\u202Efdp.exe" display as "invoiceexe.pdf". The joiner
+ * stays so emoji sequences survive. Length is capped in code points.
+ */
 export function safeFileName(name: string): string {
   const cleaned = name
-    .replace(/\p{Cc}/gu, '')
+    .replace(/(?!\u200d)[\p{Cc}\p{Cf}]/gu, '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .replace(/^\.+/, '')
     .trim()
-    .slice(0, 255)
-  return cleaned || 'download'
+  return Array.from(cleaned).slice(0, 255).join('') || 'download'
 }
 
 const units = ['B', 'KB', 'MB', 'GB']
