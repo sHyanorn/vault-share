@@ -8,7 +8,7 @@
 - [x] Docker Compose: service plus Caddy reverse proxy (HTTPS)
 
 ## M1 Crypto Module (frontend; first and most important)
-- [ ] HKDF derivation of fileKey, metaKey, authKey
+- [x] HKDF derivation of fileKey, metaKey, authKey
 - [ ] Chunked AES-GCM encryption and decryption (Streams API)
 - [ ] Nonce construction and end marker
 - [ ] Metadata encryption
