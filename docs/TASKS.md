@@ -43,7 +43,7 @@
 ## M5 Security Testing and Report
 - [x] Self-assess against each OWASP Top 10 item and write `docs/security/TEST_REPORT.md`
 - [x] Fix discovered issues and record them in FINDINGS.md
-- [ ] Write SECURITY.md
+- [x] Write SECURITY.md
 
 ## M6 Showcase and Deployment
 - [ ] S3-compatible storage implementation (tested with MinIO)
