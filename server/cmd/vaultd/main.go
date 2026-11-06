@@ -64,6 +64,7 @@ func run() error {
 		Blobs:          blobs,
 		Audit:          auditor,
 		TrustedProxies: cfg.TrustedProxies,
+		Host:           cfg.Host,
 		MaxFileBytes:   cfg.MaxFileBytes,
 		MaxTotalBytes:  cfg.MaxTotalBytes,
 		WebDir:         cfg.WebDir,

@@ -26,6 +26,8 @@ type Options struct {
 	Audit  *audit.Recorder
 	// TrustedProxies are the sources whose X-Forwarded-For names the client.
 	TrustedProxies []netip.Prefix
+	// Host is the name the API answers for; empty accepts any.
+	Host string
 	// MaxFileBytes caps the declared ciphertext size of an upload.
 	MaxFileBytes int64
 	// MaxTotalBytes caps what all records together may be charged
@@ -81,6 +83,7 @@ func NewRouter(opts Options) (http.Handler, error) {
 	r.Head("/healthz", healthz)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Before the limiter, so refused requests spend no client budget.
+		r.Use(onlyHost(opts.Host))
 		r.Use(sameOrigin())
 		r.Use(rateLimit(newLimiterSet(limits.General, now)))
 		r.NotFound(notFound)

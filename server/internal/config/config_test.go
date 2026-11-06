@@ -23,6 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	want := Config{
 		ListenAddr:    ":8080",
 		BaseURL:       "https://localhost",
+		Host:          "localhost",
 		DataDir:       "data",
 		MaxFileBytes:  1 << 30,
 		MaxTotalBytes: 20 << 30,
@@ -50,6 +51,7 @@ func TestLoadOverrides(t *testing.T) {
 	want := Config{
 		ListenAddr:     "127.0.0.1:9000",
 		BaseURL:        "https://share.example.com/vault",
+		Host:           "share.example.com",
 		DataDir:        "/data",
 		MaxFileBytes:   1024,
 		MaxTotalBytes:  4 << 20,

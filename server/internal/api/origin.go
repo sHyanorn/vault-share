@@ -1,6 +1,10 @@
 package api
 
-import "net/http"
+import (
+	"net"
+	"net/http"
+	"strings"
+)
 
 // sameOrigin refuses API requests a browser sends on behalf of another site.
 // Such a page can send a write that looks like a form post without a CORS
@@ -24,4 +28,30 @@ func sameOrigin() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// onlyHost answers only requests addressed to host, compared without port
+// or case. A page that rebinds its own name to this server's address is
+// same-origin to the browser, but its requests still carry that name. An
+// empty host accepts any.
+func onlyHost(host string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if host == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.EqualFold(hostname(r.Host), host) {
+				writeError(w, http.StatusMisdirectedRequest, "misdirected", "unknown host")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func hostname(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.TrimSuffix(strings.Trim(host, "[]"), ".")
 }

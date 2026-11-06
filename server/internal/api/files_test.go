@@ -113,6 +113,10 @@ func (e *env) request(method, path string, body any, headers map[string]string, 
 		e.t.Fatal(err)
 	}
 	for k, v := range headers {
+		if k == "Host" {
+			req.Host = v
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	resp, err := e.srv.Client().Do(req)
