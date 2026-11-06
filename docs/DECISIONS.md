@@ -88,7 +88,7 @@
 
 ## D016 Security headers set by vaultd
 - Date: 2026-11-06
-- Decision: every response carries `Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`, HSTS for two years with subdomains, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin` and `X-Frame-Options: DENY`
+- Decision: every response carries `Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`, HSTS for two years with subdomains, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`, `Cross-Origin-Resource-Policy: same-origin` and `X-Frame-Options: DENY`
 - Rationale: the built client has no inline script or style, and React sets styles through the CSSOM, which the policy does not govern, so nothing needs `unsafe-inline`. `'wasm-unsafe-eval'` is required for the Argon2id WebAssembly module and permits WebAssembly compilation only, not JavaScript eval. Setting the headers in Go rather than Caddy keeps them tested (D009)
 
 ## D017 Client address, rate limits and lockout

@@ -1,1 +1,22 @@
-# ZAP baseline rules: <rule id><TAB>IGNORE|WARN|FAIL<TAB>(name). Everything not listed stays WARN.
+# ZAP baseline rules: <rule id><TAB>IGNORE|WARN|FAIL<TAB>(name). Everything not listed stays WARN,
+# and a WARN fails the build, so every accepted alert needs a line and a reason.
+#
+# Accepted: the client is a single-page app whose shell answers every path with
+# Cache-Control: no-cache and whose hashed assets are immutable by design (D009).
+10015	IGNORE	(Re-examine Cache-control Directives: index.html is no-cache on purpose)
+10049	IGNORE	(Storable and Cacheable Content: hashed assets are immutable, the shell is no-cache)
+10109	IGNORE	(Modern Web Application: informational)
+#
+# Regressions of the hardening headers and of information leaks fail the build.
+10017	FAIL	(Cross-Domain JavaScript Source File Inclusion)
+10020	FAIL	(Anti-clickjacking Header)
+10021	FAIL	(X-Content-Type-Options Header Missing)
+10024	FAIL	(Information Disclosure - Sensitive Information in URL)
+10025	FAIL	(Information Disclosure - Sensitive Information in HTTP Referrer Header)
+10033	FAIL	(Directory Browsing)
+10035	FAIL	(Strict-Transport-Security Header)
+10038	FAIL	(Content Security Policy (CSP) Header Not Set)
+10040	FAIL	(Secure Pages Include Mixed Content)
+10055	FAIL	(CSP)
+10063	FAIL	(Permissions Policy Header Not Set)
+90004	FAIL	(Cross-Origin-Embedder-Policy Header Missing or Invalid)

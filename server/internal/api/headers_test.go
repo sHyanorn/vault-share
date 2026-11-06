@@ -19,6 +19,7 @@ func TestSecurityHeaders(t *testing.T) {
 		"Referrer-Policy":              "no-referrer",
 		"X-Frame-Options":              "DENY",
 		"Cross-Origin-Opener-Policy":   "same-origin",
+		"Cross-Origin-Embedder-Policy": "require-corp",
 		"Cross-Origin-Resource-Policy": "same-origin",
 	}
 	for key, value := range want {
