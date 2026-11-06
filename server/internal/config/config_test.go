@@ -81,7 +81,7 @@ func TestLoadInvalid(t *testing.T) {
 		})
 	}
 	t.Run("base url variants", func(t *testing.T) {
-		for _, bad := range []string{"localhost", "https://", "https://u:p@h", "https://h?x=1", "https://h#frag", "https://h/%zz"} {
+		for _, bad := range []string{"localhost", "https://", "https://u:p@h", "https://h?x=1", "https://h#frag", "https://h?", "https://h/#", "https://h/%zz"} {
 			if _, err := Load(lookupFrom(map[string]string{"VAULT_BASE_URL": bad})); err == nil {
 				t.Errorf("%q: want error", bad)
 			}

@@ -41,7 +41,7 @@ Method: STRIDE. It is revised with every feature change.
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
 | D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | To do |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
-| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served from an `os.DirFS` root with no directory listing | Partial (static handler done, storage in M2) |
+| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Partial (static handler done, storage in M2) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | To do |
 
 ## 5. Residual Risks

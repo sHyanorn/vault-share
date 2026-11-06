@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,9 +40,11 @@ func run() error {
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,
-		// Uploads and downloads stream for minutes, so there is no global
-		// read or write timeout; handlers set their own body deadlines.
+		// Streaming handlers (M2) extend these per request through
+		// http.ResponseController; every other request must finish quickly.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
@@ -63,11 +64,12 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
+	stop() // a second signal now terminates the process
 	logger.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("shutdown incomplete, closing active connections", "err", err)
 	}
 	return nil
 }
