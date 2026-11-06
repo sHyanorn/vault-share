@@ -26,7 +26,7 @@
 
 ## M3 Frontend Pages
 - [x] Upload page: drag and drop, progress bar, expiry and download-count options, copy link
-- [ ] Download page: read the key from the fragment, decryption progress, save file
+- [x] Download page: read the key from the fragment, decryption progress, save file
 - [ ] Error states: invalid link, expired, wrong password
 - [ ] Clean, Apple-style UI
 
