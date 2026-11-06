@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/sHyanorn/vault-share/server/internal/audit"
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
@@ -16,6 +17,7 @@ import (
 type Job struct {
 	Store *store.Store
 	Blobs blob.Store
+	Audit *audit.Recorder
 	Log   *slog.Logger
 	// Now defaults to time.Now; tests move it.
 	Now func() time.Time
@@ -55,12 +57,16 @@ func (j *Job) Run(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("record %s: %w", p.ID, err))
 			continue
 		}
+		j.Audit.Record(ctx, audit.FilePurged, p.ID, audit.Client{})
 		purged++
 	}
 	if purged > 0 {
 		j.Log.Info("purged files", "count", purged)
 	}
 	if err := j.Store.ExpireTokens(ctx, now); err != nil {
+		errs = append(errs, err)
+	}
+	if err := j.Audit.Purge(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
