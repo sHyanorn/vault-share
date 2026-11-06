@@ -1,10 +1,14 @@
 import { useEffect } from 'react'
+import DeletePage from './pages/DeletePage.tsx'
 import DownloadPage from './pages/DownloadPage.tsx'
 import UploadPage from './pages/UploadPage.tsx'
-import { isDownloadPath } from './share/link.ts'
+import { isDeletePath, isDownloadPath } from './share/link.ts'
 
 export default function App() {
-  const download = isDownloadPath(window.location.pathname)
+  const { pathname } = window.location
+  let page = <UploadPage />
+  if (isDownloadPath(pathname)) page = <DownloadPage />
+  else if (isDeletePath(pathname)) page = <DeletePage />
 
   // A file dropped outside the drop zone must not replace the app.
   useEffect(() => {
@@ -22,9 +26,7 @@ export default function App() {
       <header className="brand">
         <a href="/">vault-share</a>
       </header>
-      <main className="stage">
-        {download ? <DownloadPage /> : <UploadPage />}
-      </main>
+      <main className="stage">{page}</main>
     </div>
   )
 }

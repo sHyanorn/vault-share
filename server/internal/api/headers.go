@@ -4,8 +4,9 @@ import "net/http"
 
 // csp allows only same-origin scripts and styles. The built client has no
 // inline script, and React sets styles through the CSSOM, which the policy
-// does not govern.
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; " +
+// does not govern. 'wasm-unsafe-eval' lets the Argon2id module of the
+// password feature compile; it permits WebAssembly only, not JavaScript eval.
+const csp = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; " +
 	"connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
 // securityHeaders applies the response headers of SPEC section 8 to every

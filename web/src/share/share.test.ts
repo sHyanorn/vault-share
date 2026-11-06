@@ -13,6 +13,7 @@ import * as api from './api.ts'
 import { parseLocation } from './link.ts'
 import type { Sink } from './save.ts'
 import { downloadShare, openShare, uploadFile } from './share.ts'
+import { unwrapSecret } from '../crypto/index.ts'
 
 vi.mock('./api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api.ts')>()),
@@ -67,7 +68,7 @@ describe('uploadFile', () => {
     )
     expect(location?.id).toBe('AAAAAAAAAAAAAAAAAAAAAA')
     // The secret in the link decrypts what was uploaded.
-    const keys = await deriveKeys(location!.secret)
+    const keys = await deriveKeys(location!.secret!)
     const ciphertext = new Uint8Array(await blob.arrayBuffer())
     expect(
       await collect(decryptStream(streamOf(ciphertext), keys.fileKey)),
@@ -189,4 +190,34 @@ describe('downloadShare', () => {
       'authentication failed',
     )
   })
+})
+
+describe('uploadFile with a password', () => {
+  it('puts only the wrapped secret in the link and the owner token in the delete link', async () => {
+    const file = new File([randomBytes(100)], 'secret.txt')
+    vi.mocked(api.createFile).mockResolvedValue({
+      id: 'AAAAAAAAAAAAAAAAAAAAAA',
+      owner_token: toBase64Url(randomBytes(32)),
+      upload_url: '/x',
+      expires_at: 1_800_000_000,
+    })
+    vi.mocked(api.uploadContent).mockResolvedValue()
+    vi.stubGlobal('window', { location: { origin: 'https://share.example' } })
+    const share = await uploadFile(
+      file,
+      { expiresIn: 3600, maxDownloads: 1, password: 'open sesame' },
+      () => {},
+    )
+    expect(share.protected).toBe(true)
+    const url = new URL(share.link)
+    const location = parseLocation(url.pathname, url.hash)
+    expect(location?.wrapped).toBeDefined()
+    expect(await unwrapSecret(location!.wrapped!, 'wrong')).toBeNull()
+    const secret = await unwrapSecret(location!.wrapped!, 'open sesame')
+    expect(secret).toHaveLength(16)
+    const del = new URL(share.deleteLink)
+    expect(del.pathname).toBe('/d/AAAAAAAAAAAAAAAAAAAAAA')
+    expect(del.hash).toBe('#' + share.ownerToken)
+    vi.unstubAllGlobals()
+  }, 30_000)
 })

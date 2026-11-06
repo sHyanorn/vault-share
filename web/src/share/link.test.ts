@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { generateSecret, toBase64Url } from '../crypto/index.ts'
-import { buildLink, isDownloadPath, parseLocation } from './link.ts'
+import { generateSecret, toBase64Url, wrapSecret } from '../crypto/index.ts'
+import {
+  buildDeleteLink,
+  buildLink,
+  isDeletePath,
+  isDownloadPath,
+  parseDeleteLocation,
+  parseLocation,
+} from './link.ts'
 
 const id = 'AAAAAAAAAAAAAAAAAAAAAA'
 
@@ -35,5 +42,35 @@ describe('share link', () => {
   it('recognises download paths', () => {
     expect(isDownloadPath('/f/' + id)).toBe(true)
     expect(isDownloadPath('/')).toBe(false)
+  })
+})
+
+describe('password-protected link', () => {
+  it('carries the wrapped secret and never the secret itself', async () => {
+    const secret = generateSecret()
+    const wrapped = await wrapSecret(secret, 'pw')
+    const link = new URL(buildLink('https://share.example', id, wrapped))
+    expect(link.hash).not.toContain(toBase64Url(secret))
+    const parsed = parseLocation(link.pathname, link.hash)
+    expect(parsed?.wrapped).toEqual(wrapped)
+    expect(parsed?.secret).toBeUndefined()
+  }, 30_000)
+})
+
+describe('delete link', () => {
+  const token = toBase64Url(new Uint8Array(32))
+  it('round-trips the owner token through the fragment', () => {
+    const link = new URL(buildDeleteLink('https://share.example', id, token))
+    expect(link.pathname).toBe('/d/' + id)
+    expect(parseDeleteLocation(link.pathname, link.hash)).toEqual({
+      id,
+      ownerToken: token,
+    })
+    expect(isDeletePath(link.pathname)).toBe(true)
+  })
+  it('rejects malformed ids and tokens', () => {
+    expect(parseDeleteLocation('/d/' + id, '#' + token.slice(1))).toBeNull()
+    expect(parseDeleteLocation('/d/short', '#' + token)).toBeNull()
+    expect(parseDeleteLocation('/f/' + id, '#' + token)).toBeNull()
   })
 })

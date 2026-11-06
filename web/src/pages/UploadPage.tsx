@@ -35,6 +35,7 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
   const [expiresIn, setExpiresIn] = useState<ExpiresIn>(86400)
   const [maxDownloads, setMaxDownloads] = useState(1)
+  const [password, setPassword] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'pick' })
 
   async function start() {
@@ -46,7 +47,7 @@ export default function UploadPage() {
     try {
       const share = await uploadFile(
         file,
-        { expiresIn, maxDownloads },
+        { expiresIn, maxDownloads, password: password || undefined },
         (progress) => setPhase({ kind: 'working', progress }),
       )
       setPhase({ kind: 'done', share })
@@ -135,7 +136,28 @@ export default function UploadPage() {
               onChange={setMaxDownloads}
             />
           </div>
-          <Button onClick={start} disabled={!file}>
+          {password === null ? (
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setPassword('')}
+            >
+              Add a password
+            </button>
+          ) : (
+            <label className="field">
+              <span>Password</span>
+              <input
+                className="text"
+                type="password"
+                autoComplete="new-password"
+                autoFocus
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+          )}
+          <Button onClick={start} disabled={!file || password === ''}>
             Create link
           </Button>
         </section>
@@ -267,7 +289,17 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
       <div className="summary">
         <span>
           Expires in {formatExpiry(share.expiresAt)} · {downloads}
+          {share.protected && ' · Password'}
         </span>
+      </div>
+      <div className="field">
+        <span>Delete link</span>
+        <div className="share-link">
+          <code>{share.deleteLink}</code>
+          <Button variant="quiet" onClick={() => copyText(share.deleteLink)}>
+            Copy
+          </Button>
+        </div>
       </div>
       {confirming ? (
         <div
@@ -308,6 +340,10 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
       )}
     </section>
   )
+}
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text).catch(() => {})
 }
 
 function describe(error: unknown): string {

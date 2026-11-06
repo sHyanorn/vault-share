@@ -18,3 +18,9 @@ export {
   type FileMetadata,
 } from './metadata.ts'
 export { toBase64Url, fromBase64Url } from './encoding.ts'
+export {
+  ARGON2_PARAMS,
+  WRAPPED_LENGTH,
+  wrapSecret,
+  unwrapSecret,
+} from './password.ts'
