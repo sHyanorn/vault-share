@@ -86,17 +86,35 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if item == "" {
 			continue
 		}
-		prefix, err := netip.ParsePrefix(item)
+		prefix, err := parseProxy(item)
 		if err != nil {
-			addr, addrErr := netip.ParseAddr(item)
-			if addrErr != nil {
-				fail("TRUSTED_PROXIES", fmt.Errorf("%q is not an address or CIDR", item))
-				continue
-			}
-			prefix = netip.PrefixFrom(addr, addr.BitLen())
+			fail("TRUSTED_PROXIES", err)
+			continue
 		}
 		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
 	}
 
 	return cfg, errors.Join(errs...)
+}
+
+// parseProxy accepts an address or a CIDR in the form clients are matched
+// in: IPv4-mapped entries become plain IPv4 and zones are dropped, because
+// connecting addresses are unmapped and stripped of zones before matching.
+func parseProxy(item string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(item)
+	if err != nil {
+		addr, addrErr := netip.ParseAddr(item)
+		if addrErr != nil {
+			return netip.Prefix{}, fmt.Errorf("%q is not an address or CIDR", item)
+		}
+		addr = addr.WithZone("")
+		prefix = netip.PrefixFrom(addr, addr.BitLen())
+	}
+	if prefix.Addr().Is4In6() {
+		if prefix.Bits() < 96 {
+			return netip.Prefix{}, fmt.Errorf("%q spans beyond the IPv4-mapped range", item)
+		}
+		prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	}
+	return prefix.Masked(), nil
 }

@@ -67,11 +67,15 @@ func (t *table[V]) makeRoom(now time.Time) {
 	}
 	if now.Sub(t.lastSweep) >= sweepEvery {
 		t.lastSweep = now
+		// Rebuilding rather than deleting in place also releases the storage
+		// that eviction churn leaves behind: Go maps never shrink.
+		kept := make(map[string]V, len(t.entries))
 		for key, v := range t.entries {
-			if t.stale(v, now) {
-				delete(t.entries, key)
+			if !t.stale(v, now) {
+				kept[key] = v
 			}
 		}
+		t.entries = kept
 	}
 	for key := range t.entries { // map order is randomised
 		if len(t.entries) < t.max {
