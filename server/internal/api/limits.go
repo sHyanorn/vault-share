@@ -17,17 +17,22 @@ type Budget struct {
 
 // Limits are the per-client budgets. Uploads and download authentication
 // get their own pools on top of the general one, as SPEC section 8 asks.
+// Storage counts bytes charged against the quota rather than requests.
 type Limits struct {
 	General  Budget
 	Create   Budget
 	Download Budget
+	Storage  Budget
 }
 
-// DefaultLimits suit a small public instance.
+// DefaultLimits suit a small public instance. The storage budget lets one
+// client reserve 4 GiB a day, so filling the default 20 GiB quota takes
+// several clients rather than one.
 var DefaultLimits = Limits{
 	General:  Budget{PerMinute: 120, Burst: 60},
 	Create:   Budget{PerMinute: 10, Burst: 10},
 	Download: Budget{PerMinute: 30, Burst: 15},
+	Storage:  Budget{PerMinute: float64(4<<30) / (24 * 60), Burst: 4 << 30},
 }
 
 const (
@@ -104,10 +109,8 @@ func newLimiterSet(b Budget, now func() time.Time) *limiterSet {
 	return &limiterSet{table: newTable(stale), limit: rate.Limit(b.PerMinute / 60), burst: b.Burst, now: now}
 }
 
-func (s *limiterSet) allow(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
+// lookup returns key's bucket, creating it. The caller holds s.mu.
+func (s *limiterSet) lookup(key string, now time.Time) *rate.Limiter {
 	entry, ok := s.table.entries[key]
 	if !ok {
 		s.table.makeRoom(now)
@@ -115,7 +118,37 @@ func (s *limiterSet) allow(key string) bool {
 		s.table.entries[key] = entry
 	}
 	entry.seen = now
-	return entry.limiter.AllowN(now, 1)
+	return entry.limiter
+}
+
+func (s *limiterSet) allow(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	return s.lookup(key, now).AllowN(now, 1)
+}
+
+// take spends n tokens from key's bucket if they are there now, and returns
+// a function that gives them back.
+func (s *limiterSet) take(key string, n int64) (refund func(), ok bool) {
+	if n > int64(s.burst) {
+		return nil, false
+	}
+	s.mu.Lock()
+	now := s.now()
+	lim := s.lookup(key, now)
+	s.mu.Unlock()
+	r := lim.ReserveN(now, int(n)) // #nosec G115 -- n is at most s.burst, an int
+	if !r.OK() {
+		return nil, false
+	}
+	if r.DelayFrom(now) > 0 {
+		r.CancelAt(now)
+		return nil, false
+	}
+	// CancelAt only reverses a reservation when given a time at or before
+	// the reservation's own, so the refund reuses now.
+	return func() { r.CancelAt(now) }, true
 }
 
 // rateLimit answers 429 once the client's bucket is empty.

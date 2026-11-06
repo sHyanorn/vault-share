@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/vault-share/server/internal/audit"
+	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
 func TestClientAddr(t *testing.T) {
@@ -390,5 +391,92 @@ func TestLockoutTableStaysBounded(t *testing.T) {
 	}
 	if !small.locked("attacker", "file") {
 		t.Error("lockout lost below the cap")
+	}
+}
+
+func TestStorageQuota(t *testing.T) {
+	charge := store.Charge(1000, 64) // e.create uses 64 bytes of metadata
+	e := newEnvWith(t, func(o *Options) { o.MaxTotalBytes = 3 * charge })
+	var shares []share
+	for i := 0; i < 3; i++ {
+		shares = append(shares, e.create(1000, 1, 3600))
+	}
+	body := createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
+		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	status, data := e.request(http.MethodPost, "/api/v1/files", body, nil, nil)
+	if status != http.StatusServiceUnavailable || !strings.Contains(string(data), `"capacity"`) {
+		t.Fatalf("over quota: %d %s", status, data)
+	}
+	// Deleting a file frees its share.
+	if status := e.remove(shares[0].id, shares[0].owner); status != http.StatusNoContent {
+		t.Fatalf("delete: %d", status)
+	}
+	if status, _ := e.request(http.MethodPost, "/api/v1/files", body, nil, nil); status != http.StatusCreated {
+		t.Errorf("after delete: %d", status)
+	}
+	// So does the purge of uploads that never arrived.
+	e.advance(2 * time.Hour)
+	if err := e.job.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := e.store.Usage(context.Background()); used != 0 {
+		t.Errorf("usage %d after every record was purged", used)
+	}
+}
+
+func TestStorageBudgetPerClient(t *testing.T) {
+	charge := store.Charge(maxTestFileBytes, 64)
+	limits := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9},
+		Storage: Budget{PerMinute: 1, Burst: int(3 * charge)}}
+	e := newEnvWith(t, func(o *Options) {
+		o.Limits = &limits
+		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.MaxTotalBytes = 2 * charge
+	})
+	body := createRequest{Size: maxTestFileBytes, Meta: encoding.EncodeToString(randomContent(64)),
+		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	create := func(from string) (int, createResponse) {
+		var resp createResponse
+		status, _ := e.request(http.MethodPost, "/api/v1/files", body, map[string]string{"X-Forwarded-For": from}, &resp)
+		return status, resp
+	}
+	expect := func(step string, got, want int) {
+		t.Helper()
+		if got != want {
+			t.Fatalf("%s: %d, want %d", step, got, want)
+		}
+	}
+	alice, bob := "198.51.100.1", "198.51.100.2"
+	status, _ := create(alice)
+	expect("first file", status, http.StatusCreated)
+	status, second := create(alice)
+	expect("second file", status, http.StatusCreated)
+	status, _ = create(alice)
+	expect("over the quota", status, http.StatusServiceUnavailable)
+	expect("delete", e.remove(second.ID, second.OwnerToken), http.StatusNoContent)
+	// The refused create was refunded, so the third share of budget is still there.
+	status, third := create(alice)
+	expect("third file after the refund", status, http.StatusCreated)
+	expect("delete", e.remove(third.ID, third.OwnerToken), http.StatusNoContent)
+	// Deleting frees quota, not budget: alice has spent all three shares.
+	status, _ = create(alice)
+	expect("fourth file from one client", status, http.StatusTooManyRequests)
+	status, _ = create(bob)
+	expect("another client", status, http.StatusCreated)
+}
+
+func TestStorageRefundWithARealClock(t *testing.T) {
+	set := newLimiterSet(Budget{PerMinute: 1, Burst: 100}, time.Now)
+	refund, ok := set.take("k", 100)
+	if !ok {
+		t.Fatal("first take refused")
+	}
+	time.Sleep(5 * time.Millisecond)
+	refund()
+	if _, ok := set.take("k", 100); !ok {
+		t.Error("the refund did not restore the tokens")
+	}
+	if _, ok := set.take("k", 101); ok {
+		t.Error("a take above the burst was granted")
 	}
 }

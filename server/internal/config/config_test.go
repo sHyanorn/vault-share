@@ -21,11 +21,12 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Config{
-		ListenAddr:   ":8080",
-		BaseURL:      "https://localhost",
-		DataDir:      "data",
-		MaxFileBytes: 1 << 30,
-		LogLevel:     slog.LevelInfo,
+		ListenAddr:    ":8080",
+		BaseURL:       "https://localhost",
+		DataDir:       "data",
+		MaxFileBytes:  1 << 30,
+		MaxTotalBytes: 20 << 30,
+		LogLevel:      slog.LevelInfo,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -38,6 +39,7 @@ func TestLoadOverrides(t *testing.T) {
 		"VAULT_BASE_URL":        "https://share.example.com/vault/",
 		"VAULT_DATA_DIR":        "/data",
 		"VAULT_MAX_FILE_BYTES":  "1024",
+		"VAULT_MAX_TOTAL_BYTES": "4194304",
 		"VAULT_WEB_DIR":         "/srv/web",
 		"VAULT_LOG_LEVEL":       "debug",
 		"VAULT_TRUSTED_PROXIES": "10.0.0.0/8, 192.168.1.5",
@@ -50,6 +52,7 @@ func TestLoadOverrides(t *testing.T) {
 		BaseURL:        "https://share.example.com/vault",
 		DataDir:        "/data",
 		MaxFileBytes:   1024,
+		MaxTotalBytes:  4 << 20,
 		WebDir:         "/srv/web",
 		LogLevel:       slog.LevelDebug,
 		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("192.168.1.5/32")},
@@ -74,6 +77,7 @@ func TestLoadInvalid(t *testing.T) {
 		"VAULT_LISTEN_ADDR":     "8080",
 		"VAULT_BASE_URL":        "ftp://x",
 		"VAULT_MAX_FILE_BYTES":  "0",
+		"VAULT_MAX_TOTAL_BYTES": "1000",
 		"VAULT_LOG_LEVEL":       "loud",
 		"VAULT_TRUSTED_PROXIES": "10.0.0.0/8, proxy",
 	}

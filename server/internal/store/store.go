@@ -54,7 +54,12 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	// without piling up connections that would only wait on busy_timeout.
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
-	if err := migrate(ctx, db); err != nil {
+	dir, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := migrate(ctx, db, dir); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -65,13 +70,14 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func migrate(ctx context.Context, db *sql.DB) error {
+// migrate applies the scripts in dir that have not run yet, in name order.
+func migrate(ctx context.Context, db *sql.DB, dir fs.FS) error {
 	_, err := db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`)
 	if err != nil {
 		return err
 	}
-	entries, err := fs.ReadDir(migrations, "migrations")
+	entries, err := fs.ReadDir(dir, ".")
 	if err != nil {
 		return err
 	}
@@ -89,7 +95,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if applied > 0 {
 			continue
 		}
-		script, err := migrations.ReadFile("migrations/" + name)
+		script, err := fs.ReadFile(dir, name)
 		if err != nil {
 			return err
 		}
@@ -135,14 +141,36 @@ func (f File) Live(now time.Time) bool {
 	return f.Uploaded && f.DownloadsLeft > 0 && now.Before(f.ExpiresAt)
 }
 
-func (s *Store) CreateFile(ctx context.Context, f File) error {
-	_, err := s.db.ExecContext(ctx, `
+// RecordOverhead is charged to the quota for every record on top of its
+// size and metadata. It covers the database row, the filesystem's block for
+// the blob and the record's audit entries, and it caps the number of
+// records at quota / RecordOverhead. Migration 0003 uses the same figure.
+const RecordOverhead = 64 << 10
+
+// Charge is what a record costs against the storage quota.
+func Charge(sizeBytes int64, metaLen int) int64 {
+	return sizeBytes + int64(metaLen) + RecordOverhead
+}
+
+// CreateFile inserts the record if the quota has room for its charge and
+// reports whether it did. The check and the insert are one statement, which
+// SQLite runs under its write lock, so concurrent creates cannot overshoot.
+func (s *Store) CreateFile(ctx context.Context, f File, quota int64) (bool, error) {
+	charge := Charge(f.SizeBytes, len(f.MetaCiphertext))
+	return s.changed(s.db.ExecContext(ctx, `
 		INSERT INTO files (id, size_bytes, meta_ciphertext, auth_key, owner_token_hash,
-			downloads_left, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			downloads_left, expires_at, created_at, charge)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE (SELECT charged FROM usage WHERE id = 1) + ? <= ?`,
 		f.ID, f.SizeBytes, f.MetaCiphertext, f.AuthKey, f.OwnerTokenHash,
-		f.DownloadsLeft, f.ExpiresAt.Unix(), f.CreatedAt.Unix())
-	return err
+		f.DownloadsLeft, f.ExpiresAt.Unix(), f.CreatedAt.Unix(), charge, charge, quota))
+}
+
+// Usage is the storage currently charged against the quota.
+func (s *Store) Usage(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT charged FROM usage WHERE id = 1`).Scan(&n)
+	return n, err
 }
 
 func (s *Store) GetFile(ctx context.Context, id string) (File, error) {

@@ -49,7 +49,9 @@ type files struct {
 	audit        *audit.Recorder
 	challenges   *challenger
 	locks        *lockouts
+	storage      *limiterSet
 	maxFileBytes int64
+	quota        int64
 	now          func() time.Time
 	log          *slog.Logger
 }
@@ -101,6 +103,13 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+	refund, ok := h.storage.take(bucketFrom(ctx), store.Charge(req.Size, len(meta)))
+	if !ok {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "storage budget used up, try again later")
+		return
+	}
+
 	now := h.now()
 	id := encoding.EncodeToString(randomBytes(idBytes))
 	owner := randomBytes(tokenBytes)
@@ -114,11 +123,18 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:      now.Add(time.Duration(req.ExpiresIn) * time.Second),
 		CreatedAt:      now,
 	}
-	if err := h.store.CreateFile(r.Context(), f); err != nil {
+	created, err := h.store.CreateFile(ctx, f, h.quota)
+	if err != nil {
+		refund()
 		h.internalError(w, "create file", err)
 		return
 	}
-	h.audit.Record(r.Context(), audit.FileCreated, id, clientFrom(r.Context()))
+	if !created {
+		refund()
+		writeError(w, http.StatusServiceUnavailable, "capacity", "storage is full, try again later")
+		return
+	}
+	h.audit.Record(ctx, audit.FileCreated, id, clientFrom(ctx))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, createResponse{
 		ID:         id,

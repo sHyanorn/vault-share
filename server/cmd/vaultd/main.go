@@ -65,6 +65,7 @@ func run() error {
 		Audit:          auditor,
 		TrustedProxies: cfg.TrustedProxies,
 		MaxFileBytes:   cfg.MaxFileBytes,
+		MaxTotalBytes:  cfg.MaxTotalBytes,
 		WebDir:         cfg.WebDir,
 	})
 	if err != nil {
