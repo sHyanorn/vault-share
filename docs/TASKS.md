@@ -38,6 +38,7 @@
 - [ ] Optional password protection (Argon2id WebAssembly)
 - [ ] Add gosec, govulncheck, Semgrep and ZAP baseline scan to CI
 - [ ] Update the status column of the threat model
+- [ ] Delete link for the uploader (`/d/{id}#{token}`), so early deletion works after leaving the result page
 
 ## M5 Security Testing and Report
 - [ ] Self-assess against each OWASP Top 10 item and write `docs/security/TEST_REPORT.md`
