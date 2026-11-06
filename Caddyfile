@@ -21,6 +21,12 @@
 	}
 }
 
+# Declared so the HTTP server is built from this file and takes the timeouts
+# above; the redirect Caddy adds on its own would get the defaults.
+http://{$VAULT_DOMAIN:localhost} {
+	redir https://{host}{uri} 308
+}
+
 {$VAULT_DOMAIN:localhost} {
 	reverse_proxy vaultd:8080
 }
