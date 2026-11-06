@@ -6,6 +6,7 @@ import {
   encryptedSize,
   recordNonce,
 } from './ece.ts'
+import { hkdf } from './keys.ts'
 import { collect, randomBytes, streamOf, toHex } from './testutil.ts'
 
 const PAYLOAD = RECORD_SIZE - 17
@@ -205,5 +206,133 @@ describe('encryptedSize', () => {
     expect(encryptedSize(gib)).toBe(
       HEADER + gib + 17 * Math.ceil(gib / PAYLOAD),
     )
+  })
+})
+
+describe('zero bytes', () => {
+  it('survive at the end of a record', async () => {
+    const boundary = new Uint8Array(PAYLOAD + 10)
+    boundary.set(randomBytes(PAYLOAD - 5))
+    for (const plaintext of [
+      new Uint8Array([1, 2, 3, 0, 0, 0]),
+      new Uint8Array(PAYLOAD),
+      new Uint8Array(PAYLOAD + 1),
+      boundary,
+    ]) {
+      expect(await decrypt(await encrypt(plaintext))).toEqual(plaintext)
+    }
+  })
+})
+
+describe('delimiter rules (RFC 8188 section 2)', () => {
+  // Builds a stream record by record from explicitly padded plaintexts, so
+  // the decrypter's rules are exercised without the encrypter.
+  async function build(records: Uint8Array<ArrayBuffer>[]) {
+    const salt = randomBytes(16)
+    const encoder = new TextEncoder()
+    const [cek, nonceBase] = await Promise.all([
+      hkdf(ikm, salt, encoder.encode('Content-Encoding: aes256gcm\0'), 32),
+      hkdf(ikm, salt, encoder.encode('Content-Encoding: nonce\0'), 12),
+    ])
+    const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, [
+      'encrypt',
+    ])
+    const header = new Uint8Array(HEADER)
+    header.set(salt)
+    new DataView(header.buffer).setUint32(16, RECORD_SIZE)
+    const sealed = await Promise.all(
+      records.map(async (plain, seq) => {
+        const iv = recordNonce(nonceBase, seq)
+        return new Uint8Array(
+          await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain),
+        )
+      }),
+    )
+    return concat(header, ...sealed)
+  }
+
+  function padded(data: Uint8Array, delimiter: number, full = true) {
+    const out = new Uint8Array(full ? RECORD_SIZE - 16 : data.length + 1)
+    out.set(data)
+    out[data.length] = delimiter
+    return out
+  }
+
+  const first = randomBytes(10)
+  const last = randomBytes(5)
+
+  it('accepts zero padding after the delimiter of a non-last record', async () => {
+    const stream = await build([padded(first, 1), padded(last, 2, false)])
+    expect(await decrypt(stream)).toEqual(concat(first, last))
+  })
+
+  it('rejects a non-last record that ends like a last record', async () => {
+    const stream = await build([padded(first, 2), padded(last, 2, false)])
+    await expect(decrypt(stream)).rejects.toThrow('delimiter')
+  })
+
+  it('rejects a record without any delimiter', async () => {
+    const stream = await build([
+      new Uint8Array(RECORD_SIZE - 16),
+      padded(last, 2, false),
+    ])
+    await expect(decrypt(stream)).rejects.toThrow('no delimiter')
+  })
+
+  it('rejects an unknown delimiter and a last record marked as non-last', async () => {
+    await expect(
+      decrypt(await build([padded(last, 3, false)])),
+    ).rejects.toThrow('delimiter')
+    await expect(
+      decrypt(await build([padded(last, 1, false)])),
+    ).rejects.toThrow('delimiter')
+  })
+})
+
+describe('parameters', () => {
+  it('refuse record sizes below the RFC minimum and short keys', () => {
+    const input = () => streamOf(randomBytes(5))
+    expect(() => encryptStream(input(), ikm, { rs: 17 })).toThrow('record size')
+    expect(() => decryptStream(input(), ikm, { rs: 17 })).toThrow('record size')
+    expect(() => encryptStream(input(), randomBytes(15))).toThrow(
+      'key too short',
+    )
+    expect(() => decryptStream(input(), randomBytes(15))).toThrow(
+      'key too short',
+    )
+  })
+})
+
+describe('stream behaviour', () => {
+  it('propagates a source error to the consumer', async () => {
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error('disk read failed'))
+      },
+    })
+    await expect(collect(encryptStream(source, ikm))).rejects.toThrow(
+      'disk read failed',
+    )
+  })
+
+  it('propagates a consumer cancel back to the source', async () => {
+    // The pipe cancels the source asynchronously, so wait for it (bounded).
+    let sourceCancelled!: (reason: unknown) => void
+    const cancelled = new Promise<unknown>((resolve) => {
+      sourceCancelled = resolve
+    })
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(randomBytes(1000))
+      },
+      cancel: sourceCancelled,
+    })
+    const reader = encryptStream(source, ikm).getReader()
+    await reader.read()
+    await reader.cancel('user left the page')
+    const timeout = new Promise((resolve) =>
+      setTimeout(resolve, 2000, 'timed out'),
+    )
+    expect(await Promise.race([cancelled, timeout])).toBe('user left the page')
   })
 })

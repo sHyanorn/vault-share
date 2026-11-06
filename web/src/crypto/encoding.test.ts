@@ -21,3 +21,12 @@ describe('base64url', () => {
     }
   })
 })
+
+describe('canonical form', () => {
+  it('accepts only one encoding per secret', () => {
+    expect(fromBase64Url('AAAAAAAAAAAAAAAAAAAAAA')).toEqual(new Uint8Array(16))
+    for (const bad of ['-_9', '-_-', 'AAAAAAAAAAAAAAAAAAAAAB']) {
+      expect(() => fromBase64Url(bad)).toThrow('invalid base64url')
+    }
+  })
+})

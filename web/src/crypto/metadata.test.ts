@@ -81,3 +81,20 @@ describe('metadata', () => {
     }
   })
 })
+
+describe('errors', () => {
+  it('keep the plaintext out of the message when it is not JSON', async () => {
+    const key = await metaKey()
+    const iv = randomBytes(12)
+    const plain = new TextEncoder().encode('Q3 payroll (confidential).xlsx')
+    const cipher = new Uint8Array(
+      await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain),
+    )
+    const blob = new Uint8Array(12 + cipher.length)
+    blob.set(iv)
+    blob.set(cipher, 12)
+    const error = await decryptMetadata(key, blob).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('malformed metadata')
+  })
+})
