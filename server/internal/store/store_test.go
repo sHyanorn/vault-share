@@ -2,14 +2,20 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
 var t0 = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+
+const noQuota = 1 << 50
 
 func openTest(t *testing.T) *Store {
 	t.Helper()
@@ -37,8 +43,8 @@ func sample(id string) File {
 func mustCreate(t *testing.T, s *Store, f File, uploaded bool) {
 	t.Helper()
 	ctx := context.Background()
-	if err := s.CreateFile(ctx, f); err != nil {
-		t.Fatal(err)
+	if ok, err := s.CreateFile(ctx, f, noQuota); err != nil || !ok {
+		t.Fatalf("CreateFile: ok=%v err=%v", ok, err)
 	}
 	if uploaded {
 		if ok, err := s.MarkUploaded(ctx, f.ID, f.CreatedAt); err != nil || !ok {
@@ -362,5 +368,115 @@ func TestTrimAuditKeepsTheNewest(t *testing.T) {
 	got, _ := s.RecentAudit(ctx, 100)
 	if len(got) != 4 || got[0].FileID != "j" || got[3].FileID != "g" {
 		t.Errorf("kept %+v", got)
+	}
+}
+
+func TestQuotaIsAtomic(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	f := sample("x")
+	charge := Charge(f.SizeBytes, len(f.MetaCiphertext))
+	quota := 5 * charge
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			g := sample(fmt.Sprintf("file-%d", i))
+			ok, err := s.CreateFile(ctx, g, quota)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if ok {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if created != 5 {
+		t.Errorf("%d created under a quota for 5", created)
+	}
+	if used, _ := s.Usage(ctx); used != quota {
+		t.Errorf("usage %d, want %d", used, quota)
+	}
+}
+
+func TestUsageFollowsEveryDeletePath(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	mustCreate(t, s, sample("deleted"), true)
+	mustCreate(t, s, sample("pending"), false)
+	burned := sample("burned")
+	burned.DownloadsLeft = 1
+	mustCreate(t, s, burned, true)
+	mustCreate(t, s, sample("kept"), true)
+
+	if err := s.DeleteFile(ctx, "deleted"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.DeleteIfPending(ctx, "pending"); !ok {
+		t.Fatal("pending not deleted")
+	}
+	if _, ok, _ := s.ConsumeDownload(ctx, "burned", t0); !ok {
+		t.Fatal("download not granted")
+	}
+	if ok, _ := s.DeleteIfBurned(ctx, "burned", t0); !ok {
+		t.Fatal("burned not deleted")
+	}
+	var sum int64
+	if err := s.db.QueryRow(`SELECT COALESCE(SUM(charge), 0) FROM files`).Scan(&sum); err != nil {
+		t.Fatal(err)
+	}
+	f := sample("kept")
+	if used, _ := s.Usage(ctx); used != sum || used != Charge(f.SizeBytes, len(f.MetaCiphertext)) {
+		t.Errorf("usage %d, sum of charges %d", used, sum)
+	}
+}
+
+func TestQuotaMigrationChargesExistingRecords(t *testing.T) {
+	all, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := fstest.MapFS{}
+	for _, name := range []string{"0001_files.sql", "0002_audit.sql"} {
+		data, err := fs.ReadFile(all, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = &fstest.MapFile{Data: data}
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := migrate(ctx, db, before); err != nil {
+		t.Fatal(err)
+	}
+	for i, size := range []int64{1000, 2000} {
+		_, err := db.Exec(`INSERT INTO files (id, size_bytes, meta_ciphertext, auth_key, owner_token_hash,
+			downloads_left, expires_at, created_at) VALUES (?, ?, ?, x'00', x'00', 1, 0, 0)`,
+			fmt.Sprintf("old-%d", i), size, make([]byte, 100))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, all); err != nil {
+		t.Fatal(err)
+	}
+	var used int64
+	if err := db.QueryRow(`SELECT charged FROM usage WHERE id = 1`).Scan(&used); err != nil {
+		t.Fatal(err)
+	}
+	if want := Charge(1000, 100) + Charge(2000, 100); used != want {
+		t.Errorf("usage after migration %d, want %d", used, want)
 	}
 }

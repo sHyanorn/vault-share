@@ -25,6 +25,9 @@ type Config struct {
 	DataDir string
 	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES).
 	MaxFileBytes int64
+	// MaxTotalBytes caps the storage all files together may take, metadata
+	// and per-file overhead included (VAULT_MAX_TOTAL_BYTES).
+	MaxTotalBytes int64
 	// WebDir, when set, is the built frontend served for non-API paths (VAULT_WEB_DIR).
 	WebDir string
 	// TrustedProxies are the sources whose X-Forwarded-For is believed
@@ -75,6 +78,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		fail("MAX_FILE_BYTES", errors.New("must be positive"))
 	} else {
 		cfg.MaxFileBytes = n
+	}
+
+	if n, err := strconv.ParseInt(get("MAX_TOTAL_BYTES", "21474836480"), 10, 64); err != nil {
+		fail("MAX_TOTAL_BYTES", err)
+	} else if n < cfg.MaxFileBytes+1<<20 {
+		fail("MAX_TOTAL_BYTES", errors.New("must leave room for one file of VAULT_MAX_FILE_BYTES"))
+	} else {
+		cfg.MaxTotalBytes = n
 	}
 
 	if err := cfg.LogLevel.UnmarshalText([]byte(get("LOG_LEVEL", "info"))); err != nil {

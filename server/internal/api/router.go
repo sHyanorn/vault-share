@@ -4,6 +4,7 @@ package api
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"runtime/debug"
@@ -27,6 +28,9 @@ type Options struct {
 	TrustedProxies []netip.Prefix
 	// MaxFileBytes caps the declared ciphertext size of an upload.
 	MaxFileBytes int64
+	// MaxTotalBytes caps what all records together may be charged
+	// (store.Charge); zero disables the quota.
+	MaxTotalBytes int64
 	// Limits default to DefaultLimits.
 	Limits *Limits
 	// Now defaults to time.Now; tests move it.
@@ -46,13 +50,23 @@ func NewRouter(opts Options) (http.Handler, error) {
 	if opts.Limits != nil {
 		limits = *opts.Limits
 	}
+	// One file of the maximum size must always fit a client's storage budget.
+	if need := store.Charge(opts.MaxFileBytes, maxMetaBytes); int64(limits.Storage.Burst) < need {
+		limits.Storage.Burst = int(need) // #nosec G115 -- bounded by the configured file size
+	}
+	quota := opts.MaxTotalBytes
+	if quota <= 0 {
+		quota = math.MaxInt64 / 2
+	}
 	h := &files{
 		store:        opts.Store,
 		blobs:        opts.Blobs,
 		audit:        opts.Audit,
 		challenges:   newChallenger(),
 		locks:        newLockouts(now),
+		storage:      newLimiterSet(limits.Storage, now),
 		maxFileBytes: opts.MaxFileBytes,
+		quota:        quota,
 		now:          now,
 		log:          opts.Logger,
 	}
