@@ -316,3 +316,31 @@ func TestPurgeable(t *testing.T) {
 		t.Errorf("download tokens after ExpireTokens = %d, err %v", n, err)
 	}
 }
+
+func TestAuditLog(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	entries := []AuditEntry{
+		{Event: "file.created", FileID: "file-a", IPHash: []byte{1}, UAHash: []byte{2}, At: t0},
+		{Event: "file.purged", At: t0.Add(time.Hour)},
+	}
+	for _, e := range entries {
+		if err := s.RecordAudit(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.RecentAudit(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Event != "file.purged" || got[0].FileID != "" || got[1].FileID != "file-a" ||
+		string(got[1].IPHash) != "\x01" || !got[1].At.Equal(t0) {
+		t.Errorf("got %+v", got)
+	}
+	if err := s.PurgeAudit(ctx, t0.Add(30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.RecentAudit(ctx, 10); len(got) != 1 || got[0].Event != "file.purged" {
+		t.Errorf("after purge: %+v", got)
+	}
+}

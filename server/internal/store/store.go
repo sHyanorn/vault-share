@@ -36,11 +36,11 @@ type Store struct {
 func Open(ctx context.Context, path string) (*Store, error) {
 	// Create the file owner-only; SQLite gives the WAL and shared-memory
 	// files the same mode.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- path comes from configuration
 	if err != nil {
 		return nil, err
 	}
-	f.Close()
+	_ = f.Close()
 	dsn := "file:" + path +
 		"?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
@@ -55,7 +55,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
 	if err := migrate(ctx, db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -272,4 +272,55 @@ func (s *Store) changed(res sql.Result, err error) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// AuditEntry is one security-relevant event. Client identifiers arrive
+// already hashed; the store never sees an address.
+type AuditEntry struct {
+	Event  string
+	FileID string
+	IPHash []byte
+	UAHash []byte
+	At     time.Time
+}
+
+func (s *Store) RecordAudit(ctx context.Context, e AuditEntry) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO audit_log (event, file_id, ip_hash, ua_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
+		e.Event, nullIfEmpty(e.FileID), e.IPHash, e.UAHash, e.At.Unix())
+	return err
+}
+
+// RecentAudit returns the newest entries, newest first.
+func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT event, COALESCE(file_id, ''), ip_hash, ua_hash, created_at FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		var at int64
+		if err := rows.Scan(&e.Event, &e.FileID, &e.IPHash, &e.UAHash, &at); err != nil {
+			return nil, err
+		}
+		e.At = time.Unix(at, 0).UTC()
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// PurgeAudit drops entries recorded before the given time.
+func (s *Store) PurgeAudit(ctx context.Context, before time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM audit_log WHERE created_at < ?`, before.Unix())
+	return err
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

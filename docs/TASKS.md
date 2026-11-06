@@ -33,7 +33,7 @@
 ## M4 Security Hardening
 - [ ] Security response headers and strict CSP
 - [ ] Rate limiting middleware and lockout after failed authentication
-- [ ] Audit logging
+- [x] Audit logging
 - [ ] Log redaction check
 - [ ] Optional password protection (Argon2id WebAssembly)
 - [ ] Add gosec, govulncheck, Semgrep and ZAP baseline scan to CI
