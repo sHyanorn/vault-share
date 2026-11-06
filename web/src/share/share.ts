@@ -48,6 +48,10 @@ export async function uploadFile(
   onProgress: (progress: Progress) => void,
 ): Promise<Share> {
   const secret = generateSecret()
+  // Wrapping happens first: a failure here must not leave a stored file behind.
+  const key = options.password
+    ? await wrapSecret(secret, options.password)
+    : secret
   const keys = await deriveKeys(secret)
   const meta = await encryptMetadata(keys.metaKey, {
     name: file.name,
@@ -79,9 +83,6 @@ export async function uploadFile(
     created.owner_token,
     (fraction) => onProgress({ phase: 'uploading', fraction }),
   )
-  const key = options.password
-    ? await wrapSecret(secret, options.password)
-    : secret
   const origin = window.location.origin
   return {
     id: created.id,
