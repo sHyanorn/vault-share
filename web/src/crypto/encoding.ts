@@ -14,5 +14,7 @@ export function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   const binary = atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4))
   const out = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
+  // One secret, one link: reject encodings with stray bits in the last character.
+  if (toBase64Url(out) !== text) throw new Error('invalid base64url')
   return out
 }

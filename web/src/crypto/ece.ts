@@ -8,7 +8,9 @@
 import { hkdf } from './keys.ts'
 
 export const RECORD_SIZE = 65536
-export const KEY_LENGTH = 32
+const KEY_LENGTH = 32
+const MIN_KEY_LENGTH = 16
+const MIN_RECORD_SIZE = 18 // RFC 8188 section 2.1
 const TAG_LENGTH = 16
 const NONCE_LENGTH = 12
 const SALT_LENGTH = 16
@@ -42,12 +44,12 @@ export function encryptStream(
   options: EceOptions = {},
 ): ReadableStream<Uint8Array<ArrayBuffer>> {
   const rs = options.rs ?? RECORD_SIZE
+  checkParameters(ikm, rs)
   const salt =
     options.salt ?? crypto.getRandomValues(new Uint8Array(SALT_LENGTH))
+  const payload = rs - TAG_LENGTH - 1
   return input
-    .pipeThrough(
-      new TransformStream(new Slicer(rs - TAG_LENGTH - 1, rs - TAG_LENGTH - 1)),
-    )
+    .pipeThrough(new TransformStream(new Slicer(payload, payload)))
     .pipeThrough(
       new TransformStream(
         new Encrypter(ikm, options.keyLength ?? KEY_LENGTH, rs, salt),
@@ -61,6 +63,7 @@ export function decryptStream(
   options: EceOptions = {},
 ): ReadableStream<Uint8Array<ArrayBuffer>> {
   const rs = options.rs ?? RECORD_SIZE
+  checkParameters(ikm, rs)
   return input
     .pipeThrough(new TransformStream(new Slicer(HEADER_LENGTH, rs)))
     .pipeThrough(
@@ -87,11 +90,22 @@ export function recordNonce(
   return nonce
 }
 
+function checkParameters(ikm: Uint8Array, rs: number) {
+  if (ikm.length < MIN_KEY_LENGTH) throw new Error('key too short')
+  if (!Number.isInteger(rs) || rs < MIN_RECORD_SIZE)
+    throw new Error('record size too small')
+}
+
+interface RecordKeys {
+  key: CryptoKey
+  nonceBase: Uint8Array<ArrayBuffer>
+}
+
 async function deriveRecordKeys(
   ikm: Uint8Array<ArrayBuffer>,
   salt: Uint8Array<ArrayBuffer>,
   keyLength: number,
-) {
+): Promise<RecordKeys> {
   const [cek, nonceBase] = await Promise.all([
     hkdf(
       ikm,
@@ -201,8 +215,7 @@ class Encrypter implements Transformer<
   private readonly keyLength: number
   private readonly rs: number
   private readonly salt: Uint8Array<ArrayBuffer>
-  private key!: CryptoKey
-  private nonceBase!: Uint8Array<ArrayBuffer>
+  private derived!: RecordKeys // set by start, which the stream runs before transform
   private seq = 0
   private pending: Uint8Array<ArrayBuffer> | null = null
 
@@ -221,11 +234,7 @@ class Encrypter implements Transformer<
   async start(
     controller: TransformStreamDefaultController<Uint8Array<ArrayBuffer>>,
   ) {
-    ;({ key: this.key, nonceBase: this.nonceBase } = await deriveRecordKeys(
-      this.ikm,
-      this.salt,
-      this.keyLength,
-    ))
+    this.derived = await deriveRecordKeys(this.ikm, this.salt, this.keyLength)
     controller.enqueue(createHeader(this.salt, this.rs))
   }
 
@@ -247,10 +256,11 @@ class Encrypter implements Transformer<
   }
 
   private async encryptRecord(data: Uint8Array<ArrayBuffer>, isLast: boolean) {
-    const iv = recordNonce(this.nonceBase, this.seq++)
+    const { key, nonceBase } = this.derived
+    const iv = recordNonce(nonceBase, this.seq++)
     const params = { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 }
     return new Uint8Array(
-      await crypto.subtle.encrypt(params, this.key, pad(data, isLast, this.rs)),
+      await crypto.subtle.encrypt(params, key, pad(data, isLast, this.rs)),
     )
   }
 }
@@ -262,8 +272,7 @@ class Decrypter implements Transformer<
   private readonly ikm: Uint8Array<ArrayBuffer>
   private readonly keyLength: number
   private readonly rs: number
-  private key: CryptoKey | null = null
-  private nonceBase!: Uint8Array<ArrayBuffer>
+  private derived: RecordKeys | null = null
   private seq = 0
   private pending: Uint8Array<ArrayBuffer> | null = null
 
@@ -277,35 +286,39 @@ class Decrypter implements Transformer<
     chunk: Uint8Array<ArrayBuffer>,
     controller: TransformStreamDefaultController<Uint8Array<ArrayBuffer>>,
   ) {
-    if (!this.key) {
+    if (!this.derived) {
       const salt = parseHeader(chunk, this.rs)
-      ;({ key: this.key, nonceBase: this.nonceBase } = await deriveRecordKeys(
-        this.ikm,
-        salt,
-        this.keyLength,
-      ))
+      this.derived = await deriveRecordKeys(this.ikm, salt, this.keyLength)
       return
     }
     if (this.pending)
-      controller.enqueue(await this.decryptRecord(this.pending, false))
+      controller.enqueue(
+        await this.decryptRecord(this.derived, this.pending, false),
+      )
     this.pending = chunk
   }
 
   async flush(
     controller: TransformStreamDefaultController<Uint8Array<ArrayBuffer>>,
   ) {
-    if (!this.key) throw new Error('truncated header')
+    if (!this.derived) throw new Error('truncated header')
     if (!this.pending) throw new Error('no records')
-    controller.enqueue(await this.decryptRecord(this.pending, true))
+    controller.enqueue(
+      await this.decryptRecord(this.derived, this.pending, true),
+    )
   }
 
-  private async decryptRecord(data: Uint8Array<ArrayBuffer>, isLast: boolean) {
+  private async decryptRecord(
+    { key, nonceBase }: RecordKeys,
+    data: Uint8Array<ArrayBuffer>,
+    isLast: boolean,
+  ) {
     if (data.length < TAG_LENGTH + 1) throw new Error('truncated record')
-    const iv = recordNonce(this.nonceBase, this.seq++)
+    const iv = recordNonce(nonceBase, this.seq++)
     const params = { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 }
     let plain: ArrayBuffer
     try {
-      plain = await crypto.subtle.decrypt(params, this.key!, data)
+      plain = await crypto.subtle.decrypt(params, key, data)
     } catch {
       throw new Error('record authentication failed')
     }
