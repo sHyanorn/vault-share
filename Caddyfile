@@ -9,6 +9,10 @@
 	default_sni {$VAULT_DOMAIN:localhost}
 	# The container's filesystem is read-only; nothing to install the local root into.
 	skip_install_trust
+	# HTTP/3 would advertise the internal port; TCP only.
+	servers {
+		protocols h1 h2
+	}
 }
 
 {$VAULT_DOMAIN:localhost} {
