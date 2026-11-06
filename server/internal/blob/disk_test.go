@@ -43,9 +43,8 @@ func TestPutOpenDelete(t *testing.T) {
 	ctx := context.Background()
 	content := bytes.Repeat([]byte("cipher"), 1000)
 
-	n, err := d.Put(ctx, id, bytes.NewReader(content))
-	if err != nil || n != int64(len(content)) {
-		t.Fatalf("Put: n=%d err=%v", n, err)
+	if err := d.Put(ctx, id, int64(len(content)), bytes.NewReader(content)); err != nil {
+		t.Fatal(err)
 	}
 	rc, err := d.Open(ctx, id)
 	if err != nil {
@@ -75,7 +74,7 @@ func TestInvalidIDsNeverTouchTheFilesystem(t *testing.T) {
 	d, root := newDisk(t)
 	ctx := context.Background()
 	for _, bad := range []string{"../escape", "AAAAAAAAAAAAAAAAAAAAA"} {
-		if _, err := d.Put(ctx, bad, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {
+		if err := d.Put(ctx, bad, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {
 			t.Errorf("Put(%q): %v", bad, err)
 		}
 		if _, err := d.Open(ctx, bad); !errors.Is(err, ErrInvalidID) {
@@ -102,7 +101,7 @@ func (r *failingReader) Read(p []byte) (int, error) {
 
 func TestFailedPutLeavesNothing(t *testing.T) {
 	d, root := newDisk(t)
-	if _, err := d.Put(context.Background(), id, &failingReader{n: 100_000}); err == nil {
+	if err := d.Put(context.Background(), id, 200_000, &failingReader{n: 100_000}); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := os.Stat(filepath.Join(root, id)); err == nil {
@@ -134,5 +133,35 @@ func TestSweepRemovesOnlyOldTempFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Error("fresh temp file was removed")
+	}
+}
+
+func TestPutNeverReplacesAndChecksSize(t *testing.T) {
+	d, root := newDisk(t)
+	ctx := context.Background()
+	if err := d.Put(ctx, id, 5, strings.NewReader("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Put(ctx, id, 6, strings.NewReader("second")); !errors.Is(err, ErrExists) {
+		t.Errorf("second Put: %v", err)
+	}
+	rc, _ := d.Open(ctx, id)
+	got, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(got) != "first" {
+		t.Errorf("content replaced: %q", got)
+	}
+
+	other := "BBBBBBBBBBBBBBBBBBBBBB"
+	for _, size := range []int64{4, 6} {
+		if err := d.Put(ctx, other, size, strings.NewReader("short")); !errors.Is(err, ErrSize) {
+			t.Errorf("size %d: %v", size, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, other)); err == nil {
+			t.Errorf("size %d: blob published", size)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, "tmp")); len(entries) != 0 {
+		t.Errorf("temp files left behind: %d", len(entries))
 	}
 }

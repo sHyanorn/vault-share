@@ -58,7 +58,6 @@ func run() error {
 		Store:        st,
 		Blobs:        blobs,
 		MaxFileBytes: cfg.MaxFileBytes,
-		Sweep:        job.Run,
 		WebDir:       cfg.WebDir,
 	})
 	if err != nil {

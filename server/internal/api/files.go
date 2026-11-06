@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,9 +45,9 @@ var encoding = base64.RawURLEncoding.Strict()
 type files struct {
 	store        *store.Store
 	blobs        blob.Store
+	challenges   *challenger
 	maxFileBytes int64
 	now          func() time.Time
-	sweep        func(context.Context) error
 	log          *slog.Logger
 }
 
@@ -79,7 +80,7 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "meta must be base64url of 28 to 4096 bytes")
 		return
 	case req.Size > h.maxFileBytes:
-		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the size limit")
+		writeError(w, http.StatusBadRequest, "too_large", "file exceeds the size limit")
 		return
 	case req.Size < minCiphertextBytes:
 		writeError(w, http.StatusBadRequest, "invalid_request", "size is below the minimum ciphertext size")
@@ -114,6 +115,7 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, "create file", err)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, createResponse{
 		ID:         id,
 		OwnerToken: encoding.EncodeToString(owner),
@@ -123,7 +125,8 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // upload streams the ciphertext to blob storage. The body must be exactly the
-// size declared at creation; anything else is discarded.
+// size declared at creation, content is stored once, and a record that
+// disappeared while the body was in flight takes its bytes with it.
 func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.ownerFile(w, r)
 	if !ok {
@@ -138,18 +141,18 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	_ = http.NewResponseController(w).SetReadDeadline(h.now().Add(transferDeadline(f.SizeBytes)))
-	n, err := h.blobs.Put(ctx, f.ID, http.MaxBytesReader(w, r.Body, f.SizeBytes))
-	if err != nil || n != f.SizeBytes {
-		if deleteErr := h.blobs.Delete(ctx, f.ID); deleteErr != nil {
-			h.log.Error("discard partial upload", "err", deleteErr)
-		}
-		var tooLarge *http.MaxBytesError
-		if err == nil || errors.As(err, &tooLarge) {
-			writeError(w, http.StatusBadRequest, "invalid_request", "body size differs from the declared size")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "invalid_request", "upload interrupted")
+	extendDeadlines(w, f.SizeBytes)
+	body := &trackedReader{Reader: http.MaxBytesReader(w, r.Body, f.SizeBytes)}
+	err := h.blobs.Put(ctx, f.ID, f.SizeBytes, body)
+	switch {
+	case errors.Is(err, blob.ErrExists):
+		writeError(w, http.StatusConflict, "conflict", "content already uploaded")
+		return
+	case errors.Is(err, blob.ErrSize), body.err != nil:
+		writeError(w, http.StatusBadRequest, "invalid_request", "body size differs from the declared size")
+		return
+	case err != nil:
+		h.internalError(w, "store content", err)
 		return
 	}
 	marked, err := h.store.MarkUploaded(ctx, f.ID, h.now())
@@ -158,7 +161,11 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !marked {
-		writeError(w, http.StatusConflict, "conflict", "content already uploaded")
+		// Deleted or purged while the body was in flight.
+		if err := h.blobs.Delete(ctx, f.ID); err != nil {
+			h.log.Error("discard orphaned content", "id", f.ID, "err", err)
+		}
+		notFound(w, r)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -172,15 +179,10 @@ type metaResponse struct {
 	Challenge     string `json:"challenge"`
 }
 
-// meta returns the encrypted metadata and a one-time challenge for download.
+// meta returns the encrypted metadata and a challenge to sign for download.
 func (h *files) meta(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.liveFile(w, r)
 	if !ok {
-		return
-	}
-	nonce := randomBytes(tokenBytes)
-	if err := h.store.CreateChallenge(r.Context(), f.ID, nonce, h.now().Add(challengeTTL)); err != nil {
-		h.internalError(w, "create challenge", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -189,7 +191,7 @@ func (h *files) meta(w http.ResponseWriter, r *http.Request) {
 		Size:          f.SizeBytes,
 		DownloadsLeft: f.DownloadsLeft,
 		ExpiresAt:     f.ExpiresAt.Unix(),
-		Challenge:     encoding.EncodeToString(nonce),
+		Challenge:     encoding.EncodeToString(h.challenges.issue(f.ID, h.now().Add(challengeTTL))),
 	})
 }
 
@@ -207,30 +209,25 @@ type downloadResponse struct {
 // and issues a one-time token for the content. The count is taken here, not
 // when the stream finishes, so an interrupted download cannot be repeated.
 func (h *files) download(w http.ResponseWriter, r *http.Request) {
-	f, ok := h.liveFile(w, r)
-	if !ok {
-		return
-	}
 	var req downloadRequest
 	if !h.decodeJSON(w, r, &req) {
 		return
 	}
-	nonce, okNonce := decodeFixed(req.Challenge, tokenBytes)
+	challenge, okChallenge := decodeFixed(req.Challenge, challengeBytes)
 	signature, okSig := decodeFixed(req.Signature, sha256.Size)
-	if !okNonce || !okSig {
+	if !okChallenge || !okSig {
 		writeError(w, http.StatusBadRequest, "invalid_request", "challenge and signature must be base64url of 32 bytes")
+		return
+	}
+	f, ok := h.liveFile(w, r)
+	if !ok {
 		return
 	}
 	ctx := r.Context()
 	now := h.now()
-	valid, err := h.store.ConsumeChallenge(ctx, f.ID, nonce, now)
-	if err != nil {
-		h.internalError(w, "consume challenge", err)
-		return
-	}
 	mac := hmac.New(sha256.New, f.AuthKey)
-	mac.Write(nonce)
-	if !valid || !hmac.Equal(mac.Sum(nil), signature) {
+	mac.Write(challenge)
+	if !h.challenges.valid(f.ID, challenge, now) || !hmac.Equal(mac.Sum(nil), signature) {
 		notFound(w, r)
 		return
 	}
@@ -255,9 +252,10 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// content streams the ciphertext for a one-time download token. On the last
-// permitted download the file is purged before the stream starts: the open
-// descriptor keeps the bytes readable, and nothing is left for a retry.
+// content streams the ciphertext for a one-time download token. The content
+// is opened before the token is consumed, so no purge can take the bytes from
+// a granted download; on the last permitted download the file is removed
+// before the stream starts and the open descriptor keeps the bytes readable.
 func (h *files) content(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	token, ok := decodeFixed(r.URL.Query().Get("token"), tokenBytes)
@@ -266,6 +264,21 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	f, err := h.store.GetFile(ctx, id)
+	if err != nil {
+		h.lookupError(w, r, "load file", err)
+		return
+	}
+	rc, err := h.blobs.Open(ctx, id)
+	if errors.Is(err, blob.ErrNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		h.internalError(w, "open content", err)
+		return
+	}
+	defer rc.Close()
 	now := h.now()
 	valid, err := h.store.ConsumeDownloadToken(ctx, id, hashToken(token), now)
 	if err != nil {
@@ -276,38 +289,37 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
-	f, err := h.store.GetFile(ctx, id)
-	if err != nil {
-		h.lookupError(w, r, "load file", err)
-		return
-	}
-	rc, err := h.blobs.Open(ctx, id)
-	if errors.Is(err, blob.ErrNotFound) {
-		h.log.Warn("download token for missing content", "id", id)
-		notFound(w, r)
-		return
-	}
-	if err != nil {
-		h.internalError(w, "open content", err)
-		return
-	}
-	defer rc.Close()
-
 	if f.DownloadsLeft == 0 {
-		sweepCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		if err := h.sweep(sweepCtx); err != nil {
-			h.log.Error("purge on last download", "err", err)
-		}
+		h.burn(ctx, id, now)
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
-	w.Header().Set("Content-Length", strconvInt(f.SizeBytes))
+	w.Header().Set("Content-Length", strconv.FormatInt(f.SizeBytes, 10))
 	w.Header().Set("Cache-Control", "no-store")
-	_ = http.NewResponseController(w).SetWriteDeadline(now.Add(transferDeadline(f.SizeBytes)))
+	extendDeadlines(w, f.SizeBytes)
 	if _, err := io.Copy(w, rc); err != nil {
 		h.log.Debug("download interrupted", "id", id, "err", err)
+	}
+}
+
+// burn removes a file whose downloads are used up, unless another download
+// token is still pending for it. The record goes first so the content can
+// never be taken from a download in progress; a failed content deletion is
+// logged and left for an operator, the cleanup job cannot see it any more.
+func (h *files) burn(ctx context.Context, id string, now time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	deleted, err := h.store.DeleteIfBurned(ctx, id, now)
+	if err != nil {
+		h.log.Error("delete burned record", "id", id, "err", err)
+		return
+	}
+	if !deleted {
+		return
+	}
+	if err := h.blobs.Delete(ctx, id); err != nil {
+		h.log.Error("delete burned content", "id", id, "err", err)
 	}
 }
 
@@ -393,8 +405,29 @@ func (h *files) internalError(w http.ResponseWriter, what string, err error) {
 	writeError(w, http.StatusInternalServerError, "internal", "internal error")
 }
 
-func transferDeadline(size int64) time.Duration {
-	return transferGrace + time.Duration(size/minTransferRate)*time.Second
+// extendDeadlines gives a transfer of size bytes time to complete on both
+// the read and the write side; the server's own timeouts are tuned for
+// small requests. Deadlines are wall-clock, hence time.Now.
+func extendDeadlines(w http.ResponseWriter, size int64) {
+	deadline := time.Now().Add(transferGrace + time.Duration(size/minTransferRate)*time.Second)
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(deadline)
+	_ = rc.SetWriteDeadline(deadline.Add(transferGrace))
+}
+
+// trackedReader remembers whether the request body itself failed, so a
+// storage error is not reported as the client's fault.
+type trackedReader struct {
+	io.Reader
+	err error
+}
+
+func (t *trackedReader) Read(p []byte) (int, error) {
+	n, err := t.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		t.err = err
+	}
+	return n, err
 }
 
 func randomBytes(n int) []byte {

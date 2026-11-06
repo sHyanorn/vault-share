@@ -11,17 +11,22 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned by Open for an id with no content.
-var ErrNotFound = errors.New("blob not found")
-
-// ErrInvalidID is returned for an id that is not 22 base64url characters.
-var ErrInvalidID = errors.New("invalid blob id")
+var (
+	// ErrNotFound is returned by Open for an id with no content.
+	ErrNotFound = errors.New("blob not found")
+	// ErrInvalidID is returned for an id that is not 22 base64url characters.
+	ErrInvalidID = errors.New("invalid blob id")
+	// ErrExists is returned by Put when content for the id is already stored.
+	ErrExists = errors.New("blob already exists")
+	// ErrSize is returned by Put when r did not deliver exactly size bytes.
+	ErrSize = errors.New("blob size mismatch")
+)
 
 // Store holds ciphertext by id.
 type Store interface {
-	// Put stores everything read from r under id and returns the byte count.
-	// A failed or interrupted Put leaves nothing behind.
-	Put(ctx context.Context, id string, r io.Reader) (int64, error)
+	// Put stores exactly size bytes read from r under id. Content is never
+	// replaced, and a failed or interrupted Put leaves nothing behind.
+	Put(ctx context.Context, id string, size int64, r io.Reader) error
 	// Open returns the content stored under id.
 	Open(ctx context.Context, id string) (io.ReadCloser, error)
 	// Delete removes the content; a missing id is not an error.

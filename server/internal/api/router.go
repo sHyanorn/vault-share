@@ -2,12 +2,10 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,8 +22,6 @@ type Options struct {
 	Blobs  blob.Store
 	// MaxFileBytes caps the declared ciphertext size of an upload.
 	MaxFileBytes int64
-	// Sweep purges expired and used-up files; it runs after a last download.
-	Sweep func(context.Context) error
 	// Now defaults to time.Now; tests move it.
 	Now func() time.Time
 	// WebDir is the built frontend served for every path outside /api and
@@ -42,9 +38,9 @@ func NewRouter(opts Options) (http.Handler, error) {
 	h := &files{
 		store:        opts.Store,
 		blobs:        opts.Blobs,
+		challenges:   newChallenger(),
 		maxFileBytes: opts.MaxFileBytes,
 		now:          now,
-		sweep:        opts.Sweep,
 		log:          opts.Logger,
 	}
 
@@ -124,8 +120,4 @@ func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func strconvInt(n int64) string {
-	return strconv.FormatInt(n, 10)
 }

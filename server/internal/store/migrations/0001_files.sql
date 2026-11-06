@@ -12,14 +12,6 @@ CREATE TABLE files (
 
 CREATE INDEX files_expires_at ON files (expires_at);
 
-CREATE TABLE challenges (
-    nonce      BLOB PRIMARY KEY,
-    file_id    TEXT NOT NULL REFERENCES files (id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
-) STRICT;
-
-CREATE INDEX challenges_file_id ON challenges (file_id);
-
 CREATE TABLE download_tokens (
     token_hash BLOB PRIMARY KEY,
     file_id    TEXT NOT NULL REFERENCES files (id) ON DELETE CASCADE,

@@ -171,8 +171,9 @@ func TestSPA(t *testing.T) {
 			t.Errorf("status %d body %q", rec.Code, rec.Body.String())
 		}
 		rec = do(h, http.MethodGet, "/api/v1/files/x")
-		if rec.Code != http.StatusMethodNotAllowed || !strings.Contains(rec.Body.String(), "method_not_allowed") {
-			t.Errorf("status %d body %q", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusMethodNotAllowed || !strings.Contains(rec.Body.String(), "method_not_allowed") ||
+			rec.Header().Get("Allow") != "DELETE" {
+			t.Errorf("status %d allow %q body %q", rec.Code, rec.Header().Get("Allow"), rec.Body.String())
 		}
 	})
 
