@@ -32,16 +32,17 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 
 | Category | Threat | Mitigation | Status |
 |---|---|---|---|
-| S Spoofing | Someone without the link tries to download | authKey challenge signature | To do |
+| S Spoofing | Someone without the link tries to download | authKey challenge signature | Done (M2) |
 | T Tampering | Modifying or reordering ciphertext chunks | AES-GCM authentication, chunk index in the nonce, end marker | Done (M1, tests for tampering, truncation, reordering, duplication) |
 | T Tampering | Compromised dependency, action or base image injects code at build time | Exact versions, commit SHAs and image digests; Dependabot; npm audit and govulncheck in CI; gosec and Semgrep in M4 | Partial (M0) |
 | R Repudiation | Uploader denies having uploaded | Audit log (hashed IPs) | To do |
 | I Information disclosure | Key leaks via Referer or logs | Key only in the URL fragment; Referrer-Policy: no-referrer; log filtering | Partial (request log omits the query string) |
-| I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | To do |
+| I Information disclosure | Probing file existence via 404 vs 403 responses | Always return 404 | Done (M2: every lookup, token and signature failure answers 404) |
 | I Information disclosure | A3 reads the database | Only ciphertext and verifiers, no keys | Covered by design |
-| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | To do |
+| D Denial of service | Mass uploads exhaust disk space | Size limits, rate limiting, expiry cleanup, total storage quota | Partial (M2: per-file limit, declared size enforced, abandoned uploads purged after an hour; rate limiting and quota in M4) |
+| D Denial of service | Metadata requests flood the challenge table | At most 16 live challenges per file, two-minute expiry | Done (M2) |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | To do |
-| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Partial (static handler done, storage in M2) |
+| E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | To do |
 
 ## 5. Residual Risks
