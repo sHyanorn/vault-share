@@ -127,6 +127,7 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - Rate limiting: per-client token bucket (one IPv4 address or one IPv6 /64, D017), with separate limits for uploads and download authentication
 - Lock a file for a period of time after repeated failed download authentication attempts
 - Request body size limits and timeouts
+- Total storage quota and a per-client daily storage budget
 - File ids and tokens use cryptographically secure random numbers
 - CI runs gosec, govulncheck, npm audit, Semgrep, and an OWASP ZAP baseline scan
 - Containers run as a non-root user, with a read-only filesystem and a minimal image
