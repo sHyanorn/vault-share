@@ -18,7 +18,12 @@ type spaHandler struct {
 }
 
 func newSPAHandler(dir string) (*spaHandler, error) {
-	fsys := os.DirFS(dir)
+	// os.Root refuses every name that escapes dir, symlinks included.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("web dir: %w", err)
+	}
+	fsys := root.FS()
 	if _, err := fs.Stat(fsys, "index.html"); err != nil {
 		return nil, fmt.Errorf("web dir: %w", err)
 	}
@@ -32,8 +37,10 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// os.DirFS rejects any name that could escape dir, so a traversal attempt
-	// simply fails the Stat and falls through to index.html.
+	// Unhashed files and index.html may change on every deploy.
+	w.Header().Set("Cache-Control", "no-cache")
+
+	// A traversal attempt fails the Stat and falls through to index.html.
 	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 	if name != "" && name != "index.html" {
 		if info, err := fs.Stat(h.fsys, name); err == nil && !info.IsDir() {
@@ -45,7 +52,5 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFileFS(w, r, h.fsys, "index.html")
 }

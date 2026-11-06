@@ -2,8 +2,10 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,8 +23,9 @@ type Options struct {
 // NewRouter returns the root handler of vaultd.
 func NewRouter(opts Options) (http.Handler, error) {
 	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
 	r.Use(requestLog(opts.Logger))
+	r.Use(recoverer(opts.Logger))
+	r.Use(middleware.GetHead)
 
 	r.Get("/healthz", healthz)
 	r.Route("/api/v1", func(r chi.Router) {
@@ -34,7 +37,8 @@ func NewRouter(opts Options) (http.Handler, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.Handle("/*", spa)
+		// Every path that is not a server route belongs to the web client.
+		r.NotFound(spa.ServeHTTP)
 	}
 	return r, nil
 }
@@ -44,8 +48,8 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// requestLog writes one structured line per request. The query string is
-// deliberately omitted because download tokens travel in it.
+// requestLog writes one structured line per request, panics included. The
+// query string is deliberately omitted because download tokens travel in it.
 func requestLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +63,32 @@ func requestLog(log *slog.Logger) func(http.Handler) http.Handler {
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
+		})
+	}
+}
+
+// recoverer turns a panic into a 500 and records it through the structured
+// logger rather than on raw stderr, so log redaction covers it.
+func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					return
+				}
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				log.Error("panic",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"value", fmt.Sprint(rec),
+					"stack", string(debug.Stack()),
+				)
+				writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			}()
+			next.ServeHTTP(w, r)
 		})
 	}
 }

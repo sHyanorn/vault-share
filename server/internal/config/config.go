@@ -22,7 +22,8 @@ type Config struct {
 	BaseURL string
 	// DataDir holds the database and ciphertext blobs (VAULT_DATA_DIR).
 	DataDir string
-	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES).
+	// MaxFileBytes caps the ciphertext size of a single upload (VAULT_MAX_FILE_BYTES);
+	// enforced by the upload endpoints of M2.
 	MaxFileBytes int64
 	// WebDir, when set, is the built frontend served for non-API paths (VAULT_WEB_DIR).
 	WebDir string
@@ -58,7 +59,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if u, err := url.Parse(cfg.BaseURL); err != nil {
 		fail("BASE_URL", err)
 	} else if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		u.User != nil || strings.ContainsAny(cfg.BaseURL, "?#") {
 		fail("BASE_URL", errors.New("must be an http(s) origin with an optional path"))
 	} else {
 		cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
