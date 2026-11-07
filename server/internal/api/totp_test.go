@@ -3,13 +3,10 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -428,18 +425,7 @@ func TestChangesEndPendingSignIns(t *testing.T) {
 // A client that hangs up once its code was checked still has the failure
 // counted, so the owner hears of it at the next sign-in (F45).
 func TestSecondStepFailureCountsAfterHangUp(t *testing.T) {
-	var hangUp atomic.Pointer[context.CancelFunc]
-	e := newEnvWith(t, func(o *Options) {
-		o.TrustedProxies = loopbackProxies
-		// The failed code is recorded after the check and before the count.
-		clock := o.Audit.Now
-		o.Audit.Now = func() time.Time {
-			if cancel := hangUp.Load(); cancel != nil {
-				(*cancel)()
-			}
-			return clock()
-		}
-	})
+	e, hangUp := newHangUpEnv(t)
 	alice := newCreds("alice")
 	owner := e.browser()
 	owner.signup(alice)
@@ -447,16 +433,84 @@ func TestSecondStepFailureCountsAfterHangUp(t *testing.T) {
 	var first secondStepResponse
 	e.browser().send(http.MethodPost, "/api/v1/session", loginRequest{Username: alice.username, Auth: encoding.EncodeToString(alice.auth)}, &first)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	hangUp.Store(&cancel)
-	body, _ := json.Marshal(secondStepRequest{Ticket: first.Ticket, Code: "000000"})
-	req := httptest.NewRequestWithContext(ctx, http.MethodPost, e.srv.URL+"/api/v1/session/totp", bytes.NewReader(body))
-	e.srv.Config.Handler.ServeHTTP(httptest.NewRecorder(), req)
-	hangUp.Store(nil)
+	// The failed code is recorded after the check and before the count.
+	ctx := hangUp()
+	e.browser().direct(ctx, http.MethodPost, "/api/v1/session/totp", secondStepRequest{Ticket: first.Ticket, Code: "000000"})
 	if ctx.Err() == nil {
 		t.Fatal("the request was not cancelled")
 	}
 	if _, resp, body := e.browser().secondStep(alice, e.code(secret, 0)); resp.SecondStepFailures != 1 {
 		t.Errorf("failures reported after a hang-up: %d %s", resp.SecondStepFailures, body)
 	}
+}
+
+// A change to how an account signs in ends its other sessions in its own
+// transaction, so a client that hangs up once the change is made, before
+// the answer, leaves none of them behind (F46). The change is audited after
+// it commits, which is where the client hangs up.
+func TestChangesEndOtherSessionsAfterHangUp(t *testing.T) {
+	totpOn := func(t *testing.T, e *env) bool {
+		u, err := e.store.UserByName(context.Background(), "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.TOTPSecret != nil
+	}
+	t.Run("password", func(t *testing.T) {
+		e, hangUp := newHangUpEnv(t)
+		alice, next := newCreds("alice"), newCreds("alice")
+		owner, other := e.browser(), e.browser()
+		owner.signup(alice)
+		other.login("alice", alice.auth)
+		owner.direct(hangUp(), http.MethodPost, "/api/v1/account/password", passwordRequest{
+			Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
+			NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed),
+		})
+		if status, _ := e.browser().login("alice", next.auth); status != http.StatusOK {
+			t.Fatalf("the new password: %d", status)
+		}
+		if status, _ := other.current(); status != http.StatusUnauthorized {
+			t.Errorf("another session after the password change: %d", status)
+		}
+	})
+	t.Run("totp on", func(t *testing.T) {
+		e, hangUp := newHangUpEnv(t)
+		alice := newCreds("alice")
+		owner, other := e.browser(), e.browser()
+		owner.signup(alice)
+		other.login("alice", alice.auth)
+		var setup totpSetupResponse
+		owner.send(http.MethodPost, "/api/v1/account/totp/setup", nil, &setup)
+		secret, err := totp.Encoding.DecodeString(setup.Secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner.direct(hangUp(), http.MethodPost, "/api/v1/account/totp", totpRequest{
+			Auth: encoding.EncodeToString(alice.auth), Code: e.code(secret, 0)})
+		if !totpOn(t, e) {
+			t.Fatal("two-factor sign-in stayed off")
+		}
+		if status, _ := other.current(); status != http.StatusUnauthorized {
+			t.Errorf("another session after two-factor sign-in was turned on: %d", status)
+		}
+	})
+	t.Run("totp off", func(t *testing.T) {
+		e, hangUp := newHangUpEnv(t)
+		alice := newCreds("alice")
+		owner, other := e.browser(), e.browser()
+		owner.signup(alice)
+		secret, _ := owner.enableTOTP(alice)
+		if status, _, body := other.secondStep(alice, e.code(secret, 0)); status != http.StatusOK {
+			t.Fatalf("second sign-in: %d %s", status, body)
+		}
+		e.advance(totp.Period)
+		owner.direct(hangUp(), http.MethodDelete, "/api/v1/account/totp", totpRequest{
+			Auth: encoding.EncodeToString(alice.auth), Code: e.code(secret, 0)})
+		if totpOn(t, e) {
+			t.Fatal("two-factor sign-in stayed on")
+		}
+		if status, _ := other.current(); status != http.StatusUnauthorized {
+			t.Errorf("another session after two-factor sign-in was turned off: %d", status)
+		}
+	})
 }

@@ -26,9 +26,9 @@ func (s *Store) PendingTOTP(ctx context.Context, userID int64) ([]byte, error) {
 
 // EnableTOTP turns two-factor sign-in on with the pending secret, sealed
 // again as sealed, records step as used and replaces the recovery codes.
-// Sign-ins waiting for a second step end (F43). It reports false when no
-// secret was pending.
-func (s *Store) EnableTOTP(ctx context.Context, userID int64, sealed []byte, step int64, codeHashes [][]byte) (bool, error) {
+// The account's sign-ins restart with r. It reports false when no secret
+// was pending.
+func (s *Store) EnableTOTP(ctx context.Context, userID int64, sealed []byte, step int64, codeHashes [][]byte, r Renewal) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -43,15 +43,15 @@ func (s *Store) EnableTOTP(ctx context.Context, userID int64, sealed []byte, ste
 	if err := replaceCodes(ctx, tx, userID, codeHashes); err != nil {
 		return false, err
 	}
-	if err := endTickets(ctx, tx, userID); err != nil {
+	if err := restartSignIns(ctx, tx, userID, r); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
 }
 
-// DisableTOTP turns two-factor sign-in off and drops the recovery codes and
-// the sign-ins waiting for a second step (F43).
-func (s *Store) DisableTOTP(ctx context.Context, userID int64) error {
+// DisableTOTP turns two-factor sign-in off and drops the recovery codes.
+// The account's sign-ins restart with r.
+func (s *Store) DisableTOTP(ctx context.Context, userID int64, r Renewal) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ func (s *Store) DisableTOTP(ctx context.Context, userID int64) error {
 	if err := replaceCodes(ctx, tx, userID, nil); err != nil {
 		return err
 	}
-	if err := endTickets(ctx, tx, userID); err != nil {
+	if err := restartSignIns(ctx, tx, userID, r); err != nil {
 		return err
 	}
 	return tx.Commit()

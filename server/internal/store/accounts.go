@@ -97,10 +97,9 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 }
 
 // SetPassword replaces what the account's password protects: the browser's
-// salt, the hash of the auth secret and the sealed account key. Sign-ins
-// waiting for their second step end with it, since they proved the old
-// password (F43).
-func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, authHash string, sealedKey []byte) error {
+// salt, the hash of the auth secret and the sealed account key. The
+// account's sign-ins restart with r.
+func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, authHash string, sealedKey []byte, r Renewal) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -110,16 +109,32 @@ func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, auth
 		`UPDATE users SET salt = ?, auth_hash = ?, sealed_key = ? WHERE id = ?`, salt, authHash, sealedKey, userID); err != nil {
 		return err
 	}
-	if err := endTickets(ctx, tx, userID); err != nil {
+	if err := restartSignIns(ctx, tx, userID, r); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// endTickets drops the account's sign-ins waiting for their second step.
-func endTickets(ctx context.Context, tx *sql.Tx, userID int64) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM login_tickets WHERE user_id = ?`, userID)
-	return err
+// Renewal is the session that replaces every session of an account when
+// the way it signs in changes (OWASP: renew the session ID after any
+// privilege level change).
+type Renewal struct {
+	SessionHash []byte
+	Now         time.Time
+}
+
+// restartSignIns ends the account's sessions and its sign-ins waiting for a
+// second step, which all proved the old way to sign in, and opens the
+// renewal session. It runs in the transaction of the change, so the change
+// never takes effect without them (F43, F46).
+func restartSignIns(ctx context.Context, tx *sql.Tx, userID int64, r Renewal) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM login_tickets WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	return insertSession(ctx, tx, r.SessionHash, userID, r.Now, 1)
 }
 
 // DeleteUser removes the account and, through the cascade, its sessions
@@ -197,12 +212,6 @@ func (s *Store) SessionUser(ctx context.Context, tokenHash []byte, now time.Time
 // DeleteSession ends one session.
 func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
-	return err
-}
-
-// DeleteSessions ends every session of the account.
-func (s *Store) DeleteSessions(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	return err
 }
 
