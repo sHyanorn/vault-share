@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -43,6 +47,47 @@ func newS3(t *testing.T) *S3 {
 
 func TestS3Contract(t *testing.T) {
 	testStore(t, newS3(t))
+}
+
+func TestS3RequestsTimeOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The service accepts every connection and never answers.
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			conn.Close()
+		}
+	})
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	defer func(saved time.Duration) { responseTimeout = saved }(responseTimeout)
+	responseTimeout = 200 * time.Millisecond
+	c := newS3Client(S3Config{Endpoint: "http://" + ln.Addr().String(), Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s"})
+	// Only a backstop, so a missing timeout fails the test instead of hanging it.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = c.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String("vault")},
+		func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	if elapsed := time.Since(start); err == nil || elapsed > 2*time.Second {
+		t.Errorf("a silent service held the request for %v: %v", elapsed, err)
+	}
 }
 
 func TestS3MissingBucketIsAnError(t *testing.T) {

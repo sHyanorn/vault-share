@@ -113,11 +113,16 @@ func (j *Job) deleteOrphans(ctx context.Context) error {
 }
 
 // Loop runs a sweep immediately and then every interval until ctx is done.
+// A run gets five intervals at most, so a stalled storage service delays
+// cleanup instead of stopping it.
 func (j *Job) Loop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if err := j.Run(ctx); err != nil && ctx.Err() == nil {
+		run, cancel := context.WithTimeout(ctx, 5*interval)
+		err := j.Run(run)
+		cancel()
+		if err != nil && ctx.Err() == nil {
 			j.Log.Error("cleanup failed", "err", err)
 		}
 		select {
