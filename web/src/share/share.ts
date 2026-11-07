@@ -98,10 +98,6 @@ export function deleteShareById(id: string, ownerToken: string): Promise<void> {
   return api.deleteFile(id, ownerToken)
 }
 
-export function deleteShare(share: Share): Promise<void> {
-  return api.deleteFile(share.id, share.ownerToken)
-}
-
 export interface ShareInfo {
   id: string
   name: string
