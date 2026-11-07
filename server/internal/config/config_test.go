@@ -80,6 +80,7 @@ func TestLoadEmptyMeansUnset(t *testing.T) {
 func TestLoadInvalid(t *testing.T) {
 	cases := map[string]string{
 		"VAULT_LISTEN_ADDR":     "8080",
+		"VAULT_DATA_DIR":        "data?mode=ro",
 		"VAULT_BASE_URL":        "ftp://x",
 		"VAULT_MAX_FILE_BYTES":  "0",
 		"VAULT_MAX_TOTAL_BYTES": "1000",
