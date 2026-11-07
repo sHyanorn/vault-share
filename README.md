@@ -38,8 +38,8 @@ The [specification](docs/SPEC.md) describes the scheme in full.
 
 - **Browser hardening.** A strict Content Security Policy forbids inline script and eval, alongside HSTS, `no-referrer`, COOP, COEP and CORP.
 - **Server answers.** Missing files, expired files, used-up files and wrong tokens all get the same 404. Requests from other sites are refused, and the API answers only for its own host.
-- **Rate limits.** Each client, meaning one IPv4 address or one IPv6 /64, gets its own limits. Five wrong signatures lock that client out of a file for 15 minutes. A storage quota and a daily budget per client bound the disk.
-- **Supply chain.** Dependencies, CI actions and images are pinned. CI runs gosec, govulncheck, npm audit, Semgrep and a ZAP baseline scan, plus end-to-end tests and the security checks in [`scripts/`](scripts).
+- **Rate limits.** Each client, meaning one IPv4 address or one IPv6 /64, gets its own limits. Five wrong signatures lock that client out of a file for 15 minutes. A storage quota and a daily budget per client bound the storage, and a file takes one upload at a time.
+- **Supply chain.** Dependencies, CI actions and images are pinned by version or digest. The exception is the browser that Playwright installs in CI: its build follows the pinned Playwright release, and its system packages come from the runner. CI runs gosec, govulncheck, npm audit, Semgrep and a ZAP baseline scan, plus end-to-end tests on disk and on S3 and the security checks in [`scripts/`](scripts).
 - **Self-assessment.** The project was tested against the OWASP Top 10:2025: see the [test report](docs/security/TEST_REPORT.md), the [threat model](docs/security/THREAT_MODEL.md) and the [findings](docs/security/FINDINGS.md) fixed along the way.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
@@ -58,7 +58,23 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 docker compose up --build
 ```
 
-Open <https://localhost>. Caddy signs the certificate with its own local CA, so the browser warns once; accept it for local use. To keep ciphertext in a bucket instead of the data volume, set `VAULT_STORAGE=s3` and the `VAULT_S3_*` settings in `.env`; [.env.example](.env.example) lists every setting.
+Open <https://localhost>. Caddy signs the certificate with its own local CA, so the browser warns once; accept it for local use. [.env.example](.env.example) lists every setting.
+
+## S3 storage
+
+With `VAULT_STORAGE=s3`, ciphertext goes to an S3-compatible bucket instead of the data volume. To try it against a throwaway local gateway:
+
+```bash
+docker compose -f compose.yaml -f compose.s3.yaml up --build
+```
+
+For a real bucket, set the `VAULT_S3_*` settings in `.env`. The bucket must:
+
+- belong to vaultd alone, because cleanup deletes every object named like a file id that has no record;
+- have versioning off, or deleted files would stay as old versions;
+- support conditional writes (`If-None-Match`), which keep stored content from being replaced.
+
+vaultd checks the last two at startup and refuses to start otherwise. Its credentials need `s3:ListBucket`, `s3:GetBucketVersioning`, `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the bucket. Files on S3 are capped at 5 GiB, the most S3 takes in one request. Switching storage moves no files, so switch once the existing shares have expired, at most seven days after the last upload.
 
 ## Development
 
