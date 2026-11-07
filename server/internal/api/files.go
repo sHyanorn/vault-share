@@ -287,7 +287,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 // content streams the ciphertext for a one-time download token. The content
 // is opened before the token is consumed, so no purge can take the bytes from
 // a granted download; on the last permitted download the file is removed
-// before the stream starts and the open descriptor keeps the bytes readable.
+// before the stream starts, and the open reader still delivers every byte.
 func (h *files) content(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	token, ok := decodeFixed(r.URL.Query().Get("token"), tokenBytes)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"maps"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -25,6 +26,7 @@ func TestLoadDefaults(t *testing.T) {
 		BaseURL:       "https://localhost",
 		Host:          "localhost",
 		DataDir:       "data",
+		Storage:       "disk",
 		MaxFileBytes:  1 << 30,
 		MaxTotalBytes: 20 << 30,
 		LogLevel:      slog.LevelInfo,
@@ -53,6 +55,7 @@ func TestLoadOverrides(t *testing.T) {
 		BaseURL:        "https://share.example.com/vault",
 		Host:           "share.example.com",
 		DataDir:        "/data",
+		Storage:        "disk",
 		MaxFileBytes:   1024,
 		MaxTotalBytes:  4 << 20,
 		WebDir:         "/srv/web",
@@ -126,5 +129,50 @@ func TestTrustedProxiesMatchHowClientsAreSeen(t *testing.T) {
 	}
 	if _, err := Load(lookupFrom(map[string]string{"VAULT_TRUSTED_PROXIES": "::ffff:0.0.0.0/90"})); err == nil {
 		t.Error("a mapped prefix wider than the mapped range was accepted")
+	}
+}
+
+func TestLoadS3(t *testing.T) {
+	env := map[string]string{
+		"VAULT_STORAGE":              "s3",
+		"VAULT_S3_ENDPOINT":          "https://s3.example.com",
+		"VAULT_S3_BUCKET":            "vault",
+		"VAULT_S3_ACCESS_KEY_ID":     "AKID",
+		"VAULT_S3_SECRET_ACCESS_KEY": "the-secret-value",
+	}
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := S3{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "vault", AccessKeyID: "AKID", SecretAccessKey: "the-secret-value"}
+	if cfg.Storage != "s3" || cfg.S3 != want {
+		t.Errorf("got %q %+v", cfg.Storage, cfg.S3)
+	}
+
+	for _, missing := range []string{"VAULT_S3_BUCKET", "VAULT_S3_ACCESS_KEY_ID", "VAULT_S3_SECRET_ACCESS_KEY"} {
+		partial := maps.Clone(env)
+		delete(partial, missing)
+		if _, err := Load(lookupFrom(partial)); err == nil || !strings.Contains(err.Error(), missing) {
+			t.Errorf("without %s: %v", missing, err)
+		}
+	}
+	for _, bad := range []string{"s3.example.com", "ftp://s3.example.com", "https://u:p@s3.example.com", "https://s3.example.com?x=1"} {
+		broken := maps.Clone(env)
+		broken["VAULT_S3_ENDPOINT"] = bad
+		_, err := Load(lookupFrom(broken))
+		if err == nil || !strings.Contains(err.Error(), "VAULT_S3_ENDPOINT") {
+			t.Errorf("endpoint %q: %v", bad, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "the-secret-value") {
+			t.Errorf("the error shows the secret: %v", err)
+		}
+	}
+	if _, err := Load(lookupFrom(map[string]string{"VAULT_STORAGE": "tape"})); err == nil || !strings.Contains(err.Error(), "VAULT_STORAGE") {
+		t.Errorf("unknown storage: %v", err)
+	}
+	// Without s3 the S3 settings are ignored, so a stale secret is not kept.
+	env["VAULT_STORAGE"] = "disk"
+	if cfg, err := Load(lookupFrom(env)); err != nil || cfg.S3 != (S3{}) {
+		t.Errorf("disk storage kept S3 settings: %+v %v", cfg.S3, err)
 	}
 }

@@ -47,9 +47,9 @@ func run() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
-	blobs, err := blob.NewDisk(filepath.Join(cfg.DataDir, "blobs"))
+	blobs, err := openBlobs(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("blob dir: %w", err)
+		return fmt.Errorf("blob store: %w", err)
 	}
 	auditor, err := audit.New(cfg.DataDir, st, logger)
 	if err != nil {
@@ -105,4 +105,19 @@ func run() error {
 		logger.Warn("shutdown incomplete, closing active connections", "err", err)
 	}
 	return nil
+}
+
+func openBlobs(ctx context.Context, cfg config.Config) (blob.Store, error) {
+	if cfg.Storage != "s3" {
+		return blob.NewDisk(filepath.Join(cfg.DataDir, "blobs"))
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return blob.NewS3(ctx, blob.S3Config{
+		Endpoint:        cfg.S3.Endpoint,
+		Region:          cfg.S3.Region,
+		Bucket:          cfg.S3.Bucket,
+		AccessKeyID:     cfg.S3.AccessKeyID,
+		SecretAccessKey: cfg.S3.SecretAccessKey,
+	})
 }
