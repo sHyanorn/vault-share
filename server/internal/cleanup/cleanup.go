@@ -22,7 +22,13 @@ type Job struct {
 	Log   *slog.Logger
 	// Now defaults to time.Now; tests move it.
 	Now func() time.Time
+
+	orphansSwept time.Time
 }
+
+// orphanInterval spaces the orphan sweeps, which list the whole store: they
+// catch rare leftovers, and on S3 every listed thousand objects is a request.
+const orphanInterval = time.Hour
 
 // Run performs one sweep. For files with content the blob goes first, so a
 // failed deletion is retried on the next run instead of leaving an orphan.
@@ -65,8 +71,12 @@ func (j *Job) Run(ctx context.Context) error {
 	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
 		errs = append(errs, err)
 	}
-	if err := j.deleteOrphans(ctx); err != nil {
-		errs = append(errs, err)
+	if now.Sub(j.orphansSwept) >= orphanInterval {
+		if err := j.deleteOrphans(ctx); err != nil {
+			errs = append(errs, err)
+		} else {
+			j.orphansSwept = now
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -93,7 +103,8 @@ func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
 // deletions, a content deletion that failed after its record was gone, or a
 // lost answer from the store leaves such content behind. Each id is listed
 // before its record is looked up, and a record always exists before its
-// content, so content still being uploaded is never taken.
+// content, so content still being uploaded is never taken. A failed sweep
+// is retried on the next run, a finished one after orphanInterval.
 func (j *Job) deleteOrphans(ctx context.Context) error {
 	var errs []error
 	deleted := 0
