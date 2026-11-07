@@ -552,26 +552,43 @@ func pipeBody(t *testing.T, e *env, sh share, owner string) (*io.PipeWriter, <-c
 	return pw, done
 }
 
-func TestConcurrentUploadsStoreOneCopy(t *testing.T) {
-	e := newEnv(t)
-	sh := e.create(1000, 1, 3600)
-	slow := randomContent(1000)
+// heldBlobs holds the first Put until release is closed.
+type heldBlobs struct {
+	blob.Store
+	once    sync.Once
+	held    chan struct{}
+	release chan struct{}
+}
 
-	pw, slowDone := pipeBody(t, e, sh, sh.owner)
-	if _, err := pw.Write(slow[:999]); err != nil {
-		t.Fatal(err)
+func (b *heldBlobs) Put(ctx context.Context, id string, size int64, r io.Reader) error {
+	first := false
+	b.once.Do(func() { first = true; close(b.held) })
+	if first {
+		<-b.release
 	}
-	if status := e.upload(sh, sh.owner, sh.content); status != http.StatusNoContent {
-		t.Fatalf("fast upload: %d", status)
+	return b.Store.Put(ctx, id, size, r)
+}
+
+func TestOneUploadAtATimePerFile(t *testing.T) {
+	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
+	e := newEnvWith(t, func(o *Options) {
+		held.Store = o.Blobs
+		o.Blobs = held
+	})
+	sh := e.create(1000, 1, 3600)
+	first := make(chan int, 1)
+	go func() { first <- e.upload(sh, sh.owner, sh.content) }()
+	<-held.held
+	if status := e.upload(sh, sh.owner, randomContent(1000)); status != http.StatusConflict {
+		t.Errorf("upload while another is in flight: %d", status)
 	}
-	pw.Write(slow[999:])
-	pw.Close()
-	if status := <-slowDone; status != http.StatusConflict {
-		t.Errorf("slow upload: %d", status)
+	close(held.release)
+	if status := <-first; status != http.StatusNoContent {
+		t.Fatalf("first upload: %d", status)
 	}
 	dl, _ := e.token(sh)
 	if _, body, _ := e.content(sh.id, dl.Token); !bytes.Equal(body, sh.content) {
-		t.Error("the acknowledged content was replaced")
+		t.Error("stored content is not the first upload")
 	}
 }
 
