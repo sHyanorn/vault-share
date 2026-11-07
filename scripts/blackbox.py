@@ -27,6 +27,8 @@ import urllib.parse
 import warnings
 
 API = "/api/v1/files"
+ACCOUNT = "/api/v1/account"
+SESSION = "/api/v1/session"
 NOT_FOUND = b'{"error":{"code":"not_found","message":"not found"}}\n'
 # Strings that must never reach a client: stack traces, SQL errors, file contents.
 LEAKS = re.compile(
@@ -140,11 +142,47 @@ def create_body(size=64, max_downloads=5, auth_key=None):
     }
 
 
+class Account:
+    """A test account. The secrets stand in for what a browser derives from a
+    password (D026); to the server they are only bytes of the right length."""
+
+    def __init__(self, username):
+        self.username = username
+        self.salt, self.auth, self.sealed = secrets.token_bytes(16), secrets.token_bytes(32), secrets.token_bytes(60)
+        self.cookies = {}
+        self.recovery = []
+
+    def headers(self, extra=None):
+        cookie = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
+        return {**({"Cookie": cookie} if cookie else {}), **(extra or {})}
+
+    def absorb(self, response):
+        """Keeps cookies as a browser would, dropping those set to expire."""
+        for line in response.headers.get_all("Set-Cookie") or []:
+            name, _, rest = line.partition("=")
+            value = rest.split(";", 1)[0]
+            if re.search(r"(?i);\s*Max-Age=0", line):
+                self.cookies.pop(name, None)
+            else:
+                self.cookies[name] = value
+        return response
+
+
+def totp(secret, steps=0):
+    """RFC 6238 with SHA-1, 30-second steps and six digits."""
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    counter = (int(time.time()) // 30 + steps).to_bytes(8, "big")
+    mac = hmac.new(key, counter, hashlib.sha1).digest()
+    offset = mac[-1] & 15
+    return f"{(int.from_bytes(mac[offset:offset + 4], 'big') & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
 class Tester:
     def __init__(self, client, http=None):
         self.c = client
         self.http = http
         self.shares = []
+        self.accounts = []
         self.counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
         self.check = ""
 
@@ -197,9 +235,36 @@ class Tester:
     def content(self, share_id, token):
         return self.c.request("GET", f"{API}/{share_id}/content?token={token}")
 
+    def account(self):
+        """The one test account, opened on first use: a client may open only
+        five an hour, and the browser checks and end-to-end tests need theirs."""
+        if not self.accounts:
+            acct = Account("bb-" + secrets.token_hex(5))
+            r = acct.absorb(self.c.json("POST", ACCOUNT, {
+                "username": acct.username, "salt": b64(acct.salt), "auth": b64(acct.auth), "sealed_key": b64(acct.sealed),
+            }))
+            if r.status != 201:
+                raise RuntimeError(f"sign-up answered {r.status} {r.body[:80]!r}")
+            acct.signup = r
+            self.accounts.append(acct)
+        return self.accounts[0]
+
+    def sign_in(self, acct, auth=None, wait=True):
+        """The first step of a sign-in; cookies it sets go to acct."""
+        body = {"username": acct.username, "auth": b64(auth or acct.auth)}
+        return acct.absorb(self.c.json("POST", SESSION, body, acct.headers(), wait))
+
     def cleanup(self):
-        """Deletes every test file; returns how many deletions failed."""
+        """Deletes every test file and account; returns how many deletions failed."""
         failed = 0
+        for acct in self.accounts:
+            code = acct.recovery.pop() if acct.recovery else None
+            body = {"auth": b64(acct.auth), **({"code": code} if code else {})}
+            try:
+                status = self.c.json("DELETE", ACCOUNT, body, acct.headers()).status
+            except OSError:
+                status = None
+            failed += status != 204
         for share in self.shares:
             try:
                 status = self.c.request("DELETE", f"{API}/{share.id}", headers=share.bearer).status
@@ -557,6 +622,153 @@ def check_lockout(t):
     t.ok(t.grant(other).status == 200, "the lock covers that one file only")
 
 
+def set_cookies(response):
+    """The Set-Cookie lines of a response, by cookie name."""
+    return {line.split("=", 1)[0]: line for line in response.headers.get_all("Set-Cookie") or []}
+
+
+def cookie_attributes(line):
+    attrs = {}
+    for part in line.split(";")[1:]:
+        key, _, value = part.strip().partition("=")
+        attrs[key.lower()] = value
+    return attrs
+
+
+def attempt(t, body):
+    """One sign-in; a 429 for the client's budget is waited out, one for a lockout is returned."""
+    while True:
+        r = t.c.json("POST", SESSION, body, wait=False)
+        if r.code != "rate_limited":
+            return r
+        time.sleep(min(int(r.header("Retry-After") or 1), 60))
+
+
+def check_accounts(t):
+    acct = t.account()
+    cookies = set_cookies(acct.signup)
+    want = {"path": "/", "secure": "", "httponly": "", "samesite": "Strict"}
+    for name, age in (("__Host-vault_session", "86400"), ("__Host-vault_device", "15552000")):
+        attrs = cookie_attributes(cookies.get(name, ""))
+        t.ok(all(attrs.get(k) == v for k, v in want.items()) and "domain" not in attrs and attrs.get("max-age") == age,
+             f"{name} is Secure, HttpOnly, SameSite=Strict, for the whole origin and without a Domain",
+             cookies.get(name, "missing"))
+    t.ok(acct.signup.header("Cache-Control") == "no-store", "the sign-up answer, which carries a key, is not cached")
+    r = t.c.request("GET", SESSION, headers=acct.headers())
+    data = r.json() or {}
+    t.ok(r.status == 200 and data.get("username") == acct.username and "sealed_key" not in data,
+         "the cookie carries the session, whose answer leaves the sealed account key out", f"{r.status} {sorted(data)}")
+    t.ok(t.c.request("GET", SESSION).status == 401, "without the cookie there is no session")
+
+    ghost = "bb-" + secrets.token_hex(6)
+    lookups = [t.c.json("POST", ACCOUNT + "/salt", {"username": name}) for name in (acct.username, ghost, ghost, ghost + "x")]
+    salts = [(r.json() or {}).get("salt") if r.status == 200 else None for r in lookups]
+    t.ok(salts[0] == b64(acct.salt) and salts[1] == salts[2] and salts[1] and len(unb64(salts[1])) == 16 and salts[1] != salts[3],
+         "a username without an account gets a salt like one with: 16 bytes, the same each time", str(salts))
+    bad = t.c.json("POST", ACCOUNT + "/salt", {"username": "Not A Name"})
+    t.ok(bad.status == 400 and bad.code == "invalid_username", "a malformed username is refused", f"{bad.status} {bad.code}")
+    wrong = attempt(t, {"username": acct.username, "auth": b64(secrets.token_bytes(32))})
+    unknown = attempt(t, {"username": ghost, "auth": b64(secrets.token_bytes(32))})
+    t.ok(wrong.status == unknown.status == 401 and wrong.body == unknown.body,
+         "a wrong password and an unknown username get the same answer", f"{wrong.status} {unknown.status}")
+
+    target = "bb-" + secrets.token_hex(6)
+    statuses = [attempt(t, {"username": target, "auth": b64(secrets.token_bytes(32))}).status for _ in range(5)]
+    locked = attempt(t, {"username": target, "auth": b64(secrets.token_bytes(32))})
+    t.ok(statuses == [401] * 5 and locked.status == 429 and locked.code == "locked" and locked.header("Retry-After") == "900",
+         "after five failures a client is refused that username for 15 minutes", f"{statuses} {locked.status} {locked.code}")
+
+    before = acct.cookies.get("__Host-vault_session")
+    t.ok(t.sign_in(acct).status == 200, "the lockout covers that username only")
+    stale = t.c.request("GET", SESSION, headers={"Cookie": f"__Host-vault_session={before}"})
+    t.ok(acct.cookies.get("__Host-vault_session") not in (None, before) and stale.status == 401,
+         "signing in issues a new session and ends the one the browser held", f"stale {stale.status}")
+
+    cross = t.c.json("POST", SESSION, {"username": acct.username, "auth": b64(acct.auth)}, {"Sec-Fetch-Site": "cross-site"})
+    logout = t.c.request("DELETE", SESSION, headers=acct.headers({"Origin": "https://attacker.example"}))
+    alive = t.c.request("GET", SESSION, headers=acct.headers())
+    t.ok(cross.status == 403 and cross.code == "cross_origin" and not set_cookies(cross) and logout.status == 403 and alive.status == 200,
+         "another site can neither sign a visitor in nor sign them out", f"{cross.status} {logout.status} {alive.status}")
+
+    elsewhere = Account(acct.username)
+    elsewhere.auth = acct.auth
+    t.sign_in(elsewhere)
+    salt, auth, sealed = secrets.token_bytes(16), secrets.token_bytes(32), secrets.token_bytes(60)
+    changed = acct.absorb(t.c.json("POST", ACCOUNT + "/password", {
+        "auth": b64(acct.auth), "salt": b64(salt), "new_auth": b64(auth), "sealed_key": b64(sealed),
+    }, acct.headers()))
+    if changed.status == 200:
+        acct.salt, acct.auth, acct.sealed = salt, auth, sealed
+    t.ok(changed.status == 200 and t.c.request("GET", SESSION, headers=elsewhere.headers()).status == 401
+         and t.c.request("GET", SESSION, headers=acct.headers()).status == 200,
+         "a password change ends the account's other sessions and renews this one", str(changed.status))
+
+    held = acct.cookies.get("__Host-vault_session")
+    out = acct.absorb(t.c.request("DELETE", SESSION, headers=acct.headers()))
+    gone = t.c.request("GET", SESSION, headers={"Cookie": f"__Host-vault_session={held}"})
+    t.ok(out.status == 204 and "__Host-vault_session" not in acct.cookies and gone.status == 401,
+         "signing out ends the session and clears its cookie", str(out.status))
+    t.sign_in(acct)
+
+
+def check_totp(t):
+    acct = t.account()
+    setup = t.c.request("POST", ACCOUNT + "/totp/setup", headers=acct.headers())
+    secret = (setup.json() or {}).get("secret", "")
+    on = acct.absorb(t.c.json("POST", ACCOUNT + "/totp", {"auth": b64(acct.auth), "code": totp(secret)}, acct.headers()))
+    data = on.json() or {}
+    acct.recovery = list(data.get("recovery_codes", []))
+    t.ok(setup.status == 200 and on.status == 200 and data.get("totp") is True and len(acct.recovery) == 10,
+         "two-factor sign-in turns on with a code from the app, with ten recovery codes", f"{setup.status} {on.status}")
+
+    def fresh():
+        browser = Account(acct.username)
+        browser.auth = acct.auth
+        first = t.sign_in(browser)
+        return browser, first, (first.json() or {}).get("ticket")
+
+    browser, first, ticket = fresh()
+    t.ok(first.status == 200 and (first.json() or {}).get("second_step") is True and not browser.cookies,
+         "a right password alone gets a ticket and no cookie", str(first.status))
+    code = totp(secret, 1)  # the step that turned it on is spent
+    done = browser.absorb(t.c.json("POST", SESSION + "/totp", {"ticket": ticket, "code": code}, browser.headers()))
+    t.ok(done.status == 200 and "__Host-vault_session" in browser.cookies, "the code completes the sign-in", str(done.status))
+    _, _, other = fresh()
+    replay = t.c.json("POST", SESSION + "/totp", {"ticket": other, "code": code})
+    t.ok(replay.status == 401 and replay.code == "wrong_code", "the same code does not work twice", f"{replay.status} {replay.code}")
+    reuse = t.c.json("POST", SESSION + "/totp", {"ticket": ticket, "code": totp(secret, 1)})
+    t.ok(reuse.status == 401 and reuse.code == "ticket_expired", "a ticket serves one sign-in", f"{reuse.status} {reuse.code}")
+
+    recovery = acct.recovery.pop(0)
+    _, _, third = fresh()
+    used = t.c.json("POST", SESSION + "/totp", {"ticket": third, "code": recovery})
+    _, _, fourth = fresh()
+    again = t.c.json("POST", SESSION + "/totp", {"ticket": fourth, "code": recovery})
+    t.ok(used.status == 200 and (used.json() or {}).get("recovery_codes_left") == 9 and again.status == 401,
+         "a recovery code signs in once", f"{used.status} {again.status}")
+    sealed = t.c.request("GET", SESSION, headers=acct.headers())
+    t.ok(sealed.status == 200 and (sealed.json() or {}).get("totp") is True, "the session reports two-factor sign-in as on")
+
+
+def check_account_files(t):
+    acct = t.account()
+    share = t.ready()
+    path = f"{ACCOUNT}/files/{share.id}"
+    entry = b64(secrets.token_bytes(120))
+    no_owner = t.c.json("PUT", path, {"entry": entry}, acct.headers())
+    no_session = t.c.json("PUT", path, {"entry": entry}, share.bearer)
+    kept = t.c.json("PUT", path, {"entry": entry}, acct.headers(share.bearer))
+    t.ok(no_owner.status == 404 and no_session.status == 401 and kept.status == 204,
+         "a file goes into an account only with both the session and its owner token",
+         f"{no_owner.status} {no_session.status} {kept.status}")
+    listing = t.c.request("GET", ACCOUNT + "/files", headers=acct.headers())
+    files = (listing.json() or {}).get("files", [])
+    t.ok(listing.status == 200 and listing.header("Cache-Control") == "no-store"
+         and any(f.get("id") == share.id and f.get("entry") == entry for f in files),
+         "the account lists it with the entry the browser sealed", str(listing.status))
+    t.ok(t.c.request("GET", ACCOUNT + "/files").status == 401, "the list needs the session")
+
+
 def check_rate_limit(t):
     def spoofed():
         ip = str(ipaddress.IPv4Address(secrets.randbits(32)))
@@ -647,7 +859,8 @@ CHECKS = [
     ("cache", check_cache), ("cors", check_cors), ("cross-site", check_cross_site), ("methods", check_methods),
     ("errors", check_errors), ("traversal", check_traversal), ("input", check_input),
     ("not-found", check_not_found), ("access", check_access), ("upload", check_upload),
-    ("lockout", check_lockout), ("rate-limit", check_rate_limit), ("framing", check_framing),
+    ("lockout", check_lockout), ("accounts", check_accounts), ("totp", check_totp),
+    ("account-files", check_account_files), ("rate-limit", check_rate_limit), ("framing", check_framing),
     ("host", check_host), ("slow-headers", check_slow_headers),
 ]
 
@@ -686,7 +899,8 @@ def main():
     t.check = "cleanup"
     try:
         failed = t.cleanup()
-        t.ok(failed == 0, f"deletes the {len(t.shares)} test files it created", f"{failed} could not be deleted")
+        t.ok(failed == 0, f"deletes the {len(t.shares)} test files and {len(t.accounts)} test account it created",
+             f"{failed} could not be deleted")
     except Exception as e:
         t.report("FAIL", f"cleanup stopped: {type(e).__name__}: {e}")
     print(f"\n{t.counts['PASS']} passed, {t.counts['FAIL']} failed, {t.counts['SKIP']} skipped")
