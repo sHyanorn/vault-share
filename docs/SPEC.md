@@ -153,6 +153,5 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 ## 11. Deliverables
 
 - One-command startup with Docker Compose
-- Public demo site (with file size and retention limits)
 - English README: summary, encryption flow diagram, demo GIF, threat model summary, known limitations
 - All security documents listed in Section 9
