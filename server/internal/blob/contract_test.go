@@ -165,6 +165,28 @@ func testStore(t *testing.T, s Store) {
 		absent(t, id)
 	})
 
+	t.Run("lists the stored ids", func(t *testing.T) {
+		kept, deleted := newID(), newID()
+		for _, id := range []string{kept, deleted} {
+			if err := s.Put(ctx, id, 3, strings.NewReader("abc")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Delete(ctx, deleted); err != nil {
+			t.Fatal(err)
+		}
+		listed := map[string]bool{}
+		for id, err := range s.IDs(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			listed[id] = true
+		}
+		if !listed[kept] || listed[deleted] {
+			t.Errorf("listed %v: kept %v, deleted %v", len(listed), listed[kept], listed[deleted])
+		}
+	})
+
 	t.Run("refuses invalid ids", func(t *testing.T) {
 		for _, bad := range []string{"../escape", "AAAAAAAAAAAAAAAAAAAAA", "tmp/AAAAAAAAAAAAAAAAA"} {
 			if err := s.Put(ctx, bad, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {

@@ -475,6 +475,29 @@ func TestExpiryAndCleanup(t *testing.T) {
 	}
 }
 
+func TestCleanupDeletesOrphanedContent(t *testing.T) {
+	e := newEnv(t)
+	sh := e.shared(100, 5, 3600)
+	pending := e.create(100, 5, 3600)
+	orphan := encoding.EncodeToString(randomContent(idBytes))
+	ctx := context.Background()
+	for _, id := range []string{orphan, pending.id} {
+		if err := e.blobs.Put(ctx, id, 3, strings.NewReader("abc")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.job.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e.blobExists(orphan) {
+		t.Error("content without a record survived cleanup")
+	}
+	// A record waiting for its upload marks the content as wanted.
+	if !e.blobExists(sh.id) || !e.blobExists(pending.id) {
+		t.Error("cleanup deleted content that has a record")
+	}
+}
+
 func TestDelete(t *testing.T) {
 	e := newEnv(t)
 	sh := e.shared(100, 5, 3600)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"regexp"
 	"time"
 )
@@ -32,6 +33,8 @@ type Store interface {
 	// Delete removes the content; a missing id is not an error. A reader
 	// opened before Delete still reads the whole content.
 	Delete(ctx context.Context, id string) error
+	// IDs lists the ids of the stored content.
+	IDs(ctx context.Context) iter.Seq2[string, error]
 	// Sweep removes partial uploads abandoned before the given time.
 	Sweep(ctx context.Context, before time.Time) error
 }

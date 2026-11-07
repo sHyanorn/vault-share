@@ -1,5 +1,6 @@
 // Package cleanup deletes files that expired, were downloaded for the last
-// time or never received their content, and sweeps abandoned uploads.
+// time or never received their content, sweeps abandoned uploads and deletes
+// content left without a record.
 package cleanup
 
 import (
@@ -71,6 +72,42 @@ func (j *Job) Run(ctx context.Context) error {
 	}
 	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
 		errs = append(errs, err)
+	}
+	if err := j.deleteOrphans(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// deleteOrphans deletes content that has no record. A crash between the two
+// deletions, a content deletion that failed after its record was gone, or an
+// upload that outlived its record leaves such content behind. Each id is
+// listed before its record is looked up, and a record always exists before
+// its content, so content still being uploaded is never taken.
+func (j *Job) deleteOrphans(ctx context.Context) error {
+	var errs []error
+	deleted := 0
+	for id, err := range j.Blobs.IDs(ctx) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("list blobs: %w", err))
+			break
+		}
+		exists, err := j.Store.FileExists(ctx, id)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("record %s: %w", id, err))
+			break
+		}
+		if exists {
+			continue
+		}
+		if err := j.Blobs.Delete(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("orphaned blob %s: %w", id, err))
+			continue
+		}
+		deleted++
+	}
+	if deleted > 0 {
+		j.Log.Info("deleted orphaned content", "count", deleted)
 	}
 	return errors.Join(errs...)
 }

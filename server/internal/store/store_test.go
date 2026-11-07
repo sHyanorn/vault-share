@@ -105,11 +105,17 @@ func TestFileRoundTrip(t *testing.T) {
 	if _, err := s.GetFile(ctx, "missing"); err != ErrNotFound {
 		t.Errorf("missing file: %v", err)
 	}
+	if ok, err := s.FileExists(ctx, f.ID); err != nil || !ok {
+		t.Errorf("FileExists of a record: %v %v", ok, err)
+	}
 	if err := s.DeleteFile(ctx, f.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.GetFile(ctx, f.ID); err != ErrNotFound {
 		t.Errorf("after delete: %v", err)
+	}
+	if ok, err := s.FileExists(ctx, f.ID); err != nil || ok {
+		t.Errorf("FileExists after delete: %v %v", ok, err)
 	}
 }
 

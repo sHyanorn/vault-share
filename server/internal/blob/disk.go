@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"os"
 	"time"
 )
@@ -92,6 +93,21 @@ func (d *Disk) Delete(_ context.Context, id string) error {
 		return nil
 	}
 	return err
+}
+
+func (d *Disk) IDs(context.Context) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		entries, err := fs.ReadDir(d.root.FS(), ".")
+		if err != nil {
+			yield("", err)
+			return
+		}
+		for _, entry := range entries {
+			if id := entry.Name(); entry.Type().IsRegular() && ValidID(id) && !yield(id, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (d *Disk) Sweep(_ context.Context, before time.Time) error {

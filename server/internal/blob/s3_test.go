@@ -3,6 +3,7 @@ package blob
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -42,4 +43,16 @@ func newS3(t *testing.T) *S3 {
 
 func TestS3Contract(t *testing.T) {
 	testStore(t, newS3(t))
+}
+
+func TestS3MissingBucketIsAnError(t *testing.T) {
+	s := newS3(t)
+	gone := &S3{client: s.client, bucket: fmt.Sprintf("vault-missing-%x", randomBytes(6))}
+	ctx := context.Background()
+	if _, err := gone.Open(ctx, newID()); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("Open: %v", err)
+	}
+	if err := gone.Delete(ctx, newID()); err == nil {
+		t.Error("Delete reported success")
+	}
 }
