@@ -369,14 +369,14 @@ The black-box script refuses non-local targets unless `--remote` confirms that t
 
 ## 7. M7: Accounts
 
-Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose stack, with the black-box checks `accounts`, `totp` and `account-files` and the browser check for accounts. The threat model lists what they cover. The independent review of M7 found F38 to F40, and an adversarial verification of their fixes found F41 to F45 ([FINDINGS.md](FINDINGS.md)); the runs below are on the code with all of them fixed.
+Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose stack, with the black-box checks `accounts`, `totp` and `account-files` and the browser check for accounts. The threat model lists what they cover. The independent review of M7 found F38 to F40, an adversarial verification of their fixes found F41 to F45, and fixing F43 turned up F46 ([FINDINGS.md](FINDINGS.md)); the runs below are on the code with all of them fixed.
 
 | Run at the end of M7 | Result |
 |---|---|
 | `scripts/blackbox.py`, Compose stack | 170 passed ([`blackbox-m7.txt`](evidence/blackbox-m7.txt)) |
 | `scripts/browser_checks.cjs` | 30 passed ([`browser-checks-m7.txt`](evidence/browser-checks-m7.txt)) |
 | End-to-end tests, disk and S3 | 6 passed on each; the bucket empty afterwards |
-| Go tests with `-race` | 141 passed |
+| Go tests with `-race` | 143 passed |
 | Vitest | 107 passed |
 
 | WSTG | Test | Result | Evidence |
@@ -384,12 +384,12 @@ Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose
 | SESS-02 | The cookies set at sign-up | Both `__Host-`, Secure, HttpOnly, SameSite=Strict, for the whole origin and without a Domain; the session lasts a day. Scripts on the page see no cookie | `accounts`, [`browser-checks-m7.txt`](evidence/browser-checks-m7.txt) |
 | SESS-03 | A sign-in while the browser holds a valid session | A new token; the old one gets 401 | `accounts` |
 | SESS-05 | Sign-in, sign-out and every account request marked cross-site, same-site or from another Origin | 403 `cross_origin`, no cookie set, nothing changed (D028) | `accounts`, `TestCrossSiteRequestsCannotUseTheSession` |
-| SESS-06 | Sign-out | 204 and the cookie cleared; the token gets 401 afterwards | `accounts` |
+| SESS-06 | Sign-out | 204 and the cookie cleared; the token gets 401 afterwards, also when the client hangs up at once (`TestSignOutFinishesAfterHangUp`) | `accounts`, Go tests |
 | SESS-07 | Idle and absolute timeouts | An hour without use or a day after sign-in ends a session (`TestSessionTimeouts`, `TestSessionsEndADayAfterSignIn`) | Go tests |
 | IDNT-04 | Salt lookups and sign-ins for usernames without an account | A stable 16-byte salt; the same 401 body as a wrong password. Sign-up still tells a taken name, which D027 accepts | `accounts` |
 | ATHN-03 | Five failed sign-ins from one client; twenty from many; a browser that signed in before | 429 `locked` with `Retry-After: 900` for that username only; unknown browsers locked, the owner's browser not (`TestLoginLockouts`); an attempt refused only because others are in flight gets 503 `busy` (`TestAttemptsInFlightAnswerBusy`) | `accounts`, Go tests |
 | ATHN-07 | Account password policy | 15 code points after NFKC normalization, checked in the browser, the only place that sees the password | Vitest |
-| ATHN-09 | Password change | Asks for the current password, and a code while TOTP is on; ends the other sessions | `accounts`, `TestChangesNeedTheCodeWhileTOTPIsOn` |
+| ATHN-09 | Password change | Asks for the current password, and a code while TOTP is on; ends the other sessions in the same transaction, also when the client hangs up (`TestChangesEndOtherSessionsAfterHangUp`) | `accounts`, `TestChangesNeedTheCodeWhileTOTPIsOn` |
 | | Second step: a used code, a used ticket, a recovery code used twice, five failures, a ticket from before a password or TOTP change | Each refused; the second step locks after five | `totp`, Go tests |
 | ATHZ-02 | Keeping a file without its owner token, or without a session; listing without a session | 404, 401, 401 | `account-files` |
 | CRYP-04 | Account key derivation | Pinned vectors, computed with hash-wasm and WebCrypto and again with Go's x/crypto/argon2 and standard library | Vitest |
