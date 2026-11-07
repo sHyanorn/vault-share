@@ -1,0 +1,15 @@
+What the database keeps for an account (M7). One account was signed up through
+the API with random stand-ins for the browser's salt, auth secret and sealed key;
+binary values are shown by length only.
+
+users: id, username, salt, auth_hash, sealed_key, created_at, totp_secret, totp_pending, totp_step, totp_failures
+  id=1, username=evidence, salt=<16 bytes>, auth_hash=$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>, sealed_key=<60 bytes>, created_at=1794044422, totp_secret=None, totp_pending=None, totp_step=0, totp_failures=0
+
+sessions: token_hash, user_id, created_at, seen_at
+  token_hash=<32 bytes>, user_id=1, created_at=1794044422, seen_at=1794044422
+
+salt as sent:                     True
+sealed key as sent:               True
+auth secret stored anywhere:      False
+session token stored:             False
+session token hash = SHA-256(token): True

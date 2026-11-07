@@ -1,6 +1,6 @@
 # vault-share
 
-End-to-end encrypted file sharing. The browser encrypts a file before upload, and the key travels only in the link, after the `#`, which browsers never send. The server stores ciphertext and cannot read file contents or names. A link can expire, allow a set number of downloads, or burn after reading.
+End-to-end encrypted file sharing. The browser encrypts a file before upload, and the key travels only in the link, after the `#`, which browsers never send. The server stores ciphertext and cannot read file contents or names. A link can expire, allow a set number of downloads, or burn after reading. An optional account keeps a list of the files you shared, still without the server reading them.
 
 ![Sharing a file: upload, open the link, download once, the link is gone](docs/demo.gif)
 
@@ -34,11 +34,23 @@ sequenceDiagram
 
 The [specification](docs/SPEC.md) describes the scheme in full.
 
+## Accounts
+
+Sharing needs no account. With one, every file you share appears under My files, with its name, its link and a delete button.
+
+- **The password stays in the browser.** Argon2id turns it into a master key, from which the browser derives the secret it signs in with and the key that seals a random account key. The server hashes that secret again with Argon2id and stores the sealed account key; neither opens anything.
+- **My files.** For each file the browser seals the share secret, the link key and the delete token under the account key, bound to the file id. The server lists these entries; only your browser opens them, and through them the names.
+- **Sessions.** An HttpOnly `__Host-` cookie with SameSite=Strict, ending after an hour idle or a day in all. Between page loads the browser keeps the account key sealed under a key the server releases only to the live session.
+- **Two-factor sign-in.** Optional TOTP with any authenticator app, and ten one-time recovery codes.
+
+There is no password reset: a forgotten password loses the account and its list, while the links you shared keep working. `VAULT_SIGNUP=closed` turns sign-ups off.
+
 ## Security
 
 - **Browser hardening.** A strict Content Security Policy forbids inline script and eval, alongside HSTS, `no-referrer`, COOP, COEP and CORP.
 - **Server answers.** Missing files, expired files, used-up files and wrong tokens all get the same 404. Requests from other sites are refused, and the API answers only for its own host.
 - **Rate limits.** Each client, meaning one IPv4 address or one IPv6 /64, gets its own limits. Five wrong signatures lock that client out of a file for 15 minutes. A storage quota and a daily budget per client bound the storage, and a file takes one upload at a time.
+- **Sign-in.** Failed sign-ins are counted per client, per account and per known browser, so guessing from many addresses is bounded while the owner's own browsers keep working. A second-step code works once, and changes to how an account signs in ask for the password again.
 - **Supply chain.** Dependencies, CI actions and images are pinned by version or digest. The exception is the browser that Playwright installs in CI: its build follows the pinned Playwright release, and its system packages come from the runner. CI runs gosec, govulncheck, npm audit, Semgrep and a ZAP baseline scan, plus end-to-end tests on disk and on S3 and the security checks in [`scripts/`](scripts).
 - **Self-assessment.** The project was tested against the OWASP Top 10:2025: see the [test report](docs/security/TEST_REPORT.md), the [threat model](docs/security/THREAT_MODEL.md) and the [findings](docs/security/FINDINGS.md) fixed along the way.
 
@@ -50,7 +62,8 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 - **A leaked link is a leaked file.** A password slows offline guessing down, but cannot stop it.
 - **What the server sees.** It knows each file's size and when it was uploaded and downloaded.
 - **Limits are per address.** They count one IPv4 address or one IPv6 /64 as one client. An attacker with many addresses can fill the quota or load the CPU, which needs protection in front of the server.
-- **Deployment and accounts.** It runs as a single instance, with no user accounts and no file list.
+- **Accounts link files.** The server knows which files an account keeps and when they were shared, though not what they are. A captured account password opens all of them.
+- **Single instance.** It runs as one process; its rate limits and lockouts live in memory.
 
 ## Quick start
 

@@ -29,8 +29,8 @@ A zero-knowledge, end-to-end encrypted file sharing service: files are encrypted
 
 ### Nice to have
 
-- User accounts: Argon2id password hashing, HttpOnly session cookies, CSRF protection, TOTP two-factor authentication
-- Logged-in users can view and manage their own uploads
+- User accounts (M7): Argon2id password hashing, HttpOnly session cookies, CSRF protection, TOTP two-factor authentication
+- Logged-in users can view and manage their own uploads (M7, "My files")
 - Share multiple files at once
 
 ### Out of scope
@@ -67,10 +67,19 @@ Based on the public Firefox Send design. When implementing it, work through each
 3. Once verification succeeds, the server streams the ciphertext and atomically decrements the download count
 4. The browser decrypts while downloading and saves directly via the Streams API, without accumulating data in memory
 
+### Accounts (optional, D026)
+
+1. The browser derives `master = Argon2id(password, salt)` with a random salt per account, then with HKDF-SHA256 the `authSecret` it sends at sign-in and the `wrappingKey` it keeps
+2. A random 256-bit account key, sealed with AES-256-GCM under `wrappingKey`, is stored on the server; the server stores only an Argon2id hash of `authSecret` besides it, so neither the password nor anything that opens the account key reaches it
+3. For each file shared while signed in, the browser seals an entry under the account key, bound to the file id: the share secret, the link key and the delete token. "My files" lists the entries and their encrypted metadata; only the browser opens them
+4. Between page loads the browser keeps the account key sealed under a device key that the server derives from the session token, so it opens only while the session lasts
+5. Optional TOTP (RFC 6238) adds a second step at sign-in, with recovery codes (D029)
+
 ### Known limitations (to be documented in the threat model and README)
 
 - The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: strict CSP, reproducible builds, and candid documentation of the risk. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
 - A leaked link means a leaked file; this is inherent to link-based sharing
+- There is no password reset: the server cannot open an account key, so a forgotten password loses the account; shared links keep working
 
 ## 5. Architecture
 
@@ -78,7 +87,7 @@ Based on the public Firefox Send design. When implementing it, work through each
 Browser (React)                  Server (Go)                                                 Storage
 ┌──────────────┐      HTTPS      ┌──────────────────────────────────────────────────────┐
 │ crypto/      │────────────────▶│ Middleware: rate limiting, security headers, logging │
-│  Web Crypto  │ ciphertext only │ Handlers: upload, download, delete                   │──▶ SQLite or PostgreSQL (metadata)
+│  Web Crypto  │ ciphertext only │ Handlers: upload, download, delete, accounts         │──▶ SQLite or PostgreSQL (metadata)
 │  Streams API │◀────────────────│ Cleanup job (scheduled)                              │──▶ Local disk or S3-compatible storage (ciphertext)
 └──────────────┘                 └──────────────────────────────────────────────────────┘
 ```
@@ -99,15 +108,34 @@ files
   created_at       TIMESTAMP
   uploaded_at      TIMESTAMP NULL    -- set once the ciphertext is stored
   charge           INTEGER           -- bytes counted against the storage quota
+  user_id          INTEGER NULL      -- the account that keeps the file (D030)
+  entry            BLOB NULL         -- sealed by the browser under the account key
 
 download_tokens
   token_hash, file_id, expires_at
 
+users                                -- D026, D027, D029
+  id, username UNIQUE
+  salt                               -- the browser's Argon2id salt
+  auth_hash                          -- Argon2id of the auth secret, PHC string
+  sealed_key                         -- the account key under the password
+  totp_secret, totp_pending          -- sealed under a server key; NULL when off
+  totp_step, totp_failures, created_at
+
+sessions
+  token_hash, user_id, created_at, seen_at
+
+login_tickets                        -- a right password waiting for its code
+  token_hash, user_id, expires_at, attempts
+
+recovery_codes
+  user_id, code_hash
+
 audit_log
-  id, event, file_id, ip_hash, ua_hash, created_at
+  id, event, file_id, user_id, ip_hash, ua_hash, created_at
 ```
 
-The server does not know whether a file has a password (D019). The audit log stores the client address and user agent only as keyed hashes, balancing traceability and privacy (D018).
+The server does not know whether a file has a password (D019). The audit log stores the client address and user agent only as keyed hashes, balancing traceability and privacy (D018). Tokens, tickets and recovery codes are kept as SHA-256 hashes; the account password never reaches the server (D026).
 
 ## 7. API
 
@@ -119,6 +147,18 @@ The server does not know whether a file has a password (D019). The audit log sto
 | POST | `/api/v1/files/{id}/download` | Submit the challenge signature; returns a one-time download token |
 | GET | `/api/v1/files/{id}/content?token=` | Stream the ciphertext download |
 | DELETE | `/api/v1/files/{id}` | Delete using the delete token |
+| POST | `/api/v1/account` | Sign up with a username, the browser's salt, the auth secret and the sealed account key; starts a session |
+| POST | `/api/v1/account/salt` | The salt to derive with; a username without an account gets a stable one of its own |
+| POST | `/api/v1/session` | Sign in; returns a session, or a ticket when the account has a second step |
+| POST | `/api/v1/session/totp` | Complete a sign-in with a TOTP or recovery code |
+| GET | `/api/v1/session` | The signed-in account and the device key |
+| DELETE | `/api/v1/session` | Sign out |
+| POST | `/api/v1/account/password` | Change the password, which ends every other session |
+| DELETE | `/api/v1/account` | Delete the account and the files it keeps |
+| POST | `/api/v1/account/totp/setup` | Draw a TOTP secret for an authenticator app |
+| POST, DELETE | `/api/v1/account/totp` | Turn two-factor sign-in on or off |
+| GET | `/api/v1/account/files` | List the account's files with their sealed entries |
+| PUT | `/api/v1/account/files/{id}` | Keep a file in the account, with the session and its delete token |
 | GET | `/healthz` | Health check |
 
 All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexistent files, expired files and wrong tokens all return the same 404, so file existence is not revealed.
@@ -129,7 +169,8 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - Security response headers: strict CSP (no inline scripts), HSTS, X-Content-Type-Options, Referrer-Policy: no-referrer, Permissions-Policy
 - Rate limiting: per-client token bucket (one IPv4 address or one IPv6 /64, D017), with separate limits for uploads and download authentication
 - Lock a file for a period of time after repeated failed download authentication attempts
-- Requests from other sites are refused, and the API answers only for its own host (D022)
+- Requests from other sites are refused, and the API answers only for its own host (D022); session cookies are `__Host-`, HttpOnly and SameSite=Strict (D027, D028)
+- Sessions end after an hour without use or a day after sign-in; sign-in failures are counted per client, per account and per known browser (D027); second steps have their own lockout and cannot be replayed (D029)
 - Request body size limits and timeouts
 - Total storage quota and a per-client daily storage budget
 - File ids and tokens use cryptographically secure random numbers
@@ -147,7 +188,8 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 
 - Go unit and integration tests (including expiry, exhausted download counts, and race tests for concurrent download decrements)
 - Frontend crypto module unit tests: encrypting then decrypting yields the original plaintext; tampering with any byte makes decryption fail; truncated ciphertext makes decryption fail
-- End-to-end tests (Playwright): the full upload, share, download and burn-after-reading flow
+- End-to-end tests (Playwright): the full upload, share, download and burn-after-reading flow, and an account from sign-up through two-factor sign-in to deletion
+- Known test vectors for the account key derivation, computed with two independent implementations (D026), and the RFC 4226 and RFC 6238 vectors for TOTP
 - Known test vectors: verify HKDF and AES-GCM against standard test vectors
 
 ## 11. Deliverables
