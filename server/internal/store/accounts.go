@@ -97,10 +97,28 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 }
 
 // SetPassword replaces what the account's password protects: the browser's
-// salt, the hash of the auth secret and the sealed account key.
+// salt, the hash of the auth secret and the sealed account key. Sign-ins
+// waiting for their second step end with it, since they proved the old
+// password (F43).
 func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, authHash string, sealedKey []byte) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET salt = ?, auth_hash = ?, sealed_key = ? WHERE id = ?`, salt, authHash, sealedKey, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET salt = ?, auth_hash = ?, sealed_key = ? WHERE id = ?`, salt, authHash, sealedKey, userID); err != nil {
+		return err
+	}
+	if err := endTickets(ctx, tx, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// endTickets drops the account's sign-ins waiting for their second step.
+func endTickets(ctx context.Context, tx *sql.Tx, userID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM login_tickets WHERE user_id = ?`, userID)
 	return err
 }
 

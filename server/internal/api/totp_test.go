@@ -378,3 +378,46 @@ func TestTOTPAuditAndLogs(t *testing.T) {
 		}
 	}
 }
+
+// A sign-in waiting for its second step proved the password of that moment;
+// a password change, or two-factor sign-in turned off or on, ends it (F43).
+func TestChangesEndPendingSignIns(t *testing.T) {
+	e := newAccountEnv(t)
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	secret, _ := owner.enableTOTP(alice)
+	ticket := func(c creds) string {
+		var first secondStepResponse
+		e.browser().send(http.MethodPost, "/api/v1/session", loginRequest{Username: c.username, Auth: encoding.EncodeToString(c.auth)}, &first)
+		return first.Ticket
+	}
+	step := func(ticket, code string) string {
+		_, body := e.browser().send(http.MethodPost, "/api/v1/session/totp", secondStepRequest{Ticket: ticket, Code: code}, nil)
+		return errorCode(body)
+	}
+
+	old := ticket(alice)
+	next := newCreds("alice")
+	if status, body := owner.send(http.MethodPost, "/api/v1/account/password", passwordRequest{
+		Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
+		NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed), Code: e.code(secret, 0),
+	}, nil); status != http.StatusOK {
+		t.Fatalf("password change: %d %s", status, body)
+	}
+	e.advance(totp.Period)
+	if code := step(old, e.code(secret, 0)); code != "ticket_expired" {
+		t.Errorf("a ticket from before the password change: %q", code)
+	}
+
+	pending := ticket(next)
+	e.advance(totp.Period)
+	if status, body := owner.send(http.MethodDelete, "/api/v1/account/totp", totpRequest{
+		Auth: encoding.EncodeToString(next.auth), Code: e.code(secret, 0)}, nil); status != http.StatusOK {
+		t.Fatalf("turning it off: %d %s", status, body)
+	}
+	fresh, _ := owner.enableTOTP(next)
+	if code := step(pending, e.code(fresh, 0)); code != "ticket_expired" {
+		t.Errorf("a ticket from before two-factor sign-in was turned off and on: %q", code)
+	}
+}
