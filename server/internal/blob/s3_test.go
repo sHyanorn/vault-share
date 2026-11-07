@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,6 +206,26 @@ func TestS3UploadsFailWhenTheServiceStopsReading(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a service that stopped reading held the upload")
+	}
+}
+
+func TestS3PutOutlivesACancellationAfterTheBody(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stored atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		// The client hangs up once the whole body has arrived, as HTTP/1.1
+		// servers only notice then, while the service stores the object.
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+		stored.Store(true)
+		w.Header().Set("ETag", `"etag"`)
+	}))
+	defer srv.Close()
+	s := &S3{client: newS3Client(S3Config{Endpoint: srv.URL, Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true}), bucket: "vault"}
+	if err := s.Put(ctx, newID(), 3, strings.NewReader("abc")); err != nil || !stored.Load() {
+		t.Errorf("Put = %v with the object stored: %v", err, stored.Load())
 	}
 }
 
