@@ -36,6 +36,9 @@ Issues found during development, how they were found and how they were fixed. Se
 | F30 | 2026-11-07 | Medium | Independent review of M6 | Stored content stayed unchanged only if the S3 service honoured If-None-Match, which nothing checked | Fixed |
 | F31 | 2026-11-07 | Low | Independent review of M6 | A versioned bucket kept deleted ciphertext as old versions | Fixed |
 | F32 | 2026-11-07 | Low | Independent review of M6 | A made-up download token cost an S3 GET before it was refused | Fixed |
+| F33 | 2026-11-07 | Medium | Adversarial verification of F26 to F32 | Deleting or purging a file mid-upload released its quota charge while its bytes kept arriving | Fixed |
+| F34 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | A client that hung up right after its last byte left a stored object behind a failed upload | Fixed |
+| F35 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | An S3 service that stopped reading mid-upload held the request and its file for good | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -145,7 +148,7 @@ Issues found during development, how they were found and how they were fixed. Se
 
 ## F27 Deleted ciphertext could stay in the bucket (Medium)
 - Impact: the S3 store held back a Delete while the object was being read, ran it when the last reader closed and dropped its error. A failed delete, or vaultd stopping during a last download, left the object with no record and no rule that would ever remove it. The review left a 40 MiB object behind by stopping vaultd mid-download, and injected 503 errors went unlogged. Burn after reading, expiry and the owner's delete could fail silently, and the bytes escaped the quota. The disk store had a smaller gap: burning deletes the record first, so a failed file deletion was logged and then forgotten.
-- Fix: the S3 store deletes at once and returns the error. A download in progress still gets every byte, which the store contract checks on Versity S3 Gateway and RustFS; AWS documents that updates to a key are atomic and a concurrent reader never gets partial data. Every cleanup run also lists the stored ids and deletes any without a record. Its first run against the review's bucket removed the 40 MiB object.
+- Fix: the S3 store deletes at once and returns the error. A download in progress still gets every byte, which the store contract checks on Versity S3 Gateway and RustFS; AWS documents that updates to a key are atomic and a concurrent reader never gets partial data. Cleanup also lists the stored ids once an hour and deletes any without a record; its first run against the review's bucket removed the 40 MiB object.
 
 ## F28 No time limit on S3 requests (Medium)
 - Impact: the SDK's HTTP client waited for a response forever. Against a service that accepted connections and never answered, calls hung, and because the cleanup job ran without a deadline, one stalled call stopped it for good: expired files stayed, download tokens never expired and the audit log was no longer trimmed.
@@ -166,3 +169,15 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F32 S3 GET before the token check (Low)
 - Impact: the content endpoint opened the object before it checked the download token, so each request with a made-up token for a known file id made vaultd fetch from S3, which costs requests and egress.
 - Fix: the token is checked first, then the object is opened, then the token is consumed, so F4 stays fixed.
+
+## F33 Deletes during an upload released its quota (Medium)
+- Impact: the quota charge belongs to the record, while F26's one-upload rule only covered the upload. An owner delete, or the purge of a record that had waited an hour for its content, released the charge while that record's body kept arriving. Six rounds of creating a 64 MiB record, sending 60 MiB and deleting it held 360 MiB of temp files against a 128 MiB quota, which still accepted a new 64 MiB record. The same purge cut legitimate uploads short once `VAULT_MAX_FILE_BYTES` exceeded about 1.7 GiB, the most that 512 KiB/s moves in an hour.
+- Fix: uploads, owner deletes and cleanup claim the file first (D025). A delete during an upload answers 409, cleanup leaves the file for a later run, and the upload reads its record again under the claim. Measured afterwards: the delete got 409 and the next 64 MiB create was refused for lack of quota.
+
+## F34 Hang-up after the last byte (Low)
+- Impact: an HTTP/1.1 server notices that a client has gone only after the body has been read, so the cancellation of F29's case landed during the S3 request: Put failed with the object stored, the record stayed unmarked, a retry got 409 and the share could never complete. Each such hang-up also wrote an ERROR line. Cleanup removed both after an hour.
+- Fix: the caller's context governs only the body, which is checked before its last bytes go out; the request then runs to its answer. Measured afterwards: eight hang-ups after the last byte gave eight completed shares and no error lines.
+
+## F35 Stalled writes to S3 (Low)
+- Impact: F28's response timeout starts only once a body has been sent, and the transport had no write timeout, so a service that stopped reading mid-upload held the request, and with F33 the file's claim, for good. The file answered 409 and cleanup skipped it.
+- Fix: each write to the service has a minute, through a connection wrapper like the one the SDK uses for read timeouts; reads keep no deadline, so slow downloads are unaffected. A test against a service that reads nothing fails the upload in a fraction of a second, where it hung before.
