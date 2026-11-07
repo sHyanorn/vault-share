@@ -2,11 +2,14 @@ package blob
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,13 +45,57 @@ type S3 struct {
 	bucket string
 }
 
-// NewS3 connects to the bucket and checks that it is reachable.
+// NewS3 connects to the bucket and checks what the store relies on: deleted
+// objects leave no old versions, and no write replaces an existing object.
 func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket}
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err != nil {
 		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
 	}
+	if err := s.checkVersioning(ctx); err != nil {
+		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
+	}
+	if err := s.checkConditionalWrites(ctx); err != nil {
+		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
+	}
 	return s, nil
+}
+
+// checkVersioning refuses a bucket that has ever kept versions, where a
+// deleted file would stay readable as an old version.
+func (s *S3) checkVersioning(ctx context.Context) error {
+	out, err := s.client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: &s.bucket})
+	var api smithy.APIError
+	switch {
+	case errors.As(err, &api) && api.ErrorCode() == "NotImplemented":
+		return nil // a service without versioning at all
+	case err != nil:
+		return fmt.Errorf("versioning: %w", err)
+	case out.Status != "":
+		return fmt.Errorf("versioning is %s, so deleted files would stay as old versions", out.Status)
+	}
+	return nil
+}
+
+// checkConditionalWrites writes a probe twice: a service that ignores
+// If-None-Match would let stored content be replaced. A probe that a failed
+// delete leaves behind has no record, so cleanup removes it.
+func (s *S3) checkConditionalWrites(ctx context.Context) error {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b) // crypto/rand never fails on supported platforms
+	id := base64.RawURLEncoding.EncodeToString(b)
+	if err := s.Put(ctx, id, 1, strings.NewReader("1")); err != nil {
+		return fmt.Errorf("probe write: %w", err)
+	}
+	defer func() { _ = s.Delete(ctx, id) }()
+	switch err := s.Put(ctx, id, 1, strings.NewReader("2")); {
+	case errors.Is(err, ErrExists):
+		return nil
+	case err == nil:
+		return errors.New("the service replaced an object despite If-None-Match, so stored content could change")
+	default:
+		return fmt.Errorf("probe write: %w", err)
+	}
 }
 
 // responseTimeout bounds the wait for a response once a request is sent. The

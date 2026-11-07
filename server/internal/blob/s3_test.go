@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +91,69 @@ func TestS3RequestsTimeOut(t *testing.T) {
 		func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if elapsed := time.Since(start); err == nil || elapsed > 2*time.Second {
 		t.Errorf("a silent service held the request for %v: %v", elapsed, err)
+	}
+}
+
+// fakeS3 answers just enough of the S3 API for the checks of NewS3.
+type fakeS3 struct {
+	versioning  string // a versioning status, or "unsupported"
+	conditional bool   // whether If-None-Match is honoured
+
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case r.Method == http.MethodGet && r.URL.Query().Has("versioning"):
+		if f.versioning == "unsupported" {
+			w.WriteHeader(http.StatusNotImplemented)
+			io.WriteString(w, `<Error><Code>NotImplemented</Code><Message>not here</Message></Error>`)
+			return
+		}
+		fmt.Fprintf(w, `<VersioningConfiguration><Status>%s</Status></VersioningConfiguration>`, f.versioning)
+	case r.Method == http.MethodPut:
+		io.Copy(io.Discard, r.Body)
+		if f.conditional && f.keys[r.URL.Path] && r.Header.Get("If-None-Match") == "*" {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			io.WriteString(w, `<Error><Code>PreconditionFailed</Code><Message>exists</Message></Error>`)
+			return
+		}
+		f.keys[r.URL.Path] = true
+		w.Header().Set("ETag", `"etag"`)
+	case r.Method == http.MethodDelete:
+		delete(f.keys, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func TestNewS3ChecksTheBucket(t *testing.T) {
+	cases := []struct {
+		versioning  string
+		conditional bool
+		refusal     string
+	}{
+		{"", true, ""},
+		{"unsupported", true, ""},
+		{"Enabled", true, "versioning is Enabled"},
+		{"Suspended", true, "versioning is Suspended"},
+		{"", false, "If-None-Match"},
+	}
+	for _, c := range cases {
+		fake := &fakeS3{versioning: c.versioning, conditional: c.conditional, keys: map[string]bool{}}
+		srv := httptest.NewServer(fake)
+		_, err := NewS3(context.Background(), S3Config{Endpoint: srv.URL, Region: "us-east-1", Bucket: "vault", AccessKeyID: "k", SecretAccessKey: "s"})
+		srv.Close()
+		switch {
+		case c.refusal == "" && err != nil:
+			t.Errorf("versioning %q, conditional %v: %v", c.versioning, c.conditional, err)
+		case c.refusal != "" && (err == nil || !strings.Contains(err.Error(), c.refusal)):
+			t.Errorf("versioning %q, conditional %v: want %q, got %v", c.versioning, c.conditional, c.refusal, err)
+		case len(fake.keys) != 0:
+			t.Errorf("versioning %q, conditional %v: probe left behind", c.versioning, c.conditional)
+		}
 	}
 }
 
