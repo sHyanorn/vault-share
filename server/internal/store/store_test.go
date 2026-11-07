@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -183,27 +184,22 @@ func TestConsumeDownloadIsAtomic(t *testing.T) {
 
 	const workers = 64
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	granted := 0
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	var granted atomic.Int64
+	for range workers {
+		wg.Go(func() {
 			_, ok, err := s.ConsumeDownload(ctx, "file-a", t0)
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			if ok {
-				mu.Lock()
-				granted++
-				mu.Unlock()
+				granted.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
-	if granted != 3 {
-		t.Errorf("%d downloads granted, want 3", granted)
+	if n := granted.Load(); n != 3 {
+		t.Errorf("%d downloads granted, want 3", n)
 	}
 	f, _ := s.GetFile(ctx, "file-a")
 	if f.DownloadsLeft != 0 {
@@ -397,12 +393,9 @@ func TestQuotaIsAtomic(t *testing.T) {
 	quota := 5 * charge
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	created := 0
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	var created atomic.Int64
+	for i := range 32 {
+		wg.Go(func() {
 			g := sample(fmt.Sprintf("file-%d", i))
 			ok, err := s.CreateFile(ctx, g, quota)
 			if err != nil {
@@ -410,15 +403,13 @@ func TestQuotaIsAtomic(t *testing.T) {
 				return
 			}
 			if ok {
-				mu.Lock()
-				created++
-				mu.Unlock()
+				created.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
-	if created != 5 {
-		t.Errorf("%d created under a quota for 5", created)
+	if n := created.Load(); n != 5 {
+		t.Errorf("%d created under a quota for 5", n)
 	}
 	if used, _ := s.Usage(ctx); used != quota {
 		t.Errorf("usage %d, want %d", used, quota)

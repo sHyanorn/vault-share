@@ -93,8 +93,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 
 	if u, err := url.Parse(cfg.BaseURL); err != nil {
 		fail("BASE_URL", err)
-	} else if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-		u.User != nil || strings.ContainsAny(cfg.BaseURL, "?#") {
+	} else if !bareHTTPURL(u, cfg.BaseURL) {
 		fail("BASE_URL", errors.New("must be an http(s) origin with an optional path"))
 	} else {
 		cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
@@ -126,12 +125,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if item == "" {
 			continue
 		}
-		prefix, err := parseProxy(item)
+		proxy, err := parseProxy(item)
 		if err != nil {
 			fail("TRUSTED_PROXIES", err)
 			continue
 		}
-		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
+		cfg.TrustedProxies = append(cfg.TrustedProxies, proxy)
 	}
 
 	cfg.Storage = get("STORAGE", "disk")
@@ -180,13 +179,20 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	return cfg, errors.Join(errs...)
 }
 
+// bareHTTPURL reports whether u, parsed from raw, is an http(s) URL with a
+// host and no credentials, query or fragment. raw is searched for ? and # so
+// that an empty query or fragment, as in "https://h?", is refused too.
+func bareHTTPURL(u *url.URL, raw string) bool {
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil &&
+		!strings.ContainsAny(raw, "?#")
+}
+
 // checkEndpoint accepts an http(s) URL with no credentials, query or
 // fragment. Plain http must stay on this machine or reach a single-label
 // name, such as a Compose service; anything further needs TLS.
 func checkEndpoint(endpoint string) error {
 	u, err := url.Parse(endpoint)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
-		strings.ContainsAny(endpoint, "?#") {
+	if err != nil || !bareHTTPURL(u, endpoint) {
 		return errors.New("must be an http(s) URL")
 	}
 	if u.Scheme == "http" {

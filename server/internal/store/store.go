@@ -224,12 +224,7 @@ func (s *Store) GetFile(ctx context.Context, id string) (File, error) {
 
 // FileExists reports whether id has a record, live or not.
 func (s *Store) FileExists(ctx context.Context, id string) (bool, error) {
-	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM files WHERE id = ?`, id).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
+	return s.exists(ctx, `SELECT 1 FROM files WHERE id = ?`, id)
 }
 
 // MarkUploaded records that the content is stored. It reports false when the
@@ -289,14 +284,9 @@ func (s *Store) CreateDownloadToken(ctx context.Context, fileID string, tokenHas
 // DownloadTokenValid reports whether the token is valid for the file at now,
 // without using it up.
 func (s *Store) DownloadTokenValid(ctx context.Context, fileID string, tokenHash []byte, now time.Time) (bool, error) {
-	var one int
-	err := s.db.QueryRowContext(ctx,
+	return s.exists(ctx,
 		`SELECT 1 FROM download_tokens WHERE token_hash = ? AND file_id = ? AND expires_at > ?`,
-		tokenHash, fileID, now.Unix()).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
+		tokenHash, fileID, now.Unix())
 }
 
 // ConsumeDownloadToken deletes the token and reports whether it was valid for the file at now.
@@ -352,6 +342,16 @@ func (s *Store) changed(res sql.Result, err error) (bool, error) {
 	return n > 0, err
 }
 
+// exists reports whether query, a SELECT 1, returns a row.
+func (s *Store) exists(ctx context.Context, query string, args ...any) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // AuditEntry is one security-relevant event. Client identifiers arrive
 // already hashed; the store never sees an address.
 type AuditEntry struct {
@@ -365,7 +365,7 @@ type AuditEntry struct {
 func (s *Store) RecordAudit(ctx context.Context, e AuditEntry) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log (event, file_id, ip_hash, ua_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		e.Event, nullIfEmpty(e.FileID), e.IPHash, e.UAHash, e.At.Unix())
+		e.Event, sql.NullString{String: e.FileID, Valid: e.FileID != ""}, e.IPHash, e.UAHash, e.At.Unix())
 	return err
 }
 
@@ -406,11 +406,4 @@ func (s *Store) TrimAudit(ctx context.Context, max int) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
