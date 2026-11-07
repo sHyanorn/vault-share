@@ -1,6 +1,6 @@
 # Security Policy
 
-vault-share is an end-to-end encrypted file sharing service. Its security documentation lives in [docs/security](docs/security): the [threat model](docs/security/THREAT_MODEL.md), the [test report](docs/security/TEST_REPORT.md) and the [findings](docs/security/FINDINGS.md) fixed so far.
+vault-share is an end-to-end encrypted file sharing service. Its security documentation lives in [docs/security](docs/security): the [threat model](docs/security/THREAT_MODEL.md), the [test report](docs/security/TEST_REPORT.md) and the [findings](docs/security/FINDINGS.md) so far.
 
 ## Supported Versions
 
@@ -31,7 +31,7 @@ Each confirmed issue is recorded in [FINDINGS.md](docs/security/FINDINGS.md) and
 In scope:
 
 - code in this repository, and instances you run from it yourself
-- anything that lets the server or the network learn file contents, file names or keys
+- anything that lets the server or the network read file contents or file names, or learn the secret in a link
 - ways around download limits, expiry, delete tokens, rate limits or the storage quota
 
 Out of scope:
