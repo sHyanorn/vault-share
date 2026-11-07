@@ -37,6 +37,8 @@ type browser struct {
 	e       *env
 	addr    string
 	cookies map[string]string
+	// headers go on every request, as a browser's Fetch Metadata would.
+	headers map[string]string
 	last    http.Header
 }
 
@@ -62,6 +64,9 @@ func (b *browser) send(method, path string, body, out any) (int, []byte) {
 		b.e.t.Fatal(err)
 	}
 	req.Header.Set("X-Forwarded-For", b.addr)
+	for name, value := range b.headers {
+		req.Header.Set(name, value)
+	}
 	for name, value := range b.cookies {
 		req.AddCookie(&http.Cookie{Name: name, Value: value})
 	}
