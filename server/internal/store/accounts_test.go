@@ -141,7 +141,7 @@ func TestDeleteUserEndsItsSessions(t *testing.T) {
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
 	s.CreateSession(ctx, []byte("token"), id, t0, 10)
-	if err := s.DeleteUser(ctx, id); err != nil {
+	if err := s.DeleteUser(ctx, id, t0); err != nil {
 		t.Fatal(err)
 	}
 	var n int

@@ -104,10 +104,24 @@ func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, auth
 	return err
 }
 
-// DeleteUser removes the account and, through the cascade, its sessions.
-func (s *Store) DeleteUser(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID)
-	return err
+// DeleteUser removes the account and, through the cascade, its sessions
+// and second-step state. Its files expire at now, so their links stop
+// working and cleanup removes them; a download already granted finishes.
+func (s *Store) DeleteUser(ctx context.Context, userID int64, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE files SET expires_at = MIN(expires_at, ?), user_id = NULL, entry = NULL WHERE user_id = ?`,
+		now.Unix(), userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateSession stores a session and ends all but the newest keep sessions

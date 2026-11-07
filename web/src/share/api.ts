@@ -96,7 +96,7 @@ export function deleteFile(id: string, ownerToken: string): Promise<void> {
   return request('DELETE', `/files/${id}`, { ownerToken })
 }
 
-async function request<T>(
+export async function request<T>(
   method: string,
   path: string,
   options: { body?: unknown; ownerToken?: string } = {},
