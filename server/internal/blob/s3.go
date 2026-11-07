@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -100,10 +101,23 @@ func (s *S3) checkConditionalWrites(ctx context.Context) error {
 	}
 }
 
-// responseTimeout bounds the wait for a response once a request is sent. The
-// bodies of uploads and downloads stream at the client's pace, and a client
-// that goes away cancels its request.
-var responseTimeout = time.Minute
+// responseTimeout bounds the wait for a response once a request is sent, and
+// writeTimeout each write to the service, so a service that stops reading an
+// upload cannot hold it. Reads keep no deadline: a download waits on its
+// client, and a client that goes away cancels the request.
+var (
+	responseTimeout = time.Minute
+	writeTimeout    = time.Minute
+)
+
+type writeTimeoutConn struct{ net.Conn }
+
+func (c writeTimeoutConn) Write(p []byte) (int, error) {
+	if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Write(p)
+}
 
 func newS3Client(cfg S3Config) *s3.Client {
 	key, secret := cfg.AccessKeyID, cfg.SecretAccessKey
@@ -111,6 +125,14 @@ func newS3Client(cfg S3Config) *s3.Client {
 		Region: cfg.Region,
 		HTTPClient: awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
 			t.ResponseHeaderTimeout = responseTimeout
+			dial := t.DialContext
+			t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := dial(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				return writeTimeoutConn{conn}, nil
+			}
 		}),
 		Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
 			return aws.Credentials{AccessKeyID: key, SecretAccessKey: secret, Source: "vaultd configuration"}, nil
