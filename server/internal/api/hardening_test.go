@@ -375,8 +375,9 @@ func TestLockoutTableStaysBounded(t *testing.T) {
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	l := newLockouts(lockoutFailures, func() time.Time { return now })
 	fill(t, 3*maxEntries, &now, func(key string) {
-		l.admit(key + "|file")
-		l.failed(key + "|file")
+		if try, _ := l.admit(key + "|file"); try != nil {
+			try.fail()
+		}
 	})
 	if n := len(l.table.entries); n > maxEntries {
 		t.Errorf("%d entries, cap %d", n, maxEntries)
@@ -384,14 +385,14 @@ func TestLockoutTableStaysBounded(t *testing.T) {
 	// Below the cap nothing is evicted: a lockout holds.
 	small := newLockouts(lockoutFailures, func() time.Time { return now })
 	for i := 0; i < lockoutFailures; i++ {
-		small.admit("attacker|file")
-		small.failed("attacker|file")
+		try, _ := small.admit("attacker|file")
+		try.fail()
 	}
 	for i := 0; i < 1000; i++ {
-		small.admit(strconv.Itoa(i) + "|file")
-		small.failed(strconv.Itoa(i) + "|file")
+		try, _ := small.admit(strconv.Itoa(i) + "|file")
+		try.fail()
 	}
-	if small.admit("attacker|file") {
+	if try, _ := small.admit("attacker|file"); try != nil {
 		t.Error("lockout lost below the cap")
 	}
 }

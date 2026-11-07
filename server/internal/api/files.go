@@ -264,22 +264,23 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	now := h.now()
 	client := clientFrom(ctx)
 	bucket := bucketFrom(ctx)
-	lockKey := bucket + "|" + f.ID
-	if !h.locks.admit(lockKey) {
+	try, _ := h.locks.admit(bucket + "|" + f.ID)
+	if try == nil {
 		notFound(w, r)
 		return
 	}
+	defer try.end()
 	mac := hmac.New(sha256.New, f.AuthKey)
 	mac.Write(challenge)
 	if !h.challenges.valid(f.ID, challenge, now) || !hmac.Equal(mac.Sum(nil), signature) {
 		h.audit.Record(ctx, audit.DownloadDenied, f.ID, client)
-		if h.locks.failed(lockKey) {
+		if try.fail() {
 			h.audit.Record(ctx, audit.ClientLocked, f.ID, client)
 		}
 		notFound(w, r)
 		return
 	}
-	h.locks.passed(lockKey, false)
+	try.pass(false)
 	left, granted, err := h.store.ConsumeDownload(ctx, f.ID, now)
 	if err != nil {
 		h.internalError(w, "consume download", err)
