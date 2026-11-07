@@ -20,8 +20,8 @@ func TestLogsNeverContainSecrets(t *testing.T) {
 	m, _ := e.meta(sh.id)
 	dl, _ := e.download(sh.id, m.Challenge, sign(sh.authKey, m.Challenge))
 	e.content(sh.id, dl.Token)
-	e.download(sh.id, m.Challenge, sign(randomContent(32), m.Challenge)) // denied
-	e.upload(sh, "Bearer-looking-garbage", sh.content)                   // bad owner token
+	e.download(sh.id, m.Challenge, sign(randomBytes(32), m.Challenge)) // denied
+	e.upload(sh, "Bearer-looking-garbage", sh.content)                 // bad owner token
 	e.content(sh.id, "garbage-token")
 	e.remove(sh.id, sh.owner)
 
