@@ -38,33 +38,14 @@ func TestValidID(t *testing.T) {
 
 func TestInvalidIDsNeverTouchTheFilesystem(t *testing.T) {
 	d, root := newDisk(t)
-	ctx := context.Background()
-	for _, bad := range []string{"../escape", "AAAAAAAAAAAAAAAAAAAAA"} {
-		if err := d.Put(ctx, bad, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("Put(%q): %v", bad, err)
-		}
-		if _, err := d.Open(ctx, bad); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("Open(%q): %v", bad, err)
-		}
-		if err := d.Delete(ctx, bad); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("Delete(%q): %v", bad, err)
-		}
+	// The contract checks what every operation returns for an invalid id;
+	// this checks that a refused write left nothing outside the root.
+	if err := d.Put(context.Background(), "../escape", 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("Put: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "..", "escape")); err == nil {
 		t.Error("a file escaped the root")
 	}
-}
-
-type failingReader struct{ n int }
-
-// Read delivers n bytes in total, then fails as a dropped connection does.
-func (r *failingReader) Read(p []byte) (int, error) {
-	if r.n <= 0 {
-		return 0, errors.New("connection reset")
-	}
-	n := min(len(p), r.n)
-	r.n -= n
-	return n, nil
 }
 
 func TestIDsListOnlyBlobs(t *testing.T) {

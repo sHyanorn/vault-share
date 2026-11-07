@@ -3,7 +3,6 @@ package blob
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -41,7 +40,7 @@ func (d *Disk) Put(ctx context.Context, id string, size int64, r io.Reader) erro
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
-	tmpName := tmpDir + "/upload-" + randomSuffix()
+	tmpName := tmpDir + "/upload-" + rand.Text()
 	tmp, err := d.root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -135,12 +134,4 @@ func (d *Disk) syncDir() error {
 	}
 	defer f.Close()
 	return f.Sync()
-}
-
-func randomSuffix() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		panic(err) // crypto/rand never fails on supported platforms
-	}
-	return hex.EncodeToString(b)
 }
