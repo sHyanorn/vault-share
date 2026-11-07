@@ -39,7 +39,7 @@ func testStore(t *testing.T, s Store) {
 			if err == nil {
 				rc.Close()
 			}
-			t.Errorf("content stored after a failed Put: %v", err)
+			t.Errorf("Open: want ErrNotFound, got %v", err)
 		}
 	}
 
@@ -237,4 +237,17 @@ func (c *cancellingReader) Read(p []byte) (int, error) {
 		c.cancel()
 	}
 	return n, err
+}
+
+// failingReader delivers n bytes in total, then fails as a dropped connection
+// does.
+type failingReader struct{ n int }
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.n <= 0 {
+		return 0, errors.New("connection reset")
+	}
+	n := min(len(p), r.n)
+	r.n -= n
+	return n, nil
 }
