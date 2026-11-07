@@ -357,6 +357,8 @@ func (s *Store) exists(ctx context.Context, query string, args ...any) (bool, er
 type AuditEntry struct {
 	Event  string
 	FileID string
+	// UserID names the account; 0 means none.
+	UserID int64
 	IPHash []byte
 	UAHash []byte
 	At     time.Time
@@ -364,15 +366,17 @@ type AuditEntry struct {
 
 func (s *Store) RecordAudit(ctx context.Context, e AuditEntry) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO audit_log (event, file_id, ip_hash, ua_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		e.Event, sql.NullString{String: e.FileID, Valid: e.FileID != ""}, e.IPHash, e.UAHash, e.At.Unix())
+		`INSERT INTO audit_log (event, file_id, user_id, ip_hash, ua_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.Event, sql.NullString{String: e.FileID, Valid: e.FileID != ""}, sql.NullInt64{Int64: e.UserID, Valid: e.UserID != 0},
+		e.IPHash, e.UAHash, e.At.Unix())
 	return err
 }
 
 // RecentAudit returns the newest entries, newest first.
 func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT event, COALESCE(file_id, ''), ip_hash, ua_hash, created_at FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+		`SELECT event, COALESCE(file_id, ''), COALESCE(user_id, 0), ip_hash, ua_hash, created_at
+		FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +385,7 @@ func (s *Store) RecentAudit(ctx context.Context, limit int) ([]AuditEntry, error
 	for rows.Next() {
 		var e AuditEntry
 		var at int64
-		if err := rows.Scan(&e.Event, &e.FileID, &e.IPHash, &e.UAHash, &at); err != nil {
+		if err := rows.Scan(&e.Event, &e.FileID, &e.UserID, &e.IPHash, &e.UAHash, &at); err != nil {
 			return nil, err
 		}
 		e.At = time.Unix(at, 0).UTC()

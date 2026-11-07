@@ -15,29 +15,36 @@ type Budget struct {
 	Burst     int
 }
 
-// Limits are the per-client budgets. Uploads and download authentication
-// get their own pools on top of the general one, as SPEC section 8 asks.
-// Storage counts bytes charged against the quota rather than requests.
+// Limits are the per-client budgets. Uploads, download authentication,
+// sign-up and sign-in get their own pools on top of the general one, as
+// SPEC section 8 asks. Storage counts bytes charged against the quota
+// rather than requests.
 type Limits struct {
 	General  Budget
 	Create   Budget
 	Download Budget
 	Storage  Budget
+	Signup   Budget
+	Login    Budget
 }
 
 // DefaultLimits suit a small public instance. The storage budget lets one
 // client reserve 4 GiB a day, so filling the default 20 GiB quota takes
-// several clients rather than one.
+// several clients rather than one. A client may open five accounts an hour;
+// the sign-in budget covers the salt lookup, the sign-in and the account
+// changes that ask for the password again.
 var DefaultLimits = Limits{
 	General:  Budget{PerMinute: 120, Burst: 60},
 	Create:   Budget{PerMinute: 10, Burst: 10},
 	Download: Budget{PerMinute: 30, Burst: 15},
 	Storage:  Budget{PerMinute: float64(4<<30) / (24 * 60), Burst: 4 << 30},
+	Signup:   Budget{PerMinute: 5.0 / 60, Burst: 5},
+	Login:    Budget{PerMinute: 10, Burst: 20},
 }
 
 const (
-	// A client that fails download authentication this often for one file
-	// is refused that file for lockoutPeriod.
+	// A key that fails lockoutFailures times (fewer or more where a caller
+	// says so) within lockoutWindow is refused for lockoutPeriod.
 	lockoutFailures = 5
 	lockoutWindow   = 15 * time.Minute
 	lockoutPeriod   = 15 * time.Minute
@@ -166,11 +173,12 @@ func rateLimit(set *limiterSet) func(http.Handler) http.Handler {
 	}
 }
 
-// lockouts counts failed download authentications per client and file.
+// lockouts counts failures per key, such as a client and a file.
 type lockouts struct {
-	mu    sync.Mutex
-	table table[*lockoutEntry]
-	now   func() time.Time
+	mu       sync.Mutex
+	table    table[*lockoutEntry]
+	failures int
+	now      func() time.Time
 }
 
 type lockoutEntry struct {
@@ -179,27 +187,35 @@ type lockoutEntry struct {
 	until    time.Time
 }
 
-func newLockouts(now func() time.Time) *lockouts {
+func newLockouts(failures int, now func() time.Time) *lockouts {
 	stale := func(e *lockoutEntry, now time.Time) bool {
 		return now.After(e.until) && now.Sub(e.first) > lockoutWindow
 	}
-	return &lockouts{table: newTable(stale), now: now}
+	return &lockouts{table: newTable(stale), failures: failures, now: now}
 }
 
-// locked reports whether the client is currently refused the file.
-func (l *lockouts) locked(client, fileID string) bool {
+// locked reports whether key is currently refused.
+func (l *lockouts) locked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry, ok := l.table.entries[client+"|"+fileID]
+	entry, ok := l.table.entries[key]
 	return ok && l.now().Before(entry.until)
 }
 
+// reset forgets key's failures; a refusal in force stays.
+func (l *lockouts) reset(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if entry, ok := l.table.entries[key]; ok && !l.now().Before(entry.until) {
+		delete(l.table.entries, key)
+	}
+}
+
 // failed records a failure and reports whether it triggered a lockout.
-func (l *lockouts) failed(client, fileID string) bool {
+func (l *lockouts) failed(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	key := client + "|" + fileID
 	entry, ok := l.table.entries[key]
 	if !ok || now.Sub(entry.first) > lockoutWindow {
 		if !ok {
@@ -209,7 +225,7 @@ func (l *lockouts) failed(client, fileID string) bool {
 		l.table.entries[key] = entry
 	}
 	entry.failures++
-	if entry.failures == lockoutFailures {
+	if entry.failures == l.failures {
 		entry.until = now.Add(lockoutPeriod)
 		return true
 	}

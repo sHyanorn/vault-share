@@ -45,6 +45,11 @@ type Config struct {
 	Storage string
 	// S3 names the bucket when Storage is "s3" (VAULT_S3_*).
 	S3 S3
+	// SignupClosed refuses new accounts (VAULT_SIGNUP=closed); the default
+	// is open.
+	SignupClosed bool
+	// MaxAccounts caps the number of accounts (VAULT_MAX_ACCOUNTS).
+	MaxAccounts int
 }
 
 // S3 is an S3-compatible bucket that belongs to vaultd alone.
@@ -145,6 +150,20 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			continue
 		}
 		cfg.TrustedProxies = append(cfg.TrustedProxies, proxy)
+	}
+
+	switch get("SIGNUP", "open") {
+	case "open":
+	case "closed":
+		cfg.SignupClosed = true
+	default:
+		fail("SIGNUP", errors.New(`must be "open" or "closed"`))
+	}
+
+	if n, err := strconv.Atoi(get("MAX_ACCOUNTS", "10000")); err != nil || n < 1 || n > 10_000_000 {
+		fail("MAX_ACCOUNTS", errors.New("must be a whole number from 1 to 10000000"))
+	} else {
+		cfg.MaxAccounts = n
 	}
 
 	cfg.Storage = get("STORAGE", "disk")

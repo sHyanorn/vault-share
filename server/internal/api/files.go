@@ -76,7 +76,7 @@ type createResponse struct {
 // authorizes the content upload and early deletion.
 func (h *files) create(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
-	if !h.decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	meta, err := encoding.DecodeString(req.Meta)
@@ -247,7 +247,7 @@ type downloadResponse struct {
 // when the stream finishes, so an interrupted download cannot be repeated.
 func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	var req downloadRequest
-	if !h.decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	challenge, okChallenge := decodeFixed(req.Challenge, challengeBytes)
@@ -264,7 +264,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	now := h.now()
 	client := clientFrom(ctx)
 	bucket := bucketFrom(ctx)
-	if h.locks.locked(bucket, f.ID) {
+	if h.locks.locked(bucket + "|" + f.ID) {
 		notFound(w, r)
 		return
 	}
@@ -272,7 +272,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	mac.Write(challenge)
 	if !h.challenges.valid(f.ID, challenge, now) || !hmac.Equal(mac.Sum(nil), signature) {
 		h.audit.Record(ctx, audit.DownloadDenied, f.ID, client)
-		if h.locks.failed(bucket, f.ID) {
+		if h.locks.failed(bucket + "|" + f.ID) {
 			h.audit.Record(ctx, audit.ClientLocked, f.ID, client)
 		}
 		notFound(w, r)
@@ -449,7 +449,7 @@ func (h *files) ownerFile(w http.ResponseWriter, r *http.Request) (store.File, b
 	return f, true
 }
 
-func (h *files) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

@@ -343,6 +343,7 @@ func TestAuditLog(t *testing.T) {
 	entries := []AuditEntry{
 		{Event: "file.created", FileID: "file-a", IPHash: []byte{1}, UAHash: []byte{2}, At: t0},
 		{Event: "file.purged", At: t0.Add(time.Hour)},
+		{Event: "login.succeeded", UserID: 7, At: t0.Add(2 * time.Hour)},
 	}
 	for _, e := range entries {
 		if err := s.RecordAudit(ctx, e); err != nil {
@@ -353,14 +354,14 @@ func TestAuditLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Event != "file.purged" || got[0].FileID != "" || got[1].FileID != "file-a" ||
-		string(got[1].IPHash) != "\x01" || !got[1].At.Equal(t0) {
+	if len(got) != 3 || got[0].UserID != 7 || got[1].Event != "file.purged" || got[1].FileID != "" || got[1].UserID != 0 ||
+		got[2].FileID != "file-a" || string(got[2].IPHash) != "\x01" || !got[2].At.Equal(t0) {
 		t.Errorf("got %+v", got)
 	}
 	if err := s.PurgeAudit(ctx, t0.Add(30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.RecentAudit(ctx, 10); len(got) != 1 || got[0].Event != "file.purged" {
+	if got, _ := s.RecentAudit(ctx, 10); len(got) != 2 || got[1].Event != "file.purged" {
 		t.Errorf("after purge: %+v", got)
 	}
 }

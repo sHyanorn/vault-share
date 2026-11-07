@@ -7,18 +7,14 @@ package audit
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"errors"
-	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
 
+	"github.com/sHyanorn/vault-share/server/internal/keyfile"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
@@ -31,6 +27,13 @@ const (
 	FileDeleted     = "file.deleted"
 	FilePurged      = "file.purged"
 	ClientLocked    = "client.locked"
+
+	AccountCreated  = "account.created"
+	AccountDeleted  = "account.deleted"
+	LoginSucceeded  = "login.succeeded"
+	LoginFailed     = "login.failed"
+	SessionEnded    = "session.ended"
+	PasswordChanged = "password.changed"
 )
 
 // Retention is how long entries are kept.
@@ -49,7 +52,7 @@ const (
 )
 
 func isFailure(event string) bool {
-	return event == DownloadDenied || event == ClientLocked
+	return event == DownloadDenied || event == ClientLocked || event == LoginFailed
 }
 
 const keyFile = "audit.key"
@@ -73,20 +76,9 @@ type Recorder struct {
 
 // New loads the hashing key from dir, creating it on first use.
 func New(dir string, st *store.Store, log *slog.Logger) (*Recorder, error) {
-	path := filepath.Join(dir, keyFile)
-	key, err := os.ReadFile(path) // #nosec G304 -- path is inside the configured data dir
-	if errors.Is(err, fs.ErrNotExist) {
-		key = make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			return nil, err
-		}
-		err = os.WriteFile(path, key, 0o600)
-	}
+	key, err := keyfile.Load(dir, keyFile)
 	if err != nil {
 		return nil, err
-	}
-	if len(key) != 32 {
-		return nil, errors.New("audit key has the wrong length")
 	}
 	return &Recorder{
 		store:    st,
@@ -102,22 +94,29 @@ func New(dir string, st *store.Store, log *slog.Logger) (*Recorder, error) {
 // request: the audit trail must not become a way to break the service.
 // A nil Recorder records nothing.
 func (r *Recorder) Record(ctx context.Context, event, fileID string, client Client) {
+	r.record(ctx, store.AuditEntry{Event: event, FileID: fileID}, client)
+}
+
+// RecordAccount stores an event of an account; userID 0 names none, as for
+// a failed sign-in to a username that does not exist.
+func (r *Recorder) RecordAccount(ctx context.Context, event string, userID int64, client Client) {
+	r.record(ctx, store.AuditEntry{Event: event, UserID: userID}, client)
+}
+
+func (r *Recorder) record(ctx context.Context, entry store.AuditEntry, client Client) {
 	if r == nil {
 		return
 	}
+	event := entry.Event
 	now := r.Now()
 	if isFailure(event) && !r.failures.AllowN(now, 1) {
 		r.skipped.Add(1)
 		return
 	}
 	ctx = context.WithoutCancel(ctx) // a client that hangs up still gets recorded
-	entry := store.AuditEntry{
-		Event:  event,
-		FileID: fileID,
-		IPHash: r.hash(client.IP),
-		UAHash: r.hash(client.UserAgent),
-		At:     now,
-	}
+	entry.IPHash = r.hash(client.IP)
+	entry.UAHash = r.hash(client.UserAgent)
+	entry.At = now
 	if err := r.store.RecordAudit(ctx, entry); err != nil {
 		r.log.Error("audit record", "event", event, "err", err)
 	}
