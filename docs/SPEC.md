@@ -129,7 +129,7 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - Security response headers: strict CSP (no inline scripts), HSTS, X-Content-Type-Options, Referrer-Policy: no-referrer, Permissions-Policy
 - Rate limiting: per-client token bucket (one IPv4 address or one IPv6 /64, D017), with separate limits for uploads and download authentication
 - Lock a file for a period of time after repeated failed download authentication attempts
-- Writes from other origins are refused (D022)
+- Requests from other sites are refused, and the API answers only for its own host (D022)
 - Request body size limits and timeouts
 - Total storage quota and a per-client daily storage budget
 - File ids and tokens use cryptographically secure random numbers
