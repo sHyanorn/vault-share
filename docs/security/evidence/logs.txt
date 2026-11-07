@@ -1,11 +1,12 @@
-# Logs of the Compose stack after the black-box and browser runs
-vaultd request lines:                 261
-vaultd lines containing a query (?):  0
+# Logs of the Compose stack after the final black-box and browser runs
+# (the vaultd container was recreated with the fixed image before these runs)
+vaultd request lines:                 527
+vaultd lines with a query (?):        0
 vaultd lines containing token=:       0
 vaultd lines containing Bearer:       0
 caddy lines naming a request path:    0
 
-# Sample: a content download and the lines that are not request lines
-{"time":"2026-11-06T23:09:55.260302094Z","level":"INFO","msg":"request","method":"GET","path":"/api/v1/files/ruPGGsg2zlXGuKHpFNf00g/content","status":200,"bytes":64,"duration_ms":23}
-{"time":"2026-11-06T23:04:35.427499714Z","level":"INFO","msg":"listening","addr":":8080"}
-{"time":"2026-11-06T23:05:35.429002226Z","level":"INFO","msg":"purged files","count":2}
+# Sample: a content download, a cross-site refusal, and the lines that are not request lines
+{"time":"2026-11-07T00:11:59.970549844Z","level":"INFO","msg":"request","method":"GET","path":"/api/v1/files/yV6tU_uysPFFc1wbnMBWDQ/content","status":200,"bytes":64,"duration_ms":1}
+{"time":"2026-11-07T00:12:03.731599352Z","level":"INFO","msg":"request","method":"GET","path":"/api/v1/files/WpEbuzGmi-Spt2neF5DiVw/meta","status":403,"bytes":75,"duration_ms":0}
+{"time":"2026-11-07T00:02:04.943165796Z","level":"INFO","msg":"listening","addr":":8080"}

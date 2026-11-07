@@ -1,10 +1,10 @@
-# F18: a create sent by a page on another origin (WSTG-v42-SESS-05)
-# scripts/browser_checks.cjs, check "a page on another site sends a create": headless
-# Chromium loads a page from http://127.0.0.1:<port>, which runs
+# F18 and F24: requests sent by a page on another origin (WSTG-v42-SESS-05)
+# Headless Chromium loads a page from http://127.0.0.1:<port>, which runs
 #   fetch('https://localhost/api/v1/files', {method: 'POST', mode: 'no-cors',
 #         headers: {'Content-Type': 'text/plain'}, body: <create JSON>})
-# The browser sends it without a CORS preflight and gives the page no response.
-# Whether the server acted shows only in the vaultd request log.
+# The browser sends it without a CORS preflight and gives the page no response,
+# so the server's answer comes from the vaultd log (first run) and from the
+# browser's network log through DevTools (scripts/browser_checks.cjs after review).
 
 ## Before the fix: the page saw "TypeError: Failed to fetch", the record was created
 {"time":"2026-11-06T22:37:19.635930095Z","level":"INFO","msg":"request","method":"POST","path":"/api/v1/files","status":201,"bytes":176,"duration_ms":0}
@@ -21,3 +21,8 @@ after   PASS  cross-site   cross-site POST with fetch metadata is refused
 after   PASS  cross-site   cross-origin POST from an older browser is refused
 after   PASS  cross-site   same-origin POST creates a file
 after   PASS  cross-site   POST from a non-browser client creates a file
+
+## The browser's network log after the fixes (scripts/browser_checks.cjs)
+PASS  a create sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  a read sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  the browser sends them without a CORS preflight

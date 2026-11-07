@@ -5,18 +5,22 @@ PASS  no element is created from the file name
 PASS  the download decrypts to the original bytes
 PASS  after its one permitted download the link shows the file as gone
 PASS  no script ran from the file name
-PASS  none of 16 requests (7 to the API) carries the fragment, the secret, the file key or the metadata key
+PASS  every request body was captured, the 200000-byte upload included
+PASS  none of 16 requests (7 to the API) carries the fragment, the secret, the file or metadata key, the file name or the plaintext
 PASS  the auth key reaches the server once, in the create request, as designed
 PASS  no request carries a Referer header
 PASS  a protected link carries the 60-byte wrapped secret instead
 PASS  a wrong password is rejected in the browser without contacting the server
 PASS  the right password unlocks the share
 PASS  neither the password nor the wrapped secret is sent
+PASS  the delete link removes the share
 PASS  injected handlers, inline and remote scripts, javascript: URLs and string timers do not run
-PASS  the browser reports each as a CSP violation: script-src, script-src-attr, script-src-elem
+PASS  the browser reports violations of script-src, script-src-attr, script-src-elem
 PASS  an uploaded script does not run in the app origin: the browser refuses its MIME type
 PASS  a page on another origin cannot frame the app
 PASS  the browser cites frame-ancestors when it refuses the frame
-PASS  a page on another site sends a create without a CORS preflight and sees an error (Failed to fetch); whether the server acted is in its log
+PASS  a create sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  a read sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  the browser sends them without a CORS preflight
 
-19 passed, 0 failed
+23 passed, 0 failed

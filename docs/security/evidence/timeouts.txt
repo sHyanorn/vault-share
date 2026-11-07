@@ -1,18 +1,21 @@
-# Slow and idle connections (WSTG-v42-BUSL-07)
-# Caddy at https://localhost, vaultd at http://127.0.0.1:8090. Caddy defaults from
-# https://caddyserver.com/docs/caddyfile/options: read_header 1m, idle 5 minutes.
+# Slow and idle connections (WSTG-v42-CONF-02)
+# Caddy at https://localhost and http://localhost, vaultd at http://127.0.0.1:8090.
+# Caddy defaults from https://caddyserver.com/docs/caddyfile/options: read_header 1m, idle 5 minutes.
 
 ## Request headers sent one line per second, never finished
-Caddy before F19   closed after 60.0 s (default read_header 1m)
-Caddy after F19    closed after 10.0 s
-vaultd             closed after 10.0 s (ReadHeaderTimeout)
+Caddy :443 before F19   closed after 60.0 s (default read_header 1m)
+Caddy :443 after F19    closed after 10.0 s
+Caddy :80 after F19     closed after 60.0 s (the redirect server kept the defaults, F23)
+Caddy :80 after F23     closed after 10.0 s
+vaultd                  closed after 10.0 s (ReadHeaderTimeout)
 
 ## Idle keep-alive connection after one request
-Caddy before F19   5 minutes (default idle, not measured)
-Caddy after F19    closed after 120 s
-vaultd             2 minutes (IdleTimeout)
+Caddy :443 before F19   5 minutes, the documented default (not measured)
+Caddy :443 after F19    closed after 120 s
+Caddy :80               the redirect answers with Connection: close
+vaultd                  2 minutes (IdleTimeout)
 
 ## JSON body of 1000 declared bytes sent one byte per second
-vaultd             400 after 30 s (ReadTimeout)
-through Caddy      vaultd ends the request after 30 s (its log: duration_ms 30000);
-                   the client receives the 400 after 90 s
+vaultd                  400 after 30 s (ReadTimeout)
+through Caddy           vaultd ends the request after 30 s (its log: duration_ms 30000);
+                        the client receives the 400 after 90 s

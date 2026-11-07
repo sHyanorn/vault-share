@@ -1,8 +1,8 @@
 $ go run -modfile=tools/go.mod github.com/securego/gosec/v2/cmd/gosec ./...
 Summary:
   Gosec  : dev
-  Files  : 16
-  Lines  : 2211
+  Files  : 17
+  Lines  : 2267
   Nosec  : 4
   Issues : 0
 

@@ -1,15 +1,16 @@
-# Raw request probes (WSTG-v42-INPV-15 HTTP smuggling, WSTG-v42-INPV-17 Host header), 2026-11-06
-# vaultd at 127.0.0.1:8090, Caddy at 127.0.0.1:443 (TLS) and :80
+# Raw request probes (WSTG-v42-INPV-15 HTTP smuggling, WSTG-v42-INPV-17 Host header), after the fixes
+# vaultd at 127.0.0.1:8090 (VAULT_BASE_URL http://127.0.0.1:8090), Caddy at 127.0.0.1:443 (TLS) and :80
 #
 # "CL and TE together": Go resolves the framing by Transfer-Encoding and keeps the
 # connection, so a request hidden after the body is answered on the sender's own
 # connection. Caddy frames every request it forwards to vaultd anew, so the two
 # servers cannot disagree about where a request ends.
+# Host on vaultd: the app shell answers any name; the API answers 421 (F25).
 # "caddy http": the HTTP to HTTPS redirect keeps the requested host. A browser sends
 # a foreign Host only for a name that resolves to this server, so the redirect
 # points back at that same name.
 
-vaultd direct  CL and TE together     -> HTTP/1.1 400 Bad Request  smuggled request answered
+vaultd direct  CL and TE together     -> HTTP/1.1 421 Misdirected Request  smuggled request answered
 vaultd direct  two different CL       -> HTTP/1.1 400 Bad Request  
 vaultd direct  TE chunked, identity   -> HTTP/1.1 501 Not Implemented  
 vaultd direct  obfuscated TE          -> HTTP/1.1 400 Bad Request: invalid header name  
@@ -20,3 +21,5 @@ caddy          obfuscated TE          -> HTTP/1.1 400 Bad Request: invalid heade
 vaultd direct  Host: attacker.example -> HTTP/1.1 200 OK [] reflected=False
 caddy https    Host: attacker.example -> HTTP/1.1 200 OK [] reflected=False
 caddy http     Host: attacker.example -> HTTP/1.1 308 Permanent Redirect [b'Location: https://attacker.example/f/x'] reflected=True
+
+vaultd direct  API with Host: attacker.example -> 421 {"error":{"code":"misdirected","message":"unknown host"}}

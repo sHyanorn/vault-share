@@ -1,9 +1,9 @@
 $ semgrep scan --config p/golang --config p/typescript --config p/react --config p/secrets --config p/python --error --metrics=off --exclude node_modules --exclude dist
   Language      Rules   Files          Origin      Rules
  ─────────────────────────────        ───────────────────
-  <multilang>      36      84          Community     312
+  <multilang>      37     105          Community     312
   ts               74      31
-  go               42      16
+  go               42      17
   yaml              1       3
   python          151       1
   js               68       1
@@ -15,17 +15,17 @@ $ semgrep scan --config p/golang --config p/typescript --config p/react --config
 └──────────────┘
 ✅ Scan completed successfully.
  • Findings: 0 (0 blocking)
- • Rules run: 304
- • Targets scanned: 84
+ • Rules run: 305
+ • Targets scanned: 105
  • Parsed lines: ~99.9%
  • Scan skipped:
    ◦ Files matching .semgrepignore patterns: 9
  • Scan was limited to files tracked by git
  • For a detailed list of skipped files and lines, run semgrep with the --verbose flag
-Ran 304 rules on 84 files: 0 findings.
+Ran 305 rules on 105 files: 0 findings.
 (need more rules? `semgrep login` for additional free Semgrep Registry rules)
 
  • Findings: 0 (0 blocking)
- • Rules run: 304
- • Targets scanned: 84
-Ran 304 rules on 84 files: 0 findings.
+ • Rules run: 305
+ • Targets scanned: 105
+Ran 305 rules on 105 files: 0 findings.
