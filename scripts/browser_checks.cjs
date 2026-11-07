@@ -397,7 +397,7 @@ async function checkAccount(browser) {
   const wrap = derive('vault-share/account-wrap')
   ok(Buffer.from(req.auth, 'base64url').equals(auth), 'sign-up sends the auth secret derived from the password, as D026 has it')
   const sealed = Buffer.from(req.sealed_key, 'base64url')
-  const decipher = crypto.createDecipheriv('aes-256-gcm', wrap, sealed.subarray(0, 12))
+  const decipher = crypto.createDecipheriv('aes-256-gcm', wrap, sealed.subarray(0, 12), { authTagLength: 16 })
   decipher.setAAD(Buffer.from('vault-share/account-key'))
   decipher.setAuthTag(sealed.subarray(sealed.length - 16))
   const accountKey = Buffer.concat([decipher.update(sealed.subarray(12, sealed.length - 16)), decipher.final()])
