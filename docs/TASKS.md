@@ -48,7 +48,7 @@
 ## M6 Showcase and Deployment
 - [x] S3-compatible storage implementation (tested with Versity S3 Gateway)
 - [x] Playwright end-to-end tests
-- [ ] English README: encryption flow diagram, GIF, threat model summary, known limitations
+- [x] English README: encryption flow diagram, GIF, threat model summary, known limitations
 
 ## Optional M7 User Accounts
 - [ ] Sign-up and login, Argon2id, session cookies, CSRF
