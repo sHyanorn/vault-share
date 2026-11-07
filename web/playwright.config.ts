@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test'
 // browser does not know; scripts/blackbox.py checks TLS with that CA.
 export default defineConfig({
   testDir: 'e2e',
+  // A share may wait up to a minute for its link.
+  timeout: 120_000,
   // Every test is the same client to the server's rate limits.
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
