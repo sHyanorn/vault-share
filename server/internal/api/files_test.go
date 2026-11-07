@@ -645,7 +645,7 @@ func TestOneUploadAtATimePerFile(t *testing.T) {
 	}
 }
 
-func TestDeleteDuringUploadLeavesNothing(t *testing.T) {
+func TestNoDeleteDuringUpload(t *testing.T) {
 	e := newEnv(t)
 	sh := e.create(1000, 1, 3600)
 
@@ -653,16 +653,45 @@ func TestDeleteDuringUploadLeavesNothing(t *testing.T) {
 	if _, err := pw.Write(sh.content[:999]); err != nil {
 		t.Fatal(err)
 	}
-	if status := e.remove(sh.id, sh.owner); status != http.StatusNoContent {
-		t.Fatalf("delete: %d", status)
+	// The pipe hands over the first bytes once the handler reads them, and
+	// it reads only after taking the claim.
+	if status := e.remove(sh.id, sh.owner); status != http.StatusConflict {
+		t.Errorf("delete during the upload: %d", status)
 	}
 	pw.Write(sh.content[999:])
 	pw.Close()
-	if status := <-done; status != http.StatusNotFound {
-		t.Errorf("upload after delete: %d", status)
+	if status := <-done; status != http.StatusNoContent {
+		t.Fatalf("upload: %d", status)
+	}
+	if status := e.remove(sh.id, sh.owner); status != http.StatusNoContent {
+		t.Errorf("delete after the upload: %d", status)
 	}
 	if e.blobExists(sh.id) {
-		t.Error("orphaned content left behind")
+		t.Error("content survived the delete")
+	}
+}
+
+func TestCleanupWaitsForARunningUpload(t *testing.T) {
+	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
+	e := newEnvWith(t, func(o *Options) {
+		held.Store = o.Blobs
+		o.Blobs = held
+	})
+	sh := e.create(1000, 1, 86400)
+	first := make(chan int, 1)
+	go func() { first <- e.upload(sh, sh.owner, sh.content) }()
+	<-held.held
+	// Past the upload grace, but the upload still runs.
+	e.advance(2 * time.Hour)
+	if err := e.job.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(held.release)
+	if status := <-first; status != http.StatusNoContent {
+		t.Fatalf("upload: %d", status)
+	}
+	if _, status := e.meta(sh.id); status != http.StatusOK {
+		t.Errorf("file purged during its upload: %d", status)
 	}
 }
 

@@ -40,26 +40,18 @@ func (j *Job) Run(ctx context.Context) error {
 	var errs []error
 	purged := 0
 	for _, p := range purges {
-		if p.Pending {
-			deleted, err := j.Store.DeleteIfPending(ctx, p.ID)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("record %s: %w", p.ID, err))
-			}
-			if err == nil && deleted {
-				purged++
-			}
+		// A file whose upload is running waits for a later run.
+		if !j.Store.Claim(p.ID) {
 			continue
 		}
-		if err := j.Blobs.Delete(ctx, p.ID); err != nil {
-			errs = append(errs, fmt.Errorf("blob %s: %w", p.ID, err))
-			continue
+		done, err := j.purge(ctx, p)
+		j.Store.Release(p.ID)
+		if err != nil {
+			errs = append(errs, err)
 		}
-		if err := j.Store.DeleteFile(ctx, p.ID); err != nil {
-			errs = append(errs, fmt.Errorf("record %s: %w", p.ID, err))
-			continue
+		if done {
+			purged++
 		}
-		j.Audit.Record(ctx, audit.FilePurged, p.ID, audit.Client{})
-		purged++
 	}
 	if purged > 0 {
 		j.Log.Info("purged files", "count", purged)
@@ -79,11 +71,29 @@ func (j *Job) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
+	if p.Pending {
+		deleted, err := j.Store.DeleteIfPending(ctx, p.ID)
+		if err != nil {
+			return false, fmt.Errorf("record %s: %w", p.ID, err)
+		}
+		return deleted, nil
+	}
+	if err := j.Blobs.Delete(ctx, p.ID); err != nil {
+		return false, fmt.Errorf("blob %s: %w", p.ID, err)
+	}
+	if err := j.Store.DeleteFile(ctx, p.ID); err != nil {
+		return false, fmt.Errorf("record %s: %w", p.ID, err)
+	}
+	j.Audit.Record(ctx, audit.FilePurged, p.ID, audit.Client{})
+	return true, nil
+}
+
 // deleteOrphans deletes content that has no record. A crash between the two
-// deletions, a content deletion that failed after its record was gone, or an
-// upload that outlived its record leaves such content behind. Each id is
-// listed before its record is looked up, and a record always exists before
-// its content, so content still being uploaded is never taken.
+// deletions, a content deletion that failed after its record was gone, or a
+// lost answer from the store leaves such content behind. Each id is listed
+// before its record is looked up, and a record always exists before its
+// content, so content still being uploaded is never taken.
 func (j *Job) deleteOrphans(ctx context.Context) error {
 	var errs []error
 	deleted := 0

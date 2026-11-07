@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // database/sql driver
@@ -30,6 +31,32 @@ const UploadGrace = time.Hour
 // Store is a SQLite-backed file record store.
 type Store struct {
 	db *sql.DB
+
+	mu sync.Mutex
+	// claimed holds the files being uploaded or deleted; see Claim.
+	claimed map[string]bool
+}
+
+// Claim reserves a file for an upload or a deletion and reports false while
+// another holds it. An upload keeps its claim until its body has ended, so no
+// request and no cleanup run deletes a record whose bytes are still arriving
+// and would no longer count against the quota. vaultd runs as one process,
+// so the claims live in memory.
+func (s *Store) Claim(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.claimed[id] {
+		return false
+	}
+	s.claimed[id] = true
+	return true
+}
+
+// Release gives up a claim taken with Claim.
+func (s *Store) Release(id string) {
+	s.mu.Lock()
+	delete(s.claimed, id)
+	s.mu.Unlock()
 }
 
 // Open opens or creates the database at path and applies pending migrations.
@@ -63,7 +90,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, claimed: map[string]bool{}}, nil
 }
 
 func (s *Store) Close() error {
