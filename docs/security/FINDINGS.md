@@ -41,6 +41,9 @@ Issues found during development, how they were found and how they were fixed. Se
 | F35 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | An S3 service that stopped reading mid-upload held the request and its file for good | Fixed |
 | F36 | 2026-11-07 | Low | Simplification review | A file size limit near the int64 maximum overflowed the quota arithmetic and disabled the quota | Fixed |
 | F37 | 2026-11-07 | Low | Simplification review | A leading space let a file name keep its leading dots, and a joiner-only name displayed as blank | Fixed |
+| F38 | 2026-11-07 | Medium | Independent review of M7 | Second-step codes sent at once escaped the ticket's and the account's attempt limits | Fixed |
+| F39 | 2026-11-07 | Low | Independent review of M7 | Sign-ins and download signatures sent at once escaped their lockouts | Fixed |
+| F40 | 2026-11-07 | Info | Independent review of M7 | Sign-in and second-step failures joined the audit log's shared failure budget | Accepted |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -191,3 +194,15 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F37 File names that kept their leading dots (Low)
 - Impact: `safeFileName` stripped leading dots before trimming whitespace, so `" .env"` became `.env` and `" ..bashrc"` became `..bashrc` on the download page and in the name suggested for saving. A name made only of joiners, kept for emoji since F10, displayed as an invisible name instead of the fallback. Browsers sanitise the name on disk, so the gap was in what the recipient saw (A5).
 - Fix: leading whitespace and dots are stripped together, and a name with nothing visible left falls back to `download`. Tests cover both cases.
+
+## F38 Concurrent second steps (Medium)
+- Impact: the second step read its ticket, checked the code, then counted the failure, and the account's lockout was asked before the check and told after it. Codes sent at once all passed both gates before any failure was counted: 40 wrong codes on one ticket had 7 to 20 of them checked, where the ticket allows 5 and the account 5 per 15 minutes. Someone who knows the password and holds many addresses could so try thousands of codes per lockout window, enough over days to have a real chance against six digits. The same ordering spent a recovery code even when a sign-in at the same moment took the ticket (2 to 5 codes gone for one sign-in in a test), and a transaction that read before it wrote could fail with a 500 under concurrent writes.
+- Fix: a ticket gives up an attempt in the same statement that checks its count, before the code is looked at; the account's second-step lockout admits attempts before they are checked (F39); a good code is spent in one transaction with its ticket, so neither goes without the other; every transaction takes the write lock when it begins. Tests send 40 codes at once, on one ticket and over eight, and five recovery codes at once on one ticket; they failed before the fix, and afterwards at most 5 codes are checked and one recovery code is spent.
+
+## F39 Concurrent sign-ins and signatures (Low)
+- Impact: the lockouts were asked before an attempt was checked and told after it, so attempts in flight together were all checked: 50 wrong sign-ins at once from 50 addresses had all 50 checked where the account allows 20, 20 at once from one client had 19 or 20 checked where it allows 5, and 20 bad download signatures at once had 11 to 14 checked where 5 lock the client out of the file. Argon2id at both ends, the 15-character minimum, the four hashes at a time and the per-client budgets still bound guessing, and a download signature is a 256-bit HMAC that cannot be guessed, hence Low.
+- Fix: a lockout admits an attempt before it is checked and refuses one while the failures counted and the attempts in flight could reach the limit; each admitted attempt ends counted as a failure or not. Tests send the attempts at once and failed before the fix; afterwards exactly 20, 5 and 5 are checked.
+
+## F40 Account failures in the audit budget (Info)
+- Impact: failed sign-ins and second steps share the process-wide budget for failure events with denied downloads and lockouts (D018), so a flood of failed sign-ins also keeps other failures out of the log for its duration.
+- Decision: accepted as D018 states for failure events; recorded there and in the threat model. The lockouts themselves are unaffected.
