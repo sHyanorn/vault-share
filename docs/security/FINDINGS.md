@@ -29,6 +29,13 @@ Issues found during development, how they were found and how they were fixed. Se
 | F23 | 2026-11-06 | Low | Independent review of M5 | Caddy's HTTP redirect server kept the default timeouts after F19 | Fixed |
 | F24 | 2026-11-06 | Low | Independent review of M5 | Cross-site reads through visitors' browsers could keep their request budget empty | Fixed |
 | F25 | 2026-11-06 | Low | Independent review of M5 | The API answered any Host, so a rebound name reached a directly exposed vaultd as same-origin | Fixed |
+| F26 | 2026-11-07 | High | Independent review of M6 | Concurrent uploads to one file held memory on S3 and temp files on disk outside the quota | Fixed |
+| F27 | 2026-11-07 | Medium | Independent review of M6 | Burned, expired or deleted ciphertext could stay in the bucket for good | Fixed |
+| F28 | 2026-11-07 | Medium | Independent review of M6 | S3 requests had no time limit, so a silent service stopped the cleanup job | Fixed |
+| F29 | 2026-11-07 | Medium | Independent review of M6 | An upload could fail with its object stored, and the object outlived its record | Fixed |
+| F30 | 2026-11-07 | Medium | Independent review of M6 | Stored content stayed unchanged only if the S3 service honoured If-None-Match, which nothing checked | Fixed |
+| F31 | 2026-11-07 | Low | Independent review of M6 | A versioned bucket kept deleted ciphertext as old versions | Fixed |
+| F32 | 2026-11-07 | Low | Independent review of M6 | A made-up download token cost an S3 GET before it was refused | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -131,3 +138,31 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F25 Any Host reached the API (Low)
 - Impact: vaultd answered whatever Host a request named. A page that rebinds its own name to a directly reachable vaultd, such as a developer's local instance, is same-origin to the browser, so F18's protection let its writes through. The shipped Compose stack was not affected, because Caddy forwards only its own site name.
 - Fix: the API answers 421 `misdirected` unless the Host, compared without port and case, is the host of `VAULT_BASE_URL` (D022). The health check and the web client still answer any name.
+
+## F26 Concurrent uploads to one file (High)
+- Impact: nothing stopped a file's owner from running many uploads at once. The S3 store buffered each one in memory, up to 8 MiB, so 40 uploads to one record took vaultd from 18 to 341 MiB, and a client opening uploads at the rate limit could reach tens of GiB within the 35 minutes a 1 GiB upload may last. The disk store wrote a temp file per upload: six uploads to one 64 MiB record held 360 MiB, beyond the quota, which counts records only.
+- Fix: a file takes one upload at a time and a second gets 409 while the first is in flight. The S3 store streams the body into a single PutObject without buffering, which caps files on S3 at 5 GiB (D025). Measured afterwards: ten uploads to ten records, 60 MiB sent on each, moved vaultd from 19 to 20 MiB; six uploads to one record held one 60 MiB temp file while the other five got 409.
+
+## F27 Deleted ciphertext could stay in the bucket (Medium)
+- Impact: the S3 store held back a Delete while the object was being read, ran it when the last reader closed and dropped its error. A failed delete, or vaultd stopping during a last download, left the object with no record and no rule that would ever remove it. The review left a 40 MiB object behind by stopping vaultd mid-download, and injected 503 errors went unlogged. Burn after reading, expiry and the owner's delete could fail silently, and the bytes escaped the quota. The disk store had a smaller gap: burning deletes the record first, so a failed file deletion was logged and then forgotten.
+- Fix: the S3 store deletes at once and returns the error. A download in progress still gets every byte, which the store contract checks on Versity S3 Gateway and RustFS; AWS documents that updates to a key are atomic and a concurrent reader never gets partial data. Every cleanup run also lists the stored ids and deletes any without a record. Its first run against the review's bucket removed the 40 MiB object.
+
+## F28 No time limit on S3 requests (Medium)
+- Impact: the SDK's HTTP client waited for a response forever. Against a service that accepted connections and never answered, calls hung, and because the cleanup job ran without a deadline, one stalled call stopped it for good: expired files stayed, download tokens never expired and the audit log was no longer trimmed.
+- Fix: responses time out after a minute, as in minio-go's default transport, and each cleanup run gets five intervals. Upload and download bodies stream at the client's pace, and a client that goes away cancels its request. Tests cover a silent service and a store whose listing never returns.
+
+## F29 A failed upload with its object stored (Medium)
+- Impact: when the response to a write was lost, the SDK retried it, the retry got 412 because the first attempt had stored the object, and vaultd reported a conflict for its own upload. A client hanging up just after the object was stored had the same effect. The record never completed, and an hour later cleanup removed it but not the object.
+- Fix: a streamed body cannot be sent twice, so writes are no longer retried; once the content is stored, the record is marked even if the client has gone; and cleanup deletes content left without a record (F27). A lost response still fails the upload, which the user sees, and nothing is left behind.
+
+## F30 Unchecked conditional writes (Medium)
+- Impact: the S3 store relied on `If-None-Match: *` to keep content from being replaced. On a service that ignores the header, two uploads to one file could both succeed, and the request that lost the race then deleted the content the winner had been told was stored, which is F2 again.
+- Fix: one upload at a time per file (F26) keeps vaultd from sending concurrent writes for a file. At startup vaultd also writes a probe object twice and refuses to start unless the second write gets 412.
+
+## F31 Versioned buckets kept deleted files (Low)
+- Impact: with bucket versioning on, a delete only adds a marker, so every burned, expired or deleted file stayed in the bucket as an old version, open to anyone who can read the bucket and holds the link.
+- Fix: vaultd refuses to start on a bucket whose versioning is enabled or suspended; a service without the versioning API passes.
+
+## F32 S3 GET before the token check (Low)
+- Impact: the content endpoint opened the object before it checked the download token, so each request with a made-up token for a known file id made vaultd fetch from S3, which costs requests and egress.
+- Fix: the token is checked first, then the object is opened, then the token is consumed, so F4 stays fixed.
