@@ -15,7 +15,7 @@ import { CheckIcon, DownloadIcon, FileIcon, LinkOffIcon } from '../ui/icons.tsx'
 
 type Phase =
   | { kind: 'loading' }
-  | { kind: 'locked'; wrong: boolean; busy: boolean }
+  | { kind: 'locked'; error?: string; busy: boolean }
   | { kind: 'invalid' }
   | { kind: 'unavailable' }
   | { kind: 'offline' }
@@ -61,10 +61,25 @@ export default function DownloadPage() {
     if (!location?.wrapped) return
     const password = new FormData(event.currentTarget).get('password')
     if (typeof password !== 'string' || password === '') return
-    setPhase({ kind: 'locked', wrong: false, busy: true })
-    const unwrapped = await unwrapSecret(location.wrapped, password)
+    setPhase({ kind: 'locked', busy: true })
+    let unwrapped: Uint8Array<ArrayBuffer> | null
+    try {
+      unwrapped = await unwrapSecret(location.wrapped, password)
+    } catch {
+      // Argon2id needs 64 MiB, which a low-memory device may not grant.
+      setPhase({
+        kind: 'locked',
+        error: 'Could not check the password on this device. Try again.',
+        busy: false,
+      })
+      return
+    }
     if (!unwrapped) {
-      setPhase({ kind: 'locked', wrong: true, busy: false })
+      setPhase({
+        kind: 'locked',
+        error: 'Wrong password. Try again.',
+        busy: false,
+      })
       return
     }
     setPhase({ kind: 'loading' })
@@ -143,12 +158,12 @@ export default function DownloadPage() {
                 autoFocus
                 required
                 aria-labelledby="unlock-label"
-                aria-invalid={phase.wrong || undefined}
-                aria-describedby={phase.wrong ? 'password-error' : undefined}
+                aria-invalid={phase.error ? true : undefined}
+                aria-describedby={phase.error ? 'password-error' : undefined}
               />
-              {phase.wrong && (
+              {phase.error && (
                 <span id="password-error" className="error" role="alert">
-                  Wrong password. Try again.
+                  {phase.error}
                 </span>
               )}
             </label>
@@ -251,7 +266,7 @@ function FileHero({ info }: { info: ShareInfo }) {
 
 function initialPhase(location: ShareLocation | null): Phase {
   if (!location) return { kind: 'invalid' }
-  if (location.wrapped) return { kind: 'locked', wrong: false, busy: false }
+  if (location.wrapped) return { kind: 'locked', busy: false }
   return { kind: 'loading' }
 }
 
