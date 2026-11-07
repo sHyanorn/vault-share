@@ -167,6 +167,12 @@ func TestLoadS3(t *testing.T) {
 			t.Errorf("the error shows the secret: %v", err)
 		}
 	}
+	large := maps.Clone(env)
+	large["VAULT_MAX_FILE_BYTES"] = "5368709121" // 5 GiB and one byte
+	large["VAULT_MAX_TOTAL_BYTES"] = "10737418240"
+	if _, err := Load(lookupFrom(large)); err == nil || !strings.Contains(err.Error(), "VAULT_MAX_FILE_BYTES") {
+		t.Errorf("a file limit above one S3 request: %v", err)
+	}
 	if _, err := Load(lookupFrom(map[string]string{"VAULT_STORAGE": "tape"})); err == nil || !strings.Contains(err.Error(), "VAULT_STORAGE") {
 		t.Errorf("unknown storage: %v", err)
 	}

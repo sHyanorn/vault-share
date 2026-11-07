@@ -13,10 +13,12 @@ import (
 	"testing"
 )
 
-// testStore checks what every Store promises. large must exceed the store's
-// single-request size, so the multipart path of S3 runs too. Ids are fresh
-// for every case, so a bucket can be reused between runs.
-func testStore(t *testing.T, s Store, large int64) {
+// testStore checks what every Store promises. Ids are fresh for every case,
+// so a bucket can be reused between runs.
+func testStore(t *testing.T, s Store) {
+	// Above 2 MB the S3 client waits for the service to accept the request
+	// before it sends the body, so both of its request paths run.
+	const large = 3 << 20
 	ctx := context.Background()
 	read := func(t *testing.T, id string) []byte {
 		t.Helper()
@@ -42,7 +44,7 @@ func testStore(t *testing.T, s Store, large int64) {
 	}
 
 	t.Run("stores and returns the exact bytes", func(t *testing.T) {
-		for _, size := range []int64{1, 1000, large} {
+		for _, size := range []int64{0, 1, 1000, large} {
 			id, content := newID(), randomBytes(size)
 			if err := s.Put(ctx, id, size, bytes.NewReader(content)); err != nil {
 				t.Fatalf("size %d: %v", size, err)
@@ -67,7 +69,7 @@ func testStore(t *testing.T, s Store, large int64) {
 	})
 
 	t.Run("refuses a body of another size and keeps nothing", func(t *testing.T) {
-		for _, c := range []struct{ declared, actual int64 }{{10, 9}, {10, 11}, {large, large - 1}, {large, large + 1}} {
+		for _, c := range []struct{ declared, actual int64 }{{0, 1}, {10, 9}, {10, 11}, {large, large - 1}, {large, large + 1}} {
 			id := newID()
 			if err := s.Put(ctx, id, c.declared, bytes.NewReader(randomBytes(c.actual))); !errors.Is(err, ErrSize) {
 				t.Errorf("%d bytes declared, %d sent: %v", c.declared, c.actual, err)
@@ -180,7 +182,7 @@ func testStore(t *testing.T, s Store, large int64) {
 
 func TestDiskContract(t *testing.T) {
 	d, root := newDisk(t)
-	testStore(t, d, 3<<20)
+	testStore(t, d)
 	if entries, _ := os.ReadDir(root + "/tmp"); len(entries) != 0 {
 		t.Errorf("temp files left behind: %d", len(entries))
 	}
