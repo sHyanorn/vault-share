@@ -83,7 +83,7 @@ Browser (React)                  Server (Go)                                    
 └──────────────┘                 └──────────────────────────────────────────────────────┘
 ```
 
-Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented first for local disk and then for S3-compatible storage (tested with MinIO).
+Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented for local disk and for S3-compatible storage (tested with Versity S3 Gateway, D025).
 
 ## 6. Data Model
 

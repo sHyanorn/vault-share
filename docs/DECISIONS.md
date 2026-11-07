@@ -145,3 +145,10 @@
 - Rationale: an anonymous, end-to-end encrypted file host attracts malware and phishing distribution, which the operator cannot inspect and can only answer by deleting links; Firefox Send was shut down in 2020 for that reason. A public instance would also face the residual risks of the threat model, quota filling and CPU saturation from many addresses, without upstream protection, and need ongoing patching and abuse handling
 - Revisit: a short-lived instance with tight limits on downloads and retention, if a live link is ever needed
 
+## D025 S3-compatible blob store
+- Date: 2026-11-07
+- Decision: with `VAULT_STORAGE=s3` ciphertext lives in an S3-compatible bucket, through the official aws-sdk-go-v2. A body of up to 8 MiB goes up in one PutObject, a larger one in 8 MiB parts; either way the request that makes it visible carries `If-None-Match: *`, so content is never replaced, and a body of the wrong size or one that fails is dropped before anything is visible. A Delete while the object is being read waits for the last reader, as removing an open file does on disk. Sweep aborts multipart uploads older than the upload grace. Credentials are static and come from the environment; a custom endpoint is addressed path-style
+- Testing: one contract test runs against both stores. CI runs it against Versity S3 Gateway (Apache-2.0) on its posix backend. RustFS passed the same contract; Versity was chosen for its simpler setup and because it made no outbound connections. MinIO, named in the original plan, archived its open-source repository in April 2026 and no longer publishes images
+- Rationale: every dependency of aws-sdk-go-v2 comes from AWS, while minio-go draws on modules from many authors (A03). Buffering one part per upload bounds memory at 8 MiB per upload in flight
+- Trade-off: if vaultd crashes while a reader holds a deleted object, the object stays in the bucket with no record pointing to it. The bucket must belong to vaultd alone, because Sweep aborts uploads under any name that looks like a file id. The credentials sit in the vaultd container's environment and can read and delete every object
+
