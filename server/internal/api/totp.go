@@ -93,55 +93,57 @@ func recoveryCodeHash(code string) ([]byte, bool) {
 	return hashToken(raw), true
 }
 
-// secondFactor checks a TOTP code or a recovery code for u, under a lockout
-// of its own per account. It reports whether a recovery code was spent.
-func (a *accounts) secondFactor(ctx context.Context, u store.User, code string) (authResult, bool) {
+// A factor is a second-step code that may be good: a TOTP time step whose
+// code matched, or a well-formed recovery code, by its hash. Whether it is
+// still unused is known only when it is spent.
+type factor struct {
+	step     int64
+	recovery []byte
+}
+
+func (a *accounts) matchFactor(u store.User, code string) (factor, bool, error) {
+	code = strings.NewReplacer(" ", "", "-", "").Replace(code)
+	if len(code) == totp.Digits {
+		secret, err := a.openTOTP(u.ID, u.TOTPSecret)
+		if err != nil {
+			return factor{}, false, err
+		}
+		step, ok := totp.Match(secret, code, a.now())
+		return factor{step: step}, ok, nil
+	}
+	hash, ok := recoveryCodeHash(code)
+	return factor{recovery: hash}, ok, nil
+}
+
+// secondFactor checks code for u under the second-step lockout of the
+// account, and spend uses the factor up, reporting false if it already was.
+// An error from spend ends the attempt uncounted and is returned.
+func (a *accounts) secondFactor(ctx context.Context, u store.User, code string, spend func(factor) (bool, error)) (authResult, factor, error) {
 	key := strconv.FormatInt(u.ID, 10)
 	if !a.totpLocks.admit(key) {
-		return authLocked, false
+		return authLocked, factor{}, nil
 	}
-	used, recovery, err := a.spendFactor(ctx, u, code)
-	switch {
-	case err != nil:
+	f, ok, err := a.matchFactor(u, code)
+	if err == nil && ok {
+		ok, err = spend(f)
+	}
+	if err != nil {
 		a.totpLocks.passed(key, false)
-		a.log.Error("check second factor", "err", err)
-		return authError, false
-	case used:
+		return authError, f, err
+	}
+	if ok {
 		a.totpLocks.passed(key, true)
-		if recovery {
+		if f.recovery != nil {
 			a.audit.RecordAccount(ctx, audit.RecoveryCodeUsed, u.ID, clientFrom(ctx))
 		}
-		return authOK, recovery
+		return authOK, f, nil
 	}
 	client := clientFrom(ctx)
 	a.audit.RecordAccount(ctx, audit.TOTPFailed, u.ID, client)
 	if a.totpLocks.failed(key) {
 		a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
 	}
-	return authFailed, false
-}
-
-// spendFactor uses up code if it is a TOTP code for a step not used yet or
-// one of u's recovery codes, and reports which it was.
-func (a *accounts) spendFactor(ctx context.Context, u store.User, code string) (used, recovery bool, err error) {
-	code = strings.NewReplacer(" ", "", "-", "").Replace(code)
-	if len(code) == totp.Digits {
-		secret, err := a.openTOTP(u.ID, u.TOTPSecret)
-		if err != nil {
-			return false, false, err
-		}
-		step, ok := totp.Match(secret, code, a.now())
-		if !ok {
-			return false, false, nil
-		}
-		used, err := a.store.UseTOTPStep(ctx, u.ID, step)
-		return used, false, err
-	}
-	if hash, ok := recoveryCodeHash(code); ok {
-		used, err := a.store.UseRecoveryCode(ctx, u.ID, hash)
-		return used, used, err
-	}
-	return false, false, nil
+	return authFailed, f, nil
 }
 
 // reauthenticate asks the signed-in owner for the password again, and for
@@ -154,11 +156,21 @@ func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth [
 		a.refuse(w, result, http.StatusForbidden, "wrong_password", "the password is wrong")
 		return store.User{}, false
 	}
-	if u.TOTPSecret != nil {
-		if result, _ := a.secondFactor(ctx, u, code); result != authOK {
-			a.refuse(w, result, http.StatusForbidden, "wrong_code", "the code is wrong")
-			return store.User{}, false
+	if u.TOTPSecret == nil {
+		return u, true
+	}
+	result, _, err := a.secondFactor(ctx, u, code, func(f factor) (bool, error) {
+		if f.recovery != nil {
+			return a.store.UseRecoveryCode(ctx, u.ID, f.recovery)
 		}
+		return a.store.UseTOTPStep(ctx, u.ID, f.step)
+	})
+	if err != nil {
+		a.log.Error("spend second factor", "err", err)
+	}
+	if result != authOK {
+		a.refuse(w, result, http.StatusForbidden, "wrong_code", "the code is wrong")
+		return store.User{}, false
 	}
 	return u, true
 }
@@ -168,7 +180,9 @@ type secondStepRequest struct {
 	Code   string `json:"code"`
 }
 
-// secondStepHandler completes a sign-in whose password was right.
+// secondStepHandler completes a sign-in whose password was right. The
+// ticket gives up one of its attempts before the code is checked, and a
+// good code is spent together with the ticket (F38).
 func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	var req secondStepRequest
 	if !decodeJSON(w, r, &req) {
@@ -182,9 +196,9 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	now := a.now()
 	ticketHash := hashToken(ticket)
-	userID, valid, err := a.store.TicketUser(ctx, ticketHash, now)
+	userID, valid, err := a.store.TicketAttempt(ctx, ticketHash, now, maxTicketAttempts)
 	if err != nil {
-		a.internalError(w, "load ticket", err)
+		a.internalError(w, "take ticket attempt", err)
 		return
 	}
 	var u store.User
@@ -192,42 +206,39 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		u, err = a.store.UserByID(ctx, userID)
 	}
 	switch {
-	case !valid || errors.Is(err, store.ErrNotFound):
+	// Two-factor sign-in turned off since the ticket was issued ends it too.
+	case !valid || errors.Is(err, store.ErrNotFound) || (err == nil && u.TOTPSecret == nil):
 		expiredTicket(w)
 		return
 	case err != nil:
 		a.internalError(w, "load account", err)
 		return
 	}
-	result, recovery := a.secondFactor(ctx, u, req.Code)
-	switch result {
-	case authOK:
-	case authFailed:
-		err := a.store.TicketFailed(ctx, ticketHash, maxTicketAttempts)
-		if err == nil {
-			err = a.store.SecondStepFailed(ctx, u.ID)
+	var failures int
+	result, f, err := a.secondFactor(ctx, u, req.Code, func(f factor) (bool, error) {
+		var err error
+		failures, err = a.store.CompleteSecondStep(ctx, ticketHash, u.ID, now, f.step, f.recovery)
+		if errors.Is(err, store.ErrFactorUsed) {
+			return false, nil
 		}
-		if err != nil {
+		return err == nil, err
+	})
+	switch {
+	case errors.Is(err, store.ErrNotFound): // a sign-in at the same moment took the ticket
+		expiredTicket(w)
+		return
+	case err != nil:
+		a.internalError(w, "complete second step", err)
+		return
+	case result == authFailed:
+		if err := a.store.SecondStepFailed(ctx, u.ID); err != nil {
 			a.internalError(w, "count failed second step", err)
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "wrong_code", "the code is wrong")
 		return
-	default:
+	case result != authOK:
 		a.refuse(w, result, 0, "", "")
-		return
-	}
-	if used, err := a.store.UseTicket(ctx, ticketHash, now); err != nil || !used {
-		if err != nil {
-			a.internalError(w, "use ticket", err)
-		} else {
-			expiredTicket(w)
-		}
-		return
-	}
-	failures, err := a.store.TakeSecondStepFailures(ctx, u.ID)
-	if err != nil {
-		a.internalError(w, "take failed second steps", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.LoginSucceeded, u.ID, clientFrom(ctx))
@@ -237,7 +248,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := a.signedIn(u, token)
 	resp.SecondStepFailures = failures
-	if recovery {
+	if f.recovery != nil {
 		left, err := a.store.RecoveryCodesLeft(ctx, u.ID)
 		if err != nil {
 			a.log.Error("count recovery codes", "err", err)
