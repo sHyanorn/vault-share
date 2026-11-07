@@ -1,4 +1,4 @@
-vaultd log after the browser checks, the black-box checks and one evidence account: 360 lines
+vaultd log after the browser checks, the black-box checks and one evidence account: 359 lines
 account paths logged: /api/v1/account, /api/v1/account/files, /api/v1/account/files/{id}, /api/v1/account/password, /api/v1/account/salt, /api/v1/account/totp, /api/v1/account/totp/setup, /api/v1/session, /api/v1/session/totp
 auth secret     in the log: False
 salt            in the log: False

@@ -44,6 +44,11 @@ Issues found during development, how they were found and how they were fixed. Se
 | F38 | 2026-11-07 | Medium | Independent review of M7 | Second-step codes sent at once escaped the ticket's and the account's attempt limits | Fixed |
 | F39 | 2026-11-07 | Low | Independent review of M7 | Sign-ins and download signatures sent at once escaped their lockouts | Fixed |
 | F40 | 2026-11-07 | Info | Independent review of M7 | Sign-in and second-step failures joined the audit log's shared failure budget | Accepted |
+| F41 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | A second step could spend its ticket and code without opening a session | Fixed |
+| F42 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | Attempts refused only because others were in flight were answered as a 15-minute lockout | Fixed |
+| F43 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | A ticket issued before a password or TOTP change could still complete the sign-in | Fixed |
+| F44 | 2026-11-07 | Info | Adversarial verification of F38 and F39 | Evicting a lockout entry forgot its attempts in flight, and attempts that passed left entries behind | Fixed |
+| F45 | 2026-11-07 | Info | Adversarial verification of F38 and F39 | A client that hung up after the code check left its failed second step uncounted | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -197,7 +202,7 @@ Issues found during development, how they were found and how they were fixed. Se
 
 ## F38 Concurrent second steps (Medium)
 - Impact: the second step read its ticket, checked the code, then counted the failure, and the account's lockout was asked before the check and told after it. Codes sent at once all passed both gates before any failure was counted: 40 wrong codes on one ticket had 7 to 20 of them checked, where the ticket allows 5 and the account 5 per 15 minutes. Someone who knows the password and holds many addresses could so try thousands of codes per lockout window, enough over days to have a real chance against six digits. The same ordering spent a recovery code even when a sign-in at the same moment took the ticket (2 to 5 codes gone for one sign-in in a test), and a transaction that read before it wrote could fail with a 500 under concurrent writes.
-- Fix: a ticket gives up an attempt in the same statement that checks its count, before the code is looked at; the account's second-step lockout admits attempts before they are checked (F39); a good code is spent in one transaction with its ticket, so neither goes without the other; every transaction takes the write lock when it begins. Tests send 40 codes at once, on one ticket and over eight, and five recovery codes at once on one ticket; they failed before the fix, and afterwards at most 5 codes are checked and one recovery code is spent.
+- Fix: a ticket gives up an attempt in the same statement that checks its count, before the code is looked at; the account's second-step lockout admits attempts before they are checked (F39); a good code is spent in one transaction with its ticket, so neither goes without the other; every transaction takes the write lock when it begins. Tests send 40 codes at once, on one ticket and over eight, and five recovery codes at once on one ticket; they failed before the fix, and afterwards at most 5 codes are checked and one recovery code is spent. A store test runs 16 transactions that read before they write at once; it fails without the write lock at begin.
 
 ## F39 Concurrent sign-ins and signatures (Low)
 - Impact: the lockouts were asked before an attempt was checked and told after it, so attempts in flight together were all checked: 50 wrong sign-ins at once from 50 addresses had all 50 checked where the account allows 20, 20 at once from one client had 19 or 20 checked where it allows 5, and 20 bad download signatures at once had 11 to 14 checked where 5 lock the client out of the file. Argon2id at both ends, the 15-character minimum, the four hashes at a time and the per-client budgets still bound guessing, and a download signature is a 256-bit HMAC that cannot be guessed, hence Low.
@@ -206,3 +211,23 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F40 Account failures in the audit budget (Info)
 - Impact: failed sign-ins and second steps share the process-wide budget for failure events with denied downloads and lockouts (D018), so a flood of failed sign-ins also keeps other failures out of the log for its duration.
 - Decision: accepted as D018 states for failure events; recorded there and in the threat model. The lockouts themselves are unaffected.
+
+## F41 Second steps that spent their factor without a session (Low)
+- Impact: the second step spent the ticket and the code in one transaction (F38), recorded the sign-in in the audit log, and then opened the session in a statement of its own. If that insert failed, the user got a 500 and had to sign in again, the TOTP step or recovery code was spent, and the log showed a sign-in that never happened. It takes a database error at that moment and gives no one access.
+- Fix: the session is inserted in the same transaction, and the sign-in is audited after the commit. A store test makes the insert fail and checks that the ticket still works and no code is spent; it fails when the insert is moved after the commit.
+
+## F42 Attempts in flight answered as a lockout (Low)
+- Impact: since F39 a lockout refuses an attempt while the failures counted and the attempts in flight could reach the limit, and every refusal was answered as a lockout, 429 `locked` with `Retry-After: 900`. A user with failures already counted who submitted twice, or signed in from two devices at once, was told to wait 15 minutes, though the attempt could be made a moment later. Introduced by F39.
+- Fix: admission tells the two refusals apart; one caused only by attempts in flight answers 503 `busy` with `Retry-After: 5`, and downloads still answer 404. Admission returns a handle that a defer ends, so an early return or a panic cannot keep a slot. Tests check the busy answer, that attempts that pass never count against later ones, and exact counts when attempts arrive together.
+
+## F43 Tickets that outlived a sign-in change (Low)
+- Impact: a ticket stands for the password given when it was issued, yet a password change, or turning two-factor sign-in off and on again, left the account's tickets valid for the rest of their 5 minutes. Someone with the old password and a ticket could still finish signing in with a code; after TOTP was set up again, with a code of the new secret. A code is needed either way, hence Low.
+- Fix: the three changes delete the account's tickets in the same transaction. An API test makes each change while a ticket is pending and expects `ticket_expired`; a store test covers each change on its own and checks that other accounts keep their tickets. Both fail without the fix.
+
+## F44 Lockout entries lost to eviction (Info)
+- Impact: a lockout table at 50,000 entries evicts an arbitrary entry for each new key (D017). It could evict an entry with attempts in flight; their failures then went to an entry no longer in the table, and the next attempt for that key started from nothing. Attempts that passed also left entries behind, so the table filled sooner. It takes tens of thousands of distinct, individually rate-limited keys.
+- Fix: eviction skips entries with attempts in flight, so a lockout table can pass 50,000 by the requests in progress, and an attempt that ends leaves no entry with nothing to count. A test fills a table with attempts in flight and checks that none is evicted and that the table shrinks to its cap once they end; it fails without the fix.
+
+## F45 Failed second steps uncounted after a hang-up (Info)
+- Impact: failed second steps after a right password are counted and reported at the next sign-in (D029). The count used the request's context, so a client that hung up after its code was checked and before the count left no failure for the owner to see. The lockout and the audit log still counted it.
+- Fix: the count runs without the request's cancellation, as the audit log already did. A test cancels the request at that point; it failed before the fix.
