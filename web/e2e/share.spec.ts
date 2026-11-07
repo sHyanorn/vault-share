@@ -133,5 +133,7 @@ test('a link without its key is refused before anything is fetched', async ({
   })
   await page.goto(`/f/${randomBytes(16).toString('base64url')}`)
   await expect(page.getByText('This link is incomplete')).toBeVisible()
+  // A request sent after the message appears must be caught too.
+  await page.waitForLoadState('networkidle')
   expect(api).toEqual([])
 })
