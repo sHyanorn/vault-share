@@ -16,3 +16,19 @@ export {
   wrapSecret,
   unwrapSecret,
 } from './password.ts'
+export {
+  MIN_ACCOUNT_PASSWORD_LENGTH,
+  accountPasswordTooShort,
+  deriveAccountCredentials,
+  importAccountKey,
+  newAccountKey,
+  newAccountSalt,
+  openAccountKey,
+  openEntry,
+  openOnDevice,
+  sealAccountKey,
+  sealEntry,
+  sealForDevice,
+  type AccountCredentials,
+  type FileEntry,
+} from './account.ts'
