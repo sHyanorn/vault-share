@@ -319,7 +319,8 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := h.now()
-	valid, err := h.store.DownloadTokenValid(ctx, id, hashToken(token), now)
+	tokenHash := hashToken(token)
+	valid, err := h.store.DownloadTokenValid(ctx, id, tokenHash, now)
 	if err != nil {
 		h.internalError(w, "check download token", err)
 		return
@@ -338,7 +339,7 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	valid, err = h.store.ConsumeDownloadToken(ctx, id, hashToken(token), now)
+	valid, err = h.store.ConsumeDownloadToken(ctx, id, tokenHash, now)
 	if err != nil {
 		h.internalError(w, "consume download token", err)
 		return

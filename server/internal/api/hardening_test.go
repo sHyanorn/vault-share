@@ -18,6 +18,10 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
+// loopbackProxies trusts the test server's own connections as a proxy, so a
+// test can name its client in X-Forwarded-For.
+var loopbackProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+
 func TestClientAddr(t *testing.T) {
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("fe80::/10")}
 	cases := []struct {
@@ -71,10 +75,9 @@ func TestClientAddrUsesTheLastHeaderLine(t *testing.T) {
 func TestSpoofedFirstLineGetsNoFreshBucket(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) {
 		o.Limits = nil
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 	})
-	body := mustJSON(createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1})
+	body := mustJSON(validCreate(1000))
 	created := 0
 	for i := 1; i <= DefaultLimits.Create.Burst+2; i++ {
 		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/v1/files", bytes.NewReader(body))
@@ -120,7 +123,7 @@ func TestBucketKey(t *testing.T) {
 func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
 	var logs bytes.Buffer
 	e := newEnvWith(t, func(o *Options) {
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	})
 	e.request(http.MethodGet, "/api/v1/nope", nil, map[string]string{"X-Forwarded-For": "198.51.100.1"}, nil)
@@ -134,7 +137,7 @@ func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
 		t.Errorf("%d warnings, want exactly one per minute", n)
 	}
 	quiet := newEnvWith(t, func(o *Options) {
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	})
 	logs.Reset()
@@ -150,22 +153,20 @@ func TestWarnsWhenTrustedProxyNamesNoClient(t *testing.T) {
 func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 	e := newEnv(t)
 	for _, path := range []string{"/healthz", "/api/v1/nope", "/api/v1/files"} {
-		status, _ := e.request(http.MethodGet, path, nil, nil, nil)
 		resp, err := e.srv.Client().Get(e.srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		if resp.Header.Get("Content-Security-Policy") == "" || resp.Header.Get("Referrer-Policy") != "no-referrer" {
-			t.Errorf("%s (%d): headers missing: %v", path, status, resp.Header)
+			t.Errorf("%s (%d): headers missing: %v", path, resp.StatusCode, resp.Header)
 		}
 	}
 }
 
 func TestRateLimits(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) { o.Limits = nil }) // the defaults
-	valid := createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	valid := validCreate(1000)
 	created := 0
 	var limited *http.Response
 	for i := 0; i < DefaultLimits.Create.Burst+1; i++ {
@@ -202,34 +203,38 @@ func TestRateLimits(t *testing.T) {
 	}
 }
 
+// downloadFrom walks the challenge flow as the client at address from,
+// signing with key, and returns the status of the download request.
+func (e *env) downloadFrom(sh share, from string, key []byte) int {
+	e.t.Helper()
+	m, _ := e.meta(sh.id)
+	status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download",
+		downloadRequest{Challenge: m.Challenge, Signature: sign(key, m.Challenge)},
+		map[string]string{"X-Forwarded-For": from}, nil)
+	return status
+}
+
 func TestLockoutAfterFailedSignatures(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) {
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 	})
 	sh := e.shared(100, 50, 3600)
-	attacker := map[string]string{"X-Forwarded-For": "203.0.113.1"}
-	victim := map[string]string{"X-Forwarded-For": "203.0.113.2"}
-	wrongKey := randomContent(32)
+	attacker, victim := "203.0.113.1", "203.0.113.2"
+	wrongKey := randomBytes(32)
 
-	attempt := func(headers map[string]string, key []byte) int {
-		m, _ := e.meta(sh.id)
-		status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download",
-			downloadRequest{Challenge: m.Challenge, Signature: sign(key, m.Challenge)}, headers, nil)
-		return status
-	}
 	for i := 0; i < lockoutFailures; i++ {
-		if status := attempt(attacker, wrongKey); status != http.StatusNotFound {
+		if status := e.downloadFrom(sh, attacker, wrongKey); status != http.StatusNotFound {
 			t.Fatalf("attempt %d: %d", i, status)
 		}
 	}
-	if status := attempt(attacker, sh.authKey); status != http.StatusNotFound {
+	if status := e.downloadFrom(sh, attacker, sh.authKey); status != http.StatusNotFound {
 		t.Errorf("locked client with the right key: %d", status)
 	}
-	if status := attempt(victim, sh.authKey); status != http.StatusOK {
+	if status := e.downloadFrom(sh, victim, sh.authKey); status != http.StatusOK {
 		t.Errorf("other client: %d", status)
 	}
 	e.advance(lockoutPeriod + time.Second)
-	if status := attempt(attacker, sh.authKey); status != http.StatusOK {
+	if status := e.downloadFrom(sh, attacker, sh.authKey); status != http.StatusOK {
 		t.Errorf("after the lockout: %d", status)
 	}
 
@@ -285,10 +290,9 @@ func mustJSON(v any) []byte {
 func TestRateLimitsCountAnIPv6PrefixOnce(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) {
 		o.Limits = nil // the defaults
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 	})
-	valid := createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	valid := validCreate(1000)
 	created := 0
 	for i := 1; i <= DefaultLimits.Create.Burst+2; i++ {
 		from := map[string]string{"X-Forwarded-For": fmt.Sprintf("2001:db8:1:2::%x", i)}
@@ -307,23 +311,16 @@ func TestRateLimitsCountAnIPv6PrefixOnce(t *testing.T) {
 
 func TestLockoutCoversTheWholeIPv6Prefix(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) {
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 	})
 	sh := e.shared(100, 50, 3600)
-	attempt := func(from string, key []byte) int {
-		m, _ := e.meta(sh.id)
-		status, _ := e.request(http.MethodPost, "/api/v1/files/"+sh.id+"/download",
-			downloadRequest{Challenge: m.Challenge, Signature: sign(key, m.Challenge)},
-			map[string]string{"X-Forwarded-For": from}, nil)
-		return status
-	}
 	for i := 1; i <= lockoutFailures; i++ {
-		attempt(fmt.Sprintf("2001:db8:1:2::%x", i), randomContent(32))
+		e.downloadFrom(sh, fmt.Sprintf("2001:db8:1:2::%x", i), randomBytes(32))
 	}
-	if status := attempt("2001:db8:1:2::ffff", sh.authKey); status != http.StatusNotFound {
+	if status := e.downloadFrom(sh, "2001:db8:1:2::ffff", sh.authKey); status != http.StatusNotFound {
 		t.Errorf("fresh address in the locked /64: %d", status)
 	}
-	if status := attempt("2001:db8:1:3::1", sh.authKey); status != http.StatusOK {
+	if status := e.downloadFrom(sh, "2001:db8:1:3::1", sh.authKey); status != http.StatusOK {
 		t.Errorf("neighbouring /64: %d", status)
 	}
 	// The /64 is only the bucket: the audit log still tells the addresses apart.
@@ -401,8 +398,7 @@ func TestStorageQuota(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		shares = append(shares, e.create(1000, 1, 3600))
 	}
-	body := createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	body := validCreate(1000)
 	status, data := e.request(http.MethodPost, "/api/v1/files", body, nil, nil)
 	if status != http.StatusServiceUnavailable || !strings.Contains(string(data), `"capacity"`) {
 		t.Fatalf("over quota: %d %s", status, data)
@@ -430,11 +426,10 @@ func TestStorageBudgetPerClient(t *testing.T) {
 		Storage: Budget{PerMinute: 1, Burst: int(3 * charge)}}
 	e := newEnvWith(t, func(o *Options) {
 		o.Limits = &limits
-		o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		o.TrustedProxies = loopbackProxies
 		o.MaxTotalBytes = 2 * charge
 	})
-	body := createRequest{Size: maxTestFileBytes, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	body := validCreate(maxTestFileBytes)
 	create := func(from string) (int, createResponse) {
 		var resp createResponse
 		status, _ := e.request(http.MethodPost, "/api/v1/files", body, map[string]string{"X-Forwarded-For": from}, &resp)
@@ -486,9 +481,7 @@ func TestStorageRefundWithARealClock(t *testing.T) {
 func TestCrossOriginRequestsAreRefused(t *testing.T) {
 	e := newEnv(t)
 	create := func(headers map[string]string) (int, []byte) {
-		body := createRequest{Size: 100, Meta: encoding.EncodeToString(randomContent(64)),
-			AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
-		return e.request(http.MethodPost, "/api/v1/files", body, headers, nil)
+		return e.request(http.MethodPost, "/api/v1/files", validCreate(100), headers, nil)
 	}
 	for _, headers := range []map[string]string{
 		{"Sec-Fetch-Site": "cross-site", "Content-Type": "text/plain"},
@@ -547,7 +540,7 @@ func TestCrossSiteRequestsSpendNoBudget(t *testing.T) {
 		o.Limits = &Limits{General: Budget{PerMinute: 1, Burst: 3}, Create: Budget{PerMinute: 1000, Burst: 1000},
 			Download: Budget{PerMinute: 1000, Burst: 1000}, Storage: Budget{PerMinute: 1e12, Burst: 1 << 40}}
 	})
-	path := "/api/v1/files/" + encoding.EncodeToString(randomContent(16)) + "/meta"
+	path := "/api/v1/files/" + encoding.EncodeToString(randomBytes(16)) + "/meta"
 	cross := map[string]string{"Sec-Fetch-Site": "cross-site"}
 	for i := 0; i < 10; i++ {
 		if status, _ := e.request(http.MethodGet, path, nil, cross, nil); status != http.StatusForbidden {
@@ -568,7 +561,7 @@ func TestCrossSiteRequestsSpendNoBudget(t *testing.T) {
 // the browser, but it cannot pick the Host its requests carry.
 func TestAPIAnswersOnlyForItsHost(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) { o.Host = "vault.example" })
-	path := "/api/v1/files/" + encoding.EncodeToString(randomContent(16)) + "/meta"
+	path := "/api/v1/files/" + encoding.EncodeToString(randomBytes(16)) + "/meta"
 	for host, want := range map[string]int{
 		"vault.example":      http.StatusNotFound,
 		"vault.example:8443": http.StatusNotFound,
@@ -581,8 +574,7 @@ func TestAPIAnswersOnlyForItsHost(t *testing.T) {
 		}
 	}
 	rebound := map[string]string{"Host": "attacker.example", "Origin": "http://attacker.example", "Sec-Fetch-Site": "same-origin"}
-	body := createRequest{Size: 100, Meta: encoding.EncodeToString(randomContent(64)),
-		AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
+	body := validCreate(100)
 	if status, data := e.request(http.MethodPost, "/api/v1/files", body, rebound, nil); status != http.StatusMisdirectedRequest ||
 		!strings.Contains(string(data), `"misdirected"`) {
 		t.Errorf("create from a rebound name: %d %s", status, data)

@@ -34,7 +34,7 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 	for _, token := range strings.Fields(policy) {
-		if token == "'unsafe-inline'" || token == "'unsafe-eval'" || token == "'unsafe-inline';" || token == "'unsafe-eval';" {
+		if source := strings.TrimSuffix(token, ";"); source == "'unsafe-inline'" || source == "'unsafe-eval'" {
 			t.Errorf("CSP must not allow inline or eval: %s", policy)
 		}
 	}

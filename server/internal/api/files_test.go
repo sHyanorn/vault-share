@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -141,15 +140,16 @@ type share struct {
 	content   []byte
 }
 
-func randomContent(n int) []byte {
-	b := make([]byte, n)
-	rand.Read(b)
-	return b
+// validCreate is a create request that passes validation, for size bytes of
+// ciphertext and 64 bytes of metadata.
+func validCreate(size int64) createRequest {
+	return createRequest{Size: size, Meta: encoding.EncodeToString(randomBytes(64)),
+		AuthKey: encoding.EncodeToString(randomBytes(32)), ExpiresIn: 3600, MaxDownloads: 1}
 }
 
 func (e *env) create(size, maxDownloads int, expiresIn int64) share {
 	e.t.Helper()
-	sh := share{authKey: randomContent(32), meta: randomContent(64), content: randomContent(size)}
+	sh := share{authKey: randomBytes(32), meta: randomBytes(64), content: randomBytes(size)}
 	var resp createResponse
 	status, body := e.request(http.MethodPost, "/api/v1/files", createRequest{
 		Size:         int64(size),
@@ -338,10 +338,6 @@ func TestUploadRules(t *testing.T) {
 
 func TestCreateValidation(t *testing.T) {
 	e := newEnv(t)
-	valid := func() createRequest {
-		return createRequest{Size: 1000, Meta: encoding.EncodeToString(randomContent(64)),
-			AuthKey: encoding.EncodeToString(randomContent(32)), ExpiresIn: 3600, MaxDownloads: 1}
-	}
 	cases := []struct {
 		name   string
 		mutate func(*createRequest)
@@ -352,13 +348,13 @@ func TestCreateValidation(t *testing.T) {
 		{"too many downloads", func(r *createRequest) { r.MaxDownloads = 101 }, http.StatusBadRequest},
 		{"size below minimum", func(r *createRequest) { r.Size = 37 }, http.StatusBadRequest},
 		{"size above limit", func(r *createRequest) { r.Size = maxTestFileBytes + 1 }, http.StatusBadRequest},
-		{"short auth key", func(r *createRequest) { r.AuthKey = encoding.EncodeToString(randomContent(31)) }, http.StatusBadRequest},
+		{"short auth key", func(r *createRequest) { r.AuthKey = encoding.EncodeToString(randomBytes(31)) }, http.StatusBadRequest},
 		{"standard base64", func(r *createRequest) { r.AuthKey = strings.ReplaceAll(r.AuthKey, "-", "+") + "==" }, http.StatusBadRequest},
-		{"meta too short", func(r *createRequest) { r.Meta = encoding.EncodeToString(randomContent(27)) }, http.StatusBadRequest},
-		{"meta too long", func(r *createRequest) { r.Meta = encoding.EncodeToString(randomContent(4097)) }, http.StatusBadRequest},
+		{"meta too short", func(r *createRequest) { r.Meta = encoding.EncodeToString(randomBytes(27)) }, http.StatusBadRequest},
+		{"meta too long", func(r *createRequest) { r.Meta = encoding.EncodeToString(randomBytes(4097)) }, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
-		req := valid()
+		req := validCreate(1000)
 		tc.mutate(&req)
 		if status, _ := e.request(http.MethodPost, "/api/v1/files", req, nil, nil); status != tc.status {
 			t.Errorf("%s: %d, want %d", tc.name, status, tc.status)
@@ -370,7 +366,7 @@ func TestCreateValidation(t *testing.T) {
 	if status, _ := e.request(http.MethodPost, "/api/v1/files", []byte(`{"size":`), nil, nil); status != http.StatusBadRequest {
 		t.Errorf("malformed JSON: %d", status)
 	}
-	if status, _ := e.request(http.MethodPost, "/api/v1/files", valid(), nil, nil); status != http.StatusCreated {
+	if status, _ := e.request(http.MethodPost, "/api/v1/files", validCreate(1000), nil, nil); status != http.StatusCreated {
 		t.Errorf("valid request: %d", status)
 	}
 }
@@ -409,7 +405,7 @@ func TestChallengeRules(t *testing.T) {
 		t.Errorf("malformed challenge: %d", status)
 	}
 	// A bad request body gets the same answer whether or not the file exists.
-	missing := encoding.EncodeToString(randomContent(16))
+	missing := encoding.EncodeToString(randomBytes(16))
 	for _, id := range []string{missing, sh.id} {
 		for name, body := range map[string]any{"malformed": []byte("{"), "empty fields": downloadRequest{}} {
 			if status, _ := e.request(http.MethodPost, "/api/v1/files/"+id+"/download", body, nil, nil); status != http.StatusBadRequest {
@@ -471,7 +467,7 @@ func TestInvalidTokensOpenNoContent(t *testing.T) {
 		o.Blobs = counting
 	})
 	sh := e.shared(100, 1, 3600)
-	if status, _, _ := e.content(sh.id, encoding.EncodeToString(randomContent(tokenBytes))); status != http.StatusNotFound {
+	if status, _, _ := e.content(sh.id, encoding.EncodeToString(randomBytes(tokenBytes))); status != http.StatusNotFound {
 		t.Errorf("invalid token: %d", status)
 	}
 	if n := counting.opens.Load(); n != 0 {
@@ -509,7 +505,7 @@ func TestCleanupDeletesOrphanedContent(t *testing.T) {
 	e := newEnv(t)
 	sh := e.shared(100, 5, 86400)
 	pending := e.create(100, 5, 86400)
-	orphan := encoding.EncodeToString(randomContent(idBytes))
+	orphan := encoding.EncodeToString(randomBytes(idBytes))
 	ctx := context.Background()
 	for _, id := range []string{orphan, pending.id} {
 		if err := e.blobs.Put(ctx, id, 3, strings.NewReader("abc")); err != nil {
@@ -527,7 +523,7 @@ func TestCleanupDeletesOrphanedContent(t *testing.T) {
 		t.Error("cleanup deleted content that has a record")
 	}
 	// The sweep lists the whole store, so it runs once an hour.
-	late := encoding.EncodeToString(randomContent(idBytes))
+	late := encoding.EncodeToString(randomBytes(idBytes))
 	if err := e.blobs.Put(ctx, late, 3, strings.NewReader("abc")); err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +604,7 @@ func TestInvalidIDs(t *testing.T) {
 		if _, status := e.meta(id); status != http.StatusNotFound {
 			t.Errorf("meta %q: %d", id, status)
 		}
-		if status := e.remove(id, encoding.EncodeToString(randomContent(32))); status != http.StatusNotFound {
+		if status := e.remove(id, encoding.EncodeToString(randomBytes(32))); status != http.StatusNotFound {
 			t.Errorf("delete %q: %d", id, status)
 		}
 	}
@@ -640,17 +636,25 @@ func (b *heldBlobs) Put(ctx context.Context, id string, size int64, r io.Reader)
 	return b.Store.Put(ctx, id, size, r)
 }
 
-func TestOneUploadAtATimePerFile(t *testing.T) {
+// newHeldEnv builds an env whose first content upload waits in Put until
+// held.release is closed.
+func newHeldEnv(t *testing.T) (*env, *heldBlobs) {
+	t.Helper()
 	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
 	e := newEnvWith(t, func(o *Options) {
 		held.Store = o.Blobs
 		o.Blobs = held
 	})
+	return e, held
+}
+
+func TestOneUploadAtATimePerFile(t *testing.T) {
+	e, held := newHeldEnv(t)
 	sh := e.create(1000, 1, 3600)
 	first := make(chan int, 1)
 	go func() { first <- e.upload(sh, sh.owner, sh.content) }()
 	<-held.held
-	if status := e.upload(sh, sh.owner, randomContent(1000)); status != http.StatusConflict {
+	if status := e.upload(sh, sh.owner, randomBytes(1000)); status != http.StatusConflict {
 		t.Errorf("upload while another is in flight: %d", status)
 	}
 	close(held.release)
@@ -664,11 +668,7 @@ func TestOneUploadAtATimePerFile(t *testing.T) {
 }
 
 func TestNoDeleteDuringUpload(t *testing.T) {
-	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
-	e := newEnvWith(t, func(o *Options) {
-		held.Store = o.Blobs
-		o.Blobs = held
-	})
+	e, held := newHeldEnv(t)
 	sh := e.create(1000, 1, 3600)
 	done := make(chan int, 1)
 	go func() { done <- e.upload(sh, sh.owner, sh.content) }()
@@ -689,11 +689,7 @@ func TestNoDeleteDuringUpload(t *testing.T) {
 }
 
 func TestCleanupWaitsForARunningUpload(t *testing.T) {
-	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
-	e := newEnvWith(t, func(o *Options) {
-		held.Store = o.Blobs
-		o.Blobs = held
-	})
+	e, held := newHeldEnv(t)
 	sh := e.create(1000, 1, 86400)
 	first := make(chan int, 1)
 	go func() { first <- e.upload(sh, sh.owner, sh.content) }()

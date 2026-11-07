@@ -51,23 +51,23 @@ const (
 	idleAfter  = 30 * time.Minute
 )
 
-// table is a map that stays below max entries. Callers hold the lock.
+// table is a map that never holds more than maxEntries entries. Callers hold
+// the lock.
 type table[V any] struct {
 	entries   map[string]V
 	stale     func(V, time.Time) bool
 	lastSweep time.Time
-	soft, max int
 }
 
 func newTable[V any](stale func(V, time.Time) bool) table[V] {
-	return table[V]{entries: map[string]V{}, stale: stale, soft: sweepAbove, max: maxEntries}
+	return table[V]{entries: map[string]V{}, stale: stale}
 }
 
 // makeRoom runs before an insert. Evicting an arbitrary entry can hand a
 // client a fresh bucket or end its lockout early; reaching that takes tens
 // of thousands of distinct keys, each of which is rate limited itself.
 func (t *table[V]) makeRoom(now time.Time) {
-	if len(t.entries) < t.soft {
+	if len(t.entries) < sweepAbove {
 		return
 	}
 	if now.Sub(t.lastSweep) >= sweepEvery {
@@ -83,7 +83,7 @@ func (t *table[V]) makeRoom(now time.Time) {
 		t.entries = kept
 	}
 	for key := range t.entries { // map order is randomised
-		if len(t.entries) < t.max {
+		if len(t.entries) < maxEntries {
 			break
 		}
 		delete(t.entries, key)
