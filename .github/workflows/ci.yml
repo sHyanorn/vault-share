@@ -5,20 +5,8 @@ permissions:
 jobs:
   server:
     runs-on: ubuntu-latest
-    services:
-      # An S3-compatible service for the S3 blob store tests (D025).
-      s3:
-        image: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
-        env:
-          VGW_BACKEND: posix
-          VGW_BACKEND_ARG: /data
-          ROOT_ACCESS_KEY_ID: test-access-key
-          ROOT_SECRET_ACCESS_KEY: test-secret-key
-        options: --tmpfs /data
-        ports:
-          - 7070:7070
     env:
-      VAULT_TEST_S3_ENDPOINT: http://localhost:7070
+      VAULT_TEST_S3_ENDPOINT: http://127.0.0.1:7070
       VAULT_TEST_S3_BUCKET: vault-test
       VAULT_TEST_S3_ACCESS_KEY_ID: test-access-key
       VAULT_TEST_S3_SECRET_ACCESS_KEY: test-secret-key
@@ -32,8 +20,12 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - run: go vet ./...
-      - run: curl --silent --output /dev/null --retry 20 --retry-delay 1 --retry-connrefused http://localhost:7070
-      - run: go test -race ./...
+      # The S3-compatible service of compose.s3.yaml, for the S3 store tests (D025).
+      - name: Start the S3 test service
+        working-directory: .
+        run: docker compose -f compose.yaml -f compose.s3.yaml up --detach --wait s3
+      # No cached results: the service, not only the code, is under test.
+      - run: go test -race -count=1 ./...
       - run: go run -modfile=tools/go.mod golang.org/x/vuln/cmd/govulncheck ./...
       - run: go run -modfile=tools/go.mod github.com/securego/gosec/v2/cmd/gosec -quiet ./...
   web:
@@ -101,6 +93,18 @@ jobs:
         run: |
           docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt root.crt
           python3 scripts/blackbox.py https://localhost --cafile root.crt --http-url http://localhost
+      - name: Move the stack to S3
+        run: |
+          docker compose down --volumes
+          echo "COMPOSE_FILE=compose.yaml:compose.s3.yaml" >> "$GITHUB_ENV"
+      - name: End-to-end tests on S3
+        run: |
+          docker compose up --detach --wait
+          (cd web && npm run e2e)
+          # Every test share ends burned or deleted, so the bucket must be empty.
+          curl --silent --show-error --fail --aws-sigv4 aws:amz:us-east-1:s3 \
+            --user test-access-key:test-secret-key 'http://127.0.0.1:7070/vault?list-type=2' > listing.xml
+          grep -q '<KeyCount>0</KeyCount>' listing.xml || { cat listing.xml; exit 1; }
       - if: failure()
         run: docker compose logs
       - if: always()

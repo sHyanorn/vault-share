@@ -21,11 +21,15 @@ import (
 
 // The S3 tests need an S3-compatible service, named by VAULT_TEST_S3_ENDPOINT,
 // VAULT_TEST_S3_BUCKET, VAULT_TEST_S3_ACCESS_KEY_ID and
-// VAULT_TEST_S3_SECRET_ACCESS_KEY; CI starts one. Without them they skip.
+// VAULT_TEST_S3_SECRET_ACCESS_KEY; compose.s3.yaml starts one. Without them
+// they skip, except in CI, where a missing service must not pass unseen.
 func newS3(t *testing.T) *S3 {
 	t.Helper()
 	endpoint := os.Getenv("VAULT_TEST_S3_ENDPOINT")
 	if endpoint == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("VAULT_TEST_S3_ENDPOINT is not set")
+		}
 		t.Skip("VAULT_TEST_S3_ENDPOINT is not set")
 	}
 	cfg := S3Config{
