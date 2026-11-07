@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,11 +43,11 @@ type browser struct {
 	last    http.Header
 }
 
-var browsers int
+var browsers atomic.Int32
 
 func (e *env) browser() *browser {
-	browsers++
-	return &browser{e: e, addr: "198.51.100." + strconv.Itoa(browsers%250+1), cookies: map[string]string{}}
+	n := browsers.Add(1)
+	return &browser{e: e, addr: "198.51.100." + strconv.Itoa(int(n%250+1)), cookies: map[string]string{}}
 }
 
 func (b *browser) send(method, path string, body, out any) (int, []byte) {

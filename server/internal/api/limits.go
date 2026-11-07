@@ -173,7 +173,9 @@ func rateLimit(set *limiterSet) func(http.Handler) http.Handler {
 	}
 }
 
-// lockouts counts failures per key, such as a client and a file.
+// lockouts counts failures per key, such as a client and a file. An
+// attempt is admitted before it is checked and counted when it ends, so
+// attempts that arrive together cannot outnumber the failures allowed (F39).
 type lockouts struct {
 	mu       sync.Mutex
 	table    table[*lockoutEntry]
@@ -183,51 +185,75 @@ type lockouts struct {
 
 type lockoutEntry struct {
 	failures int
+	// inflight counts admitted attempts that have not ended yet.
+	inflight int
 	first    time.Time
 	until    time.Time
 }
 
 func newLockouts(failures int, now func() time.Time) *lockouts {
 	stale := func(e *lockoutEntry, now time.Time) bool {
-		return now.After(e.until) && now.Sub(e.first) > lockoutWindow
+		return e.inflight == 0 && now.After(e.until) && now.Sub(e.first) > lockoutWindow
 	}
 	return &lockouts{table: newTable(stale), failures: failures, now: now}
 }
 
-// locked reports whether key is currently refused.
-func (l *lockouts) locked(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// entry returns key's entry, starting a new window once the last one is
+// over and no refusal is in force. The caller holds l.mu.
+func (l *lockouts) entry(key string, now time.Time) *lockoutEntry {
 	entry, ok := l.table.entries[key]
-	return ok && l.now().Before(entry.until)
+	if !ok {
+		l.table.makeRoom(now)
+		entry = &lockoutEntry{first: now}
+		l.table.entries[key] = entry
+	} else if now.Sub(entry.first) > lockoutWindow && !now.Before(entry.until) {
+		entry.failures, entry.first = 0, now
+	}
+	return entry
 }
 
-// reset forgets key's failures; a refusal in force stays.
-func (l *lockouts) reset(key string) {
+// admit reserves an attempt for key. It refuses while key is locked, and
+// while the attempts in flight could lock it, should they all fail. Every
+// admitted attempt ends with failed or passed.
+func (l *lockouts) admit(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if entry, ok := l.table.entries[key]; ok && !l.now().Before(entry.until) {
-		delete(l.table.entries, key)
+	now := l.now()
+	entry := l.entry(key, now)
+	if now.Before(entry.until) || entry.failures+entry.inflight >= l.failures {
+		return false
 	}
+	entry.inflight++
+	return true
 }
 
-// failed records a failure and reports whether it triggered a lockout.
+// failed ends an admitted attempt as a failure and reports whether it
+// locked key.
 func (l *lockouts) failed(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	entry, ok := l.table.entries[key]
-	if !ok || now.Sub(entry.first) > lockoutWindow {
-		if !ok {
-			l.table.makeRoom(now)
-		}
-		entry = &lockoutEntry{first: now}
-		l.table.entries[key] = entry
-	}
+	entry := l.entry(key, now)
+	entry.inflight = max(0, entry.inflight-1)
 	entry.failures++
 	if entry.failures == l.failures {
 		entry.until = now.Add(lockoutPeriod)
 		return true
 	}
 	return false
+}
+
+// passed ends an admitted attempt that did not fail. forget also drops the
+// failures counted so far; a refusal in force stays.
+func (l *lockouts) passed(key string, forget bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry, ok := l.table.entries[key]
+	if !ok {
+		return
+	}
+	entry.inflight = max(0, entry.inflight-1)
+	if forget && !l.now().Before(entry.until) {
+		entry.failures = 0
+	}
 }

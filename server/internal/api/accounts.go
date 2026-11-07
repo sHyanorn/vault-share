@@ -202,26 +202,36 @@ func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (
 	if device, known := a.knownDevice(r, username); known {
 		scope, scopeKey = a.deviceLocks, device
 	}
-	if a.clientLocks.locked(clientKey) || scope.locked(scopeKey) {
+	if !a.clientLocks.admit(clientKey) {
 		return store.User{}, authLocked
+	}
+	if !scope.admit(scopeKey) {
+		a.clientLocks.passed(clientKey, false)
+		return store.User{}, authLocked
+	}
+	// An attempt that could not be checked counts as neither outcome.
+	abandon := func() {
+		a.clientLocks.passed(clientKey, false)
+		scope.passed(scopeKey, false)
 	}
 	u, err := a.store.UserByName(ctx, username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		abandon()
 		a.log.Error("load account", "err", err)
 		return store.User{}, authError
 	}
 	ok, err := a.hasher.verify(ctx, u.AuthHash, auth)
 	switch {
 	case errors.Is(err, errBusy):
+		abandon()
 		return store.User{}, authBusy
 	case err != nil:
+		abandon()
 		a.log.Error("verify password", "err", err)
 		return store.User{}, authError
 	case ok:
-		a.clientLocks.reset(clientKey)
-		if scope == a.deviceLocks {
-			scope.reset(scopeKey)
-		}
+		a.clientLocks.passed(clientKey, true)
+		scope.passed(scopeKey, scope == a.deviceLocks)
 		return u, authOK
 	}
 	client := clientFrom(ctx)
