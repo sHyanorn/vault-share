@@ -101,10 +101,12 @@ jobs:
         run: |
           docker compose up --detach --wait
           (cd web && npm run e2e)
-          # Every test share ends burned or deleted, so the bucket must be empty.
+          # Every test share ends burned or deleted, so the bucket must be
+          # empty, and through those deletes: the orphan sweep found nothing.
           curl --silent --show-error --fail --aws-sigv4 aws:amz:us-east-1:s3 \
             --user test-access-key:test-secret-key 'http://127.0.0.1:7070/vault?list-type=2' > listing.xml
           grep -q '<KeyCount>0</KeyCount>' listing.xml || { cat listing.xml; exit 1; }
+          ! docker compose logs vaultd | grep 'deleted orphaned content'
       - if: failure()
         run: docker compose logs
       - if: always()
