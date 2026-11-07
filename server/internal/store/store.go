@@ -259,6 +259,19 @@ func (s *Store) CreateDownloadToken(ctx context.Context, fileID string, tokenHas
 	return err
 }
 
+// DownloadTokenValid reports whether the token is valid for the file at now,
+// without using it up.
+func (s *Store) DownloadTokenValid(ctx context.Context, fileID string, tokenHash []byte, now time.Time) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM download_tokens WHERE token_hash = ? AND file_id = ? AND expires_at > ?`,
+		tokenHash, fileID, now.Unix()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // ConsumeDownloadToken deletes the token and reports whether it was valid for the file at now.
 func (s *Store) ConsumeDownloadToken(ctx context.Context, fileID string, tokenHash []byte, now time.Time) (bool, error) {
 	return s.changed(s.db.ExecContext(ctx,
