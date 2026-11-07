@@ -148,13 +148,13 @@ export default function UploadPage() {
             </button>
           ) : (
             <label className="field">
-              <span>Password</span>
+              <span id="password-label">Password</span>
               <input
                 className="text"
                 type="password"
                 autoComplete="new-password"
                 autoFocus
-                minLength={MIN_PASSWORD_LENGTH}
+                aria-labelledby="password-label"
                 aria-describedby="password-hint"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
