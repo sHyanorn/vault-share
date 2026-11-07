@@ -96,6 +96,20 @@ func TestLoadInvalid(t *testing.T) {
 			}
 		})
 	}
+	t.Run("sizes near the int64 limit", func(t *testing.T) {
+		for _, c := range []map[string]string{
+			{"VAULT_MAX_FILE_BYTES": "9223372036854775807"},
+			{"VAULT_MAX_FILE_BYTES": "1099511627777"}, // 1 TiB and one byte
+			{"VAULT_MAX_TOTAL_BYTES": "9223372036854775807"},
+		} {
+			if _, err := Load(lookupFrom(c)); err == nil {
+				t.Errorf("%v: want error", c)
+			}
+		}
+		if _, err := Load(lookupFrom(map[string]string{"VAULT_MAX_FILE_BYTES": "1099511627776", "VAULT_MAX_TOTAL_BYTES": "1125899906842624"})); err != nil {
+			t.Errorf("the largest limits: %v", err)
+		}
+	})
 	t.Run("base url variants", func(t *testing.T) {
 		for _, bad := range []string{"localhost", "https://", "https://u:p@h", "https://h?x=1", "https://h#frag", "https://h?", "https://h/#", "https://h/%zz"} {
 			if _, err := Load(lookupFrom(map[string]string{"VAULT_BASE_URL": bad})); err == nil {

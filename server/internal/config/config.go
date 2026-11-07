@@ -64,6 +64,13 @@ type S3 struct {
 	PathStyle bool
 }
 
+// The size limits keep every sum the quota builds on them far from
+// overflowing an int64 (F36).
+const (
+	maxFileBytes  = 1 << 40
+	maxTotalBytes = 1 << 50
+)
+
 var s3Variables = []string{"S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_PATH_STYLE"}
 
 // Load reads settings through lookup, normally os.LookupEnv. Unset or empty
@@ -107,8 +114,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 
 	if n, err := strconv.ParseInt(get("MAX_FILE_BYTES", "1073741824"), 10, 64); err != nil {
 		fail("MAX_FILE_BYTES", err)
-	} else if n <= 0 {
-		fail("MAX_FILE_BYTES", errors.New("must be positive"))
+	} else if n <= 0 || n > maxFileBytes {
+		fail("MAX_FILE_BYTES", errors.New("must be positive and at most 1 TiB"))
 	} else {
 		cfg.MaxFileBytes = n
 	}
@@ -117,6 +124,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		fail("MAX_TOTAL_BYTES", err)
 	} else if n < cfg.MaxFileBytes+1<<20 {
 		fail("MAX_TOTAL_BYTES", errors.New("must leave room for one file of VAULT_MAX_FILE_BYTES"))
+	} else if n > maxTotalBytes {
+		fail("MAX_TOTAL_BYTES", errors.New("must be at most 1 PiB"))
 	} else {
 		cfg.MaxTotalBytes = n
 	}
