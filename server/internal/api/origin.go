@@ -20,6 +20,9 @@ func sameOrigin() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		next = writes.Handler(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The answer depends on these headers, so a cache must keep the
+			// answers apart (OWASP CSRF Prevention Cheat Sheet).
+			w.Header().Add("Vary", "Sec-Fetch-Site, Origin")
 			switch r.Header.Get("Sec-Fetch-Site") {
 			case "cross-site", "same-site":
 				refuse.ServeHTTP(w, r)
