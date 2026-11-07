@@ -10,6 +10,8 @@ describe('safeFileName', () => {
     )
     expect(safeFileName('   ')).toBe('download')
     expect(safeFileName('.hidden')).toBe('hidden')
+    expect(safeFileName(' .env')).toBe('env')
+    expect(safeFileName('\u00a0. ..bashrc')).toBe('bashrc')
     expect(safeFileName('x'.repeat(300))).toHaveLength(255)
   })
 
@@ -19,6 +21,7 @@ describe('safeFileName', () => {
       'photo.jpg.exe',
     )
     expect(safeFileName('\ufeffnotes.txt')).toBe('notes.txt')
+    expect(safeFileName('\u200d\u200d')).toBe('download')
     expect(safeFileName('family \ud83d\udc68\u200d\ud83d\udc69.png')).toBe(
       'family \ud83d\udc68\u200d\ud83d\udc69.png',
     )

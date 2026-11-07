@@ -10,9 +10,11 @@ export function safeFileName(name: string): string {
   const cleaned = name
     .replace(/(?!\u200d)[\p{Cc}\p{Cf}]/gu, '')
     .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/^\.+/, '')
+    .replace(/^[\s.]+/, '')
     .trim()
-  return Array.from(cleaned).slice(0, 255).join('') || 'download'
+  const capped = Array.from(cleaned).slice(0, 255).join('')
+  // A name of joiners alone would display as nothing.
+  return /[^\s\u200d]/u.test(capped) ? capped : 'download'
 }
 
 const units = ['B', 'KB', 'MB', 'GB']
