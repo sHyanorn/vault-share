@@ -5,9 +5,10 @@
 //
 //   node scripts/browser_checks.cjs https://localhost [screenshot dir]
 //
-// Needs the playwright package (1.63) with its Chromium on the module path,
-// e.g. NODE_PATH=$(npm root -g). Certificates are not verified here;
-// scripts/blackbox.py checks TLS.
+// Needs the playwright package and its Chromium on the module path: after
+// npm ci and npx playwright install chromium in web/, NODE_PATH=web/node_modules.
+// Certificates are not verified here; scripts/blackbox.py checks TLS. CI runs
+// these checks on every push.
 'use strict'
 
 const crypto = require('node:crypto')

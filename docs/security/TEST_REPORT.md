@@ -357,10 +357,13 @@ The full list is in section 5 of the threat model. These are the ones a reader o
 docker compose up --build --detach --wait
 docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt root.crt
 python3 scripts/blackbox.py https://localhost --cafile root.crt --http-url http://localhost
-NODE_PATH="$(npm root -g)" node scripts/browser_checks.cjs https://localhost shots
+(cd web && npm ci && npx playwright install chromium)
+NODE_PATH=web/node_modules node scripts/browser_checks.cjs https://localhost shots
 ```
 
 To check vaultd alone, start it with `VAULT_BASE_URL` set to the address the script targets, such as `http://127.0.0.1:8090`. The API answers only for that host.
+
+CI runs both scripts, and the end-to-end tests in `web/e2e`, against the Compose stack on every push.
 
 The black-box script refuses non-local targets unless `--remote` confirms that the instance is yours. It creates test files and deletes them afterwards, locks one of them, and uses up the client's create budget.
 
