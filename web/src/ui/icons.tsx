@@ -54,3 +54,47 @@ export function LinkOffIcon() {
     </svg>
   )
 }
+
+export function UserIcon() {
+  return (
+    <svg {...base}>
+      <circle cx="12" cy="12" r="9.5" />
+      <circle cx="12" cy="10" r="3" />
+      <path d="M6.5 18.2a6.5 6.5 0 0 1 11 0" />
+    </svg>
+  )
+}
+
+export function ShieldIcon() {
+  return (
+    <svg {...base}>
+      <path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-2.5Z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  )
+}
+
+export function LockIcon() {
+  return (
+    <svg {...base}>
+      <rect x="5.5" y="10.5" width="13" height="9.5" rx="2" />
+      <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
+    </svg>
+  )
+}
+
+export function TrashIcon() {
+  return (
+    <svg {...base}>
+      <path d="M4.5 7h15M9.5 7V5h5v2M7 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4L17 7" />
+    </svg>
+  )
+}
+
+export function ChevronIcon() {
+  return (
+    <svg {...base}>
+      <path d="m9.5 6 6 6-6 6" />
+    </svg>
+  )
+}

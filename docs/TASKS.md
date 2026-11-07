@@ -51,6 +51,6 @@
 - [x] English README: encryption flow diagram, GIF, threat model summary, known limitations
 
 ## Optional M7 User Accounts
-- [ ] Sign-up and login, Argon2id, session cookies, CSRF
-- [ ] TOTP two-factor authentication
-- [ ] "My files" list
+- [x] Sign-up and login, Argon2id, session cookies, CSRF
+- [x] TOTP two-factor authentication
+- [x] "My files" list

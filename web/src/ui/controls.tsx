@@ -1,4 +1,9 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import {
+  useEffect,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from 'react'
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'quiet' | 'danger'
@@ -135,6 +140,49 @@ export function Hero({ icon, title, text, tone = 'accent' }: HeroProps) {
       {icon}
       <h1>{title}</h1>
       {text && <p>{text}</p>}
+    </div>
+  )
+}
+
+/**
+ * Opens and closes its content by its height. Closed content stays a
+ * moment for the animation, then leaves, so a form opened again is fresh.
+ */
+export function Collapse({
+  open,
+  children,
+}: {
+  open: boolean
+  children: ReactNode
+}) {
+  const [wasOpen, setWasOpen] = useState(open)
+  const [closing, setClosing] = useState(false)
+  // Whether the closed state has been painted, so opening can animate.
+  const [raised, setRaised] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    setClosing(!open)
+    if (open) setRaised(false)
+  }
+
+  useEffect(() => {
+    if (!open || raised) return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => setRaised(true))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, raised])
+
+  useEffect(() => {
+    if (!closing) return
+    const timer = setTimeout(() => setClosing(false), 260)
+    return () => clearTimeout(timer)
+  }, [closing])
+
+  if (!open && !closing) return null
+  return (
+    <div className={`collapse ${open && raised ? 'shown' : ''}`} inert={!open}>
+      <div className="collapse-inner">{children}</div>
     </div>
   )
 }
