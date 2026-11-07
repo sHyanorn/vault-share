@@ -58,11 +58,13 @@ const (
 	idleAfter  = 30 * time.Minute
 )
 
-// table is a map that never holds more than maxEntries entries. Callers hold
-// the lock.
+// table is a map that never holds more than maxEntries entries besides those
+// keep names. Callers hold the lock.
 type table[V any] struct {
-	entries   map[string]V
-	stale     func(V, time.Time) bool
+	entries map[string]V
+	stale   func(V, time.Time) bool
+	// keep, when set, names entries that must not be evicted to make room.
+	keep      func(V) bool
 	lastSweep time.Time
 }
 
@@ -89,9 +91,12 @@ func (t *table[V]) makeRoom(now time.Time) {
 		}
 		t.entries = kept
 	}
-	for key := range t.entries { // map order is randomised
+	for key, v := range t.entries { // map order is randomised
 		if len(t.entries) < maxEntries {
 			break
+		}
+		if t.keep != nil && t.keep(v) {
+			continue
 		}
 		delete(t.entries, key)
 	}
@@ -174,8 +179,9 @@ func rateLimit(set *limiterSet) func(http.Handler) http.Handler {
 }
 
 // lockouts counts failures per key, such as a client and a file. An
-// attempt is admitted before it is checked and counted when it ends, so
-// attempts that arrive together cannot outnumber the failures allowed (F39).
+// attempt is admitted before it is checked and ends once, as a failure or
+// not, so attempts that arrive together cannot outnumber the failures
+// allowed (F39).
 type lockouts struct {
 	mu       sync.Mutex
 	table    table[*lockoutEntry]
@@ -192,10 +198,35 @@ type lockoutEntry struct {
 }
 
 func newLockouts(failures int, now func() time.Time) *lockouts {
-	stale := func(e *lockoutEntry, now time.Time) bool {
+	l := &lockouts{failures: failures, now: now}
+	l.table = newTable(func(e *lockoutEntry, now time.Time) bool {
 		return e.inflight == 0 && now.After(e.until) && now.Sub(e.first) > lockoutWindow
-	}
-	return &lockouts{table: newTable(stale), failures: failures, now: now}
+	})
+	// Evicting an entry with attempts in flight would lose their count (F44).
+	l.table.keep = func(e *lockoutEntry) bool { return e.inflight > 0 }
+	return l
+}
+
+// refusal says why an attempt was not admitted.
+type refusal int
+
+const (
+	// refusedLocked: a lockout is in force.
+	refusedLocked refusal = iota + 1
+	// refusedBusy: the attempts in flight could reach the limit, should they
+	// all fail; one of them ends shortly (F42).
+	refusedBusy
+)
+
+// attempt is an admitted try at a key. It ends once: with fail or pass, or
+// with end, which callers defer so that an attempt left without either still
+// ends, uncounted. An entry with an attempt in flight is never swept or
+// evicted, so the entry stays the one in the table.
+type attempt struct {
+	l     *lockouts
+	key   string
+	entry *lockoutEntry
+	ended bool
 }
 
 // entry returns key's entry, starting a new window once the last one is
@@ -212,48 +243,69 @@ func (l *lockouts) entry(key string, now time.Time) *lockoutEntry {
 	return entry
 }
 
-// admit reserves an attempt for key. It refuses while key is locked, and
-// while the attempts in flight could lock it, should they all fail. Every
-// admitted attempt ends with failed or passed.
-func (l *lockouts) admit(key string) bool {
+// admit reserves an attempt for key, or says why it may not be tried now.
+func (l *lockouts) admit(key string) (*attempt, refusal) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	entry := l.entry(key, now)
-	if now.Before(entry.until) || entry.failures+entry.inflight >= l.failures {
-		return false
+	switch {
+	case now.Before(entry.until):
+		return nil, refusedLocked
+	case entry.failures+entry.inflight >= l.failures:
+		return nil, refusedBusy
 	}
 	entry.inflight++
-	return true
+	return &attempt{l: l, key: key, entry: entry}, 0
 }
 
-// failed ends an admitted attempt as a failure and reports whether it
-// locked key.
-func (l *lockouts) failed(key string) bool {
+// fail ends the attempt as a failure and reports whether it locked the key.
+func (a *attempt) fail() bool {
+	l := a.l
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if a.ended {
+		return false
+	}
+	a.ended = true
 	now := l.now()
-	entry := l.entry(key, now)
-	entry.inflight = max(0, entry.inflight-1)
-	entry.failures++
-	if entry.failures == l.failures {
-		entry.until = now.Add(lockoutPeriod)
+	e := a.entry
+	e.inflight--
+	if now.Sub(e.first) > lockoutWindow && !now.Before(e.until) {
+		e.failures, e.first = 0, now
+	}
+	e.failures++
+	if e.failures == l.failures {
+		e.until = now.Add(lockoutPeriod)
 		return true
 	}
 	return false
 }
 
-// passed ends an admitted attempt that did not fail. forget also drops the
-// failures counted so far; a refusal in force stays.
-func (l *lockouts) passed(key string, forget bool) {
+// pass ends the attempt without a failure. forget also drops the failures
+// counted so far; a refusal in force stays.
+func (a *attempt) pass(forget bool) {
+	l := a.l
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry, ok := l.table.entries[key]
-	if !ok {
+	if a.ended {
 		return
 	}
-	entry.inflight = max(0, entry.inflight-1)
-	if forget && !l.now().Before(entry.until) {
-		entry.failures = 0
+	a.ended = true
+	now := l.now()
+	e := a.entry
+	e.inflight--
+	if forget && !now.Before(e.until) {
+		e.failures = 0
 	}
+	// An entry that holds nothing leaves, so attempts that pass leave the
+	// table as they found it (F44).
+	if e.failures == 0 && e.inflight == 0 && !now.Before(e.until) && l.table.entries[a.key] == e {
+		delete(l.table.entries, a.key)
+	}
+}
+
+// end ends the attempt uncounted, unless it has ended already.
+func (a *attempt) end() {
+	a.pass(false)
 }

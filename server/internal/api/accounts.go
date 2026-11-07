@@ -202,45 +202,50 @@ func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (
 	if device, known := a.knownDevice(r, username); known {
 		scope, scopeKey = a.deviceLocks, device
 	}
-	if !a.clientLocks.admit(clientKey) {
-		return store.User{}, authLocked
+	byClient, why := a.clientLocks.admit(clientKey)
+	if byClient == nil {
+		return store.User{}, why.result()
 	}
-	if !scope.admit(scopeKey) {
-		a.clientLocks.passed(clientKey, false)
-		return store.User{}, authLocked
+	defer byClient.end()
+	inScope, why := scope.admit(scopeKey)
+	if inScope == nil {
+		return store.User{}, why.result()
 	}
-	// An attempt that could not be checked counts as neither outcome.
-	abandon := func() {
-		a.clientLocks.passed(clientKey, false)
-		scope.passed(scopeKey, false)
-	}
+	defer inScope.end()
+	// An attempt that cannot be checked ends uncounted.
 	u, err := a.store.UserByName(ctx, username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		abandon()
 		a.log.Error("load account", "err", err)
 		return store.User{}, authError
 	}
 	ok, err := a.hasher.verify(ctx, u.AuthHash, auth)
 	switch {
 	case errors.Is(err, errBusy):
-		abandon()
 		return store.User{}, authBusy
 	case err != nil:
-		abandon()
 		a.log.Error("verify password", "err", err)
 		return store.User{}, authError
 	case ok:
-		a.clientLocks.passed(clientKey, true)
-		scope.passed(scopeKey, scope == a.deviceLocks)
+		byClient.pass(true)
+		inScope.pass(scope == a.deviceLocks)
 		return u, authOK
 	}
 	client := clientFrom(ctx)
 	a.audit.RecordAccount(ctx, audit.LoginFailed, u.ID, client)
-	lockedClient := a.clientLocks.failed(clientKey)
-	if scope.failed(scopeKey) || lockedClient {
+	lockedClient := byClient.fail()
+	if inScope.fail() || lockedClient {
 		a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
 	}
 	return store.User{}, authFailed
+}
+
+// result is how a refused attempt is answered: a lockout in force asks for
+// its whole period, attempts in flight only for a moment.
+func (r refusal) result() authResult {
+	if r == refusedBusy {
+		return authBusy
+	}
+	return authLocked
 }
 
 // refuse answers a failed authenticate; status, code and message describe

@@ -48,8 +48,8 @@ func TestConcurrentSignInsRespectTheLockouts(t *testing.T) {
 		_, body := b.send(http.MethodPost, "/api/v1/session", loginRequest{Username: "alice", Auth: wrong}, nil)
 		return body
 	})
-	if codes["login_failed"] != accountFailures || codes["locked"] != 50-accountFailures {
-		t.Errorf("50 sign-ins at once from 50 clients: %v, want %d checked", codes, accountFailures)
+	if codes["login_failed"] != accountFailures || codes["locked"]+codes["busy"] != 50-accountFailures {
+		t.Errorf("50 sign-ins at once from 50 clients: %v, want %d checked and the rest refused", codes, accountFailures)
 	}
 
 	// From one client: that client locks after lockoutFailures checks.
@@ -83,8 +83,8 @@ func TestConcurrentSecondStepsRespectTheLimits(t *testing.T) {
 	// most lockoutFailures in its window, however many arrive at once.
 	one := ticket()
 	codes := parallel(40, func(int) []byte { return step(one, "000000") })
-	if codes["wrong_code"] > maxTicketAttempts {
-		t.Errorf("40 codes at once on one ticket: %v, want at most %d checked", codes, maxTicketAttempts)
+	if codes["wrong_code"] != maxTicketAttempts || codes["ticket_expired"] != 40-maxTicketAttempts {
+		t.Errorf("40 codes at once on one ticket: %v, want %d checked and the rest refused by the ticket", codes, maxTicketAttempts)
 	}
 	e.advance(lockoutPeriod + 1)
 	tickets := make([]string, 8)
@@ -92,8 +92,8 @@ func TestConcurrentSecondStepsRespectTheLimits(t *testing.T) {
 		tickets[i] = ticket()
 	}
 	codes = parallel(40, func(i int) []byte { return step(tickets[i%len(tickets)], "000000") })
-	if codes["wrong_code"] > lockoutFailures {
-		t.Errorf("40 codes at once over 8 tickets: %v, want at most %d checked", codes, lockoutFailures)
+	if codes["wrong_code"] != lockoutFailures || codes["locked"]+codes["busy"] != 40-lockoutFailures {
+		t.Errorf("40 codes at once over 8 tickets: %v, want %d checked and the rest refused by the account", codes, lockoutFailures)
 	}
 }
 
