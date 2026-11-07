@@ -28,13 +28,15 @@ const MaxS3ObjectBytes = 5 << 30
 // S3Config names a bucket on an S3-compatible service. The bucket belongs to
 // vaultd alone.
 type S3Config struct {
-	// Endpoint is the service URL; empty means AWS. A custom endpoint is
-	// addressed path-style, which every S3-compatible service accepts.
+	// Endpoint is the service URL; empty means AWS.
 	Endpoint        string
 	Region          string
 	Bucket          string
 	AccessKeyID     string
 	SecretAccessKey string
+	// PathStyle names the bucket in the path, as most self-hosted services
+	// need, instead of in the host name.
+	PathStyle bool
 }
 
 // S3 stores each blob as an object named by its id. The body streams into a
@@ -120,8 +122,8 @@ func newS3Client(cfg S3Config) *s3.Client {
 	}
 	if cfg.Endpoint != "" {
 		opts.BaseEndpoint = aws.String(cfg.Endpoint)
-		opts.UsePathStyle = true
 	}
+	opts.UsePathStyle = cfg.PathStyle
 	return s3.New(opts)
 }
 

@@ -34,6 +34,7 @@ func newS3(t *testing.T) *S3 {
 		Bucket:          os.Getenv("VAULT_TEST_S3_BUCKET"),
 		AccessKeyID:     os.Getenv("VAULT_TEST_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("VAULT_TEST_S3_SECRET_ACCESS_KEY"),
+		PathStyle:       true,
 	}
 	ctx := context.Background()
 	_, err := newS3Client(cfg).CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
@@ -82,7 +83,7 @@ func TestS3RequestsTimeOut(t *testing.T) {
 	}()
 	defer func(saved time.Duration) { responseTimeout = saved }(responseTimeout)
 	responseTimeout = 200 * time.Millisecond
-	c := newS3Client(S3Config{Endpoint: "http://" + ln.Addr().String(), Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s"})
+	c := newS3Client(S3Config{Endpoint: "http://" + ln.Addr().String(), Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true})
 	// Only a backstop, so a missing timeout fails the test instead of hanging it.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -144,7 +145,7 @@ func TestNewS3ChecksTheBucket(t *testing.T) {
 	for _, c := range cases {
 		fake := &fakeS3{versioning: c.versioning, conditional: c.conditional, keys: map[string]bool{}}
 		srv := httptest.NewServer(fake)
-		_, err := NewS3(context.Background(), S3Config{Endpoint: srv.URL, Region: "us-east-1", Bucket: "vault", AccessKeyID: "k", SecretAccessKey: "s"})
+		_, err := NewS3(context.Background(), S3Config{Endpoint: srv.URL, Region: "us-east-1", Bucket: "vault", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true})
 		srv.Close()
 		switch {
 		case c.refusal == "" && err != nil:

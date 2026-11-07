@@ -51,6 +51,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("blob store: %w", err)
 	}
+	storage := []any{"kind", cfg.Storage}
+	if cfg.Storage == "s3" {
+		// Where the files go, never the credentials.
+		storage = append(storage, "bucket", cfg.S3.Bucket, "endpoint", cfg.S3.Endpoint, "region", cfg.S3.Region)
+	}
+	logger.Info("storage", storage...)
 	auditor, err := audit.New(cfg.DataDir, st, logger)
 	if err != nil {
 		return fmt.Errorf("audit key: %w", err)
@@ -119,5 +125,6 @@ func openBlobs(ctx context.Context, cfg config.Config) (blob.Store, error) {
 		Bucket:          cfg.S3.Bucket,
 		AccessKeyID:     cfg.S3.AccessKeyID,
 		SecretAccessKey: cfg.S3.SecretAccessKey,
+		PathStyle:       cfg.S3.PathStyle,
 	})
 }
