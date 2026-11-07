@@ -358,6 +358,78 @@ async function checkCrossSite(browser) {
   server.close()
 }
 
+// Accounts (D026): neither the password nor anything that opens the account
+// key leaves the browser, and scripts on the page cannot read the session.
+async function checkAccount(browser) {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1000, height: 700 }, deviceScaleFactor: 2 })
+  await captureBodies(context)
+  const requests = record(context)
+  const page = await context.newPage()
+  const username = `bc-${crypto.randomBytes(4).toString('hex')}`
+  const password = 'correct horse battery staple'
+  await page.goto(base + '/signup')
+  await page.getByLabel('Username').fill(username)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Create account' }).click()
+  await page.getByRole('link', { name: username }).waitFor({ timeout: 60_000 })
+  await page.setInputFiles('input[type=file]', { name: 'ledger.txt', mimeType: 'text/plain', buffer: crypto.randomBytes(3000) })
+  await page.getByRole('button', { name: 'Create link' }).click()
+  await page.getByText('Saved to My files').waitFor({ timeout: 60_000 })
+  const link = await page.locator('.share-link code').first().textContent()
+  const shareSecret = Buffer.from(new URL(link).hash.slice(1), 'base64url')
+  // A fresh load: the account opens again from what this browser kept.
+  await page.goto(base + '/files')
+  await page.getByText('ledger.txt').waitFor({ timeout: 30_000 })
+  await shot(page, 'my-files.png')
+  ok(true, 'after a reload My files opens the account again and shows the file name')
+
+  // The key tree of web/src/crypto/account.ts, recomputed outside the browser.
+  const sent = await requests()
+  const signup = sent.find((r) => r.method === 'POST' && new URL(r.url).pathname === '/api/v1/account')
+  const req = JSON.parse(signup.body.toString())
+  const { argon2id } = require('hash-wasm')
+  const master = Buffer.from(await argon2id({
+    password: password.normalize('NFKC'), salt: Buffer.from(req.salt, 'base64url'),
+    memorySize: 65536, iterations: 2, parallelism: 1, hashLength: 32, outputType: 'binary',
+  }))
+  const derive = (label) => Buffer.from(crypto.hkdfSync('sha256', master, Buffer.alloc(0), label, 32))
+  const auth = derive('vault-share/account-auth')
+  const wrap = derive('vault-share/account-wrap')
+  ok(Buffer.from(req.auth, 'base64url').equals(auth), 'sign-up sends the auth secret derived from the password, as D026 has it')
+  const sealed = Buffer.from(req.sealed_key, 'base64url')
+  const decipher = crypto.createDecipheriv('aes-256-gcm', wrap, sealed.subarray(0, 12))
+  decipher.setAAD(Buffer.from('vault-share/account-key'))
+  decipher.setAuthTag(sealed.subarray(sealed.length - 16))
+  const accountKey = Buffer.concat([decipher.update(sealed.subarray(12, sealed.length - 16)), decipher.final()])
+  const leaks = findLeaks(sent, [
+    { label: 'password', value: password },
+    { label: 'master key', bytes: master },
+    { label: 'wrapping key', bytes: wrap },
+    { label: 'account key', bytes: accountKey },
+    { label: 'share secret', bytes: shareSecret },
+    { label: 'file name', value: 'ledger.txt' },
+  ])
+  ok(missingBodies(sent).length === 0 && leaks.length === 0,
+    `none of ${sent.length} requests carries the password, the master, wrapping or account key, the share secret or the file name`,
+    leaks.join('; '))
+  const session = (await context.cookies()).find((c) => c.name === '__Host-vault_session')
+  ok(session?.httpOnly && session.secure && session.sameSite === 'Strict', 'the session cookie is HttpOnly, Secure and SameSite=Strict')
+  ok((await page.evaluate(() => document.cookie)) === '', 'scripts on the page see no cookie at all')
+  const stored = await page.evaluate(() => Object.entries(localStorage))
+  const kept = stored.length === 1 ? Buffer.from(stored[0][1], 'base64url') : Buffer.alloc(0)
+  ok(stored.length === 1 && stored[0][0] === 'vault-share/account' && kept.length === 60 && !kept.includes(accountKey.subarray(0, 8)),
+    "local storage holds only the account key sealed under the session's device key", JSON.stringify(stored.map(([k]) => k)))
+
+  await page.goto(base + '/account')
+  await page.getByRole('button', { name: 'Delete account' }).click()
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Delete account' }).last().click()
+  await page.getByText('Your account and its files are deleted.').waitFor({ timeout: 60_000 })
+  const left = await page.evaluate(() => Object.keys(localStorage))
+  ok(left.length === 0, 'deleting the account clears what this browser kept', left.join(', '))
+  await context.close()
+}
+
 async function main() {
   const host = new URL(base).hostname
   if (!['localhost', '127.0.0.1', '[::1]'].includes(host)) {
@@ -376,9 +448,10 @@ async function main() {
   await context.addInitScript(() => delete window.showSaveFilePicker)
   await captureBodies(context)
   console.log(`vault-share browser checks against ${base}`)
-  for (const check of [checkFragment, checkPassword, checkCSP, checkUploadedScript, checkFraming, checkCrossSite]) {
+  const ownContext = [checkCrossSite, checkAccount]
+  for (const check of [checkFragment, checkPassword, checkCSP, checkUploadedScript, checkFraming, checkCrossSite, checkAccount]) {
     try {
-      await check(check === checkCrossSite ? browser : context)
+      await check(ownContext.includes(check) ? browser : context)
     } catch (error) {
       ok(false, `${check.name} stopped`, error.message.split('\n')[0])
     }
