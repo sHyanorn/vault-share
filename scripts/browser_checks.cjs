@@ -32,7 +32,18 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(shots, name) })
 }
 
-// Every request the browser sends, with headers and body.
+// Request bodies, taken by interception: Playwright reports none for a Blob
+// sent by XHR, which is how the ciphertext is uploaded.
+const bodies = new WeakMap()
+
+async function captureBodies(context) {
+  await context.route('**/*', (route) => {
+    bodies.set(route.request(), route.request().postDataBuffer())
+    return route.fallback()
+  })
+}
+
+// Every request the browser sends from now on, with headers and body.
 function record(context) {
   const requests = []
   context.on('request', (req) => requests.push(req))
@@ -42,21 +53,52 @@ function record(context) {
         method: req.method(),
         url: req.url(),
         headers: await req.allHeaders().catch(() => req.headers()),
-        body: req.postDataBuffer() ?? Buffer.alloc(0),
+        body: bodies.get(req) ?? null,
       })),
     )
 }
 
-// Where a secret shows up in the recorded requests, in any common encoding.
+function missingBodies(requests) {
+  return requests.filter((r) => ['POST', 'PUT'].includes(r.method) && !r.body)
+}
+
+// The forms bytes take inside a larger text value: hex, and base64 or
+// base64url at each of the three alignments, cut to the characters that do
+// not depend on the neighbouring bytes.
+function byteForms(bytes) {
+  const forms = [bytes.toString('hex'), bytes.toString('hex').toUpperCase()]
+  for (const shift of [0, 1, 2]) {
+    const padded = Buffer.concat([Buffer.alloc(shift), bytes])
+    const skip = [0, 2, 3][shift]
+    const tail = padded.length % 3 ? 1 : 0
+    for (const encoding of ['base64url', 'base64']) {
+      const text = padded.toString(encoding).replace(/=+$/, '')
+      forms.push(text.slice(skip, text.length - tail))
+    }
+  }
+  return forms
+}
+
+function decoded(text) {
+  try {
+    return decodeURIComponent(text.replace(/\+/g, ' '))
+  } catch {
+    return ''
+  }
+}
+
+// Where a secret shows up in the recorded requests: raw, percent- or
+// form-encoded, hex or base64. Text secrets are searched as their UTF-8 bytes too.
 function findLeaks(requests, secrets) {
   const found = []
   for (const req of requests) {
-    const text = [req.url, ...Object.values(req.headers), req.body.toString('latin1')].join('\n')
+    const body = req.body ?? Buffer.alloc(0)
+    const fields = [req.url, ...Object.values(req.headers), body.toString('latin1')]
+    const text = [...fields, ...fields.map(decoded)].join('\n')
     for (const { label, bytes, value } of secrets) {
-      const forms = value
-        ? [value]
-        : [bytes.toString('base64url'), bytes.toString('base64').replace(/=+$/, ''), bytes.toString('hex')]
-      if (forms.some((f) => text.includes(f)) || (bytes && req.body.includes(bytes)))
+      const raw = bytes ?? Buffer.from(value)
+      const forms = [...(value ? [value] : []), ...byteForms(raw)]
+      if (forms.some((f) => text.includes(f)) || body.includes(raw))
         found.push(`${label} in ${req.method} ${new URL(req.url).pathname}`)
     }
   }
@@ -115,16 +157,21 @@ async function checkFragment(context) {
   ok(dialogs.length === 0, 'no script ran from the file name', dialogs.join(', '))
 
   const sent = await requests()
+  const missing = missingBodies(sent)
+  ok(missing.length === 0, `every request body was captured, the ${content.length}-byte upload included`,
+    missing.map((r) => `${r.method} ${new URL(r.url).pathname}`).join(', '))
   const keys = deriveKeys(secret)
   const leaks = findLeaks(sent, [
     { label: 'fragment', value: fragment },
     { label: 'secret', bytes: secret },
     { label: 'file key', bytes: keys.fileKey },
     { label: 'metadata key', bytes: keys.metaKey },
+    { label: 'file name', value: name },
+    { label: 'plaintext', bytes: content.subarray(100_000, 100_064) },
   ])
   const api = sent.filter((r) => r.url.startsWith(base + '/api/'))
   ok(api.length >= 5 && leaks.length === 0,
-    `none of ${sent.length} requests (${api.length} to the API) carries the fragment, the secret, the file key or the metadata key`,
+    `none of ${sent.length} requests (${api.length} to the API) carries the fragment, the secret, the file or metadata key, the file name or the plaintext`,
     leaks.join('; '))
   const authUses = findLeaks(sent, [{ label: 'auth key', bytes: keys.authKey }])
   ok(authUses.length === 1 && authUses[0] === 'auth key in POST /api/v1/files',
@@ -140,6 +187,7 @@ async function checkPassword(context) {
   const page = await context.newPage()
   const password = 'correct horse battery staple'
   const link = await upload(page, 'notes.txt', crypto.randomBytes(1000), password)
+  const deleteLink = new URL(await page.locator('.share-link code').nth(1).textContent())
   const fragment = new URL(link).hash.slice(1)
   ok(Buffer.from(fragment, 'base64url').length === 60, 'a protected link carries the 60-byte wrapped secret instead')
   const recipient = await context.newPage()
@@ -155,12 +203,19 @@ async function checkPassword(context) {
   await recipient.getByRole('button', { name: 'Unlock' }).click()
   await recipient.getByRole('button', { name: 'Download' }).waitFor({ timeout: 30_000 })
   ok(true, 'the right password unlocks the share')
-  const leaks = findLeaks(await requests(), [
+  const sent = await requests()
+  const leaks = findLeaks(sent, [
     { label: 'password', value: password },
     { label: 'wrapped secret', value: fragment },
     { label: 'wrapped secret', bytes: Buffer.from(fragment, 'base64url') },
   ])
-  ok(leaks.length === 0, 'neither the password nor the wrapped secret is sent', leaks.join('; '))
+  ok(missingBodies(sent).length === 0 && leaks.length === 0, 'neither the password nor the wrapped secret is sent',
+    leaks.join('; '))
+  const id = deleteLink.pathname.split('/').pop()
+  const removed = await context.request.delete(`${base}/api/v1/files/${id}`, {
+    headers: { Authorization: `Bearer ${deleteLink.hash.slice(1)}` },
+  })
+  ok(removed.status() === 204, 'the delete link removes the share', String(removed.status()))
   await page.close()
   await recipient.close()
 }
@@ -193,7 +248,7 @@ async function checkCSP(context) {
   ok(result.ran.length === 0, 'injected handlers, inline and remote scripts, javascript: URLs and string timers do not run',
     result.ran.join(', '))
   ok(['script-src', 'script-src-attr', 'script-src-elem'].every((d) => result.violations.includes(d)),
-    `the browser reports each as a CSP violation: ${result.violations.join(', ')}`)
+    `the browser reports violations of ${result.violations.join(', ')}`)
   await page.close()
 }
 
@@ -260,27 +315,48 @@ async function checkFraming(context) {
   server.close()
 }
 
-async function checkCrossSite(context) {
+// The page on the other site sees no answer either way, so the server's
+// status comes from the browser's network log.
+async function checkCrossSite(browser) {
   const { server, url } = await attackerSite('<!doctype html><title>attacker</title>')
-  const requests = record(context)
+  const context = await browser.newContext({ ignoreHTTPSErrors: true })
   const page = await context.newPage()
+  const cdp = await context.newCDPSession(page)
+  await cdp.send('Network.enable')
+  const seen = new Map()
+  const entry = (id) => seen.get(id) ?? seen.set(id, {}).get(id)
+  cdp.on('Network.requestWillBeSent', (e) => Object.assign(entry(e.requestId), { method: e.request.method, url: e.request.url }))
+  cdp.on('Network.requestWillBeSentExtraInfo', (e) => {
+    const name = Object.keys(e.headers).find((k) => k.toLowerCase() === 'sec-fetch-site')
+    entry(e.requestId).site = name && e.headers[name]
+  })
+  cdp.on('Network.responseReceivedExtraInfo', (e) => (entry(e.requestId).status = e.statusCode))
   await page.goto(url)
-  const auth = crypto.randomBytes(32).toString('base64url')
-  const meta = crypto.randomBytes(40).toString('base64url')
-  const body = JSON.stringify({ size: 1 << 20, meta, auth_key: auth, expires_in: 604800, max_downloads: 1 })
-  const seen = await page.evaluate(
-    async ({ target, body }) =>
-      fetch(target, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }).then(
-        (r) => `an opaque response (${r.type})`,
-        (e) => `an error (${e.message})`,
-      ),
-    { target: base + '/api/v1/files', body },
+  const body = JSON.stringify({
+    size: 64,
+    meta: crypto.randomBytes(40).toString('base64url'),
+    auth_key: crypto.randomBytes(32).toString('base64url'),
+    expires_in: 3600,
+    max_downloads: 1,
+  })
+  const id = crypto.randomBytes(16).toString('base64url')
+  await page.evaluate(
+    async ({ base, body, id }) => {
+      const quiet = (p) => p.then(() => {}, () => {})
+      await quiet(fetch(`${base}/api/v1/files`, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }))
+      await quiet(fetch(`${base}/api/v1/files/${id}/meta`, { mode: 'no-cors' }))
+    },
+    { base, body, id },
   )
-  const sent = (await requests()).filter((r) => r.url.startsWith(base + '/api/'))
-  ok(sent.length === 1 && sent[0].method === 'POST',
-    `a page on another site sends a create without a CORS preflight and sees ${seen}; whether the server acted is in its log`,
-    sent.map((r) => r.method).join(', '))
-  await page.close()
+  await page.waitForTimeout(500)
+  const api = [...seen.values()].filter((r) => r.url?.startsWith(base + '/api/'))
+  for (const [method, what] of [['POST', 'create'], ['GET', 'read']]) {
+    const r = api.find((x) => x.method === method)
+    ok(r?.site === 'cross-site' && r?.status === 403,
+      `a ${what} sent from a page on another site is refused by the server [${r?.status}, Sec-Fetch-Site ${r?.site}]`)
+  }
+  ok(!api.some((r) => r.method === 'OPTIONS'), 'the browser sends them without a CORS preflight')
+  await context.close()
   server.close()
 }
 
@@ -300,10 +376,11 @@ async function main() {
   })
   // Take the Blob download path so Playwright receives the decrypted file.
   await context.addInitScript(() => delete window.showSaveFilePicker)
+  await captureBodies(context)
   console.log(`vault-share browser checks against ${base}`)
   for (const check of [checkFragment, checkPassword, checkCSP, checkUploadedScript, checkFraming, checkCrossSite]) {
     try {
-      await check(context)
+      await check(check === checkCrossSite ? browser : context)
     } catch (error) {
       ok(false, `${check.name} stopped`, error.message.split('\n')[0])
     }

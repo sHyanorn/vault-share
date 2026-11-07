@@ -140,8 +140,9 @@ def create_body(size=64, max_downloads=5, auth_key=None):
 
 
 class Tester:
-    def __init__(self, client):
+    def __init__(self, client, http=None):
         self.c = client
+        self.http = http
         self.shares = []
         self.counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
         self.check = ""
@@ -196,8 +197,15 @@ class Tester:
         return self.c.request("GET", f"{API}/{share_id}/content?token={token}")
 
     def cleanup(self):
+        """Deletes every test file; returns how many deletions failed."""
+        failed = 0
         for share in self.shares:
-            self.c.request("DELETE", f"{API}/{share.id}", headers=share.bearer)
+            try:
+                status = self.c.request("DELETE", f"{API}/{share.id}", headers=share.bearer).status
+            except OSError:
+                status = None
+            failed += status not in (204, 404)  # 404: burned or deleted by a check
+        return failed
 
 
 def check_tls(t):
@@ -210,10 +218,15 @@ def check_tls(t):
             version, cipher = tls.version(), tls.cipher()[0]
     t.ok(version in ("TLSv1.2", "TLSv1.3"), f"negotiates {version} with {cipher}, certificate verified")
 
-    def refused(setup):
-        """None when the local TLS library cannot offer the setup, "" when the
-        server refuses it, otherwise what the server accepted."""
-        ctx = c.tls_context()
+    def probe(setup):
+        """"refused" when the server refuses the offer, None when the local
+        TLS library cannot make it, otherwise what happened."""
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        # The probe sends no data; only the server's answer to the offer counts,
+        # so a certificate or renegotiation complaint must not end it early.
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # nosemgrep
+        ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
         try:
             setup(ctx)
         except (ValueError, ssl.SSLError):
@@ -222,12 +235,15 @@ def check_tls(t):
             with socket.create_connection((c.host, c.port), timeout=10) as sock:
                 with ctx.wrap_socket(sock, server_hostname=c.host) as tls:
                     return f"accepted {tls.version()} {tls.cipher()[0]}"
+        except (ssl.SSLEOFError, ConnectionResetError):
+            return "refused"
         except ssl.SSLError as e:
-            if e.reason in ("NO_PROTOCOLS_AVAILABLE", "NO_CIPHERS_AVAILABLE", "UNSUPPORTED_PROTOCOL"):
+            reason = e.reason or ""
+            if reason in ("NO_PROTOCOLS_AVAILABLE", "NO_CIPHERS_AVAILABLE"):
                 return None
-            return ""
-        except ConnectionError:
-            return ""
+            if reason.startswith(("TLSV1_ALERT_", "SSLV3_ALERT_")) or reason in ("UNSUPPORTED_PROTOCOL", "WRONG_VERSION_NUMBER"):
+                return "refused"
+            return f"failed in the client: {reason or e}"
 
     def only(version):
         def setup(ctx):
@@ -246,19 +262,18 @@ def check_tls(t):
         ("TLS 1.1", only(ssl.TLSVersion.TLSv1_1)),
         ("TLS 1.2 with CBC or RSA key exchange suites", cbc),
     ):
-        outcome = refused(setup)
+        outcome = probe(setup)
         if outcome is None:
             t.skip(f"refuses {name}", "the local TLS library cannot offer it")
         else:
-            t.ok(outcome == "", f"refuses {name}", outcome)
+            t.ok(outcome == "refused", f"refuses {name}", outcome)
 
 
-def check_redirect(t, http_url):
-    if not http_url:
+def check_redirect(t):
+    if not t.http:
         t.skip("HTTP redirects to HTTPS", "no --http-url given")
         return
-    plain = Client(http_url)
-    r = plain.request("GET", "/f/abc?x=1")
+    r = t.http.request("GET", "/f/abc?x=1")
     location = r.header("Location") or ""
     t.ok(r.status in (301, 308) and location == t.c.origin + "/f/abc?x=1",
          "plain HTTP answers a permanent redirect to the same HTTPS URL", f"{r.status} {location}")
@@ -373,7 +388,9 @@ def check_cross_site(t):
         if allowed:
             t.ok(share is not None, f"{name} creates a file", f"{r.status} {r.code}")
         else:
-            t.ok(share is None and 400 <= r.status < 500, f"{name} is refused", f"{r.status} {r.code}")
+            t.ok(r.status == 403 and r.code == "cross_origin", f"{name} is refused", f"{r.status} {r.code}")
+    r = t.c.request("GET", f"{API}/{random_id()}/meta", headers={"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"})
+    t.ok(r.status == 403 and r.code == "cross_origin", "cross-site read is refused", f"{r.status} {r.code}")
 
 
 def check_methods(t):
@@ -532,8 +549,11 @@ def check_lockout(t):
     wrong = secrets.token_bytes(32)
     statuses = [t.grant(target, key=wrong).status for _ in range(5)]
     t.ok(statuses == [404] * 5, "five bad signatures each get the plain 404", str(statuses))
+    live = t.c.request("GET", f"{API}/{target.id}/meta").status
     locked = t.grant(target)
-    t.ok(locked.status == 404 and locked.body == NOT_FOUND, "the correct signature is refused while the file is locked")
+    t.ok(live == 200 and locked.status == 404 and locked.body == NOT_FOUND,
+         "the correct signature is refused while the file is locked, though the file is live",
+         f"metadata {live}, download {locked.status}")
     t.ok(t.grant(other).status == 200, "the lock covers that one file only")
 
 
@@ -574,25 +594,42 @@ def raw_exchange(t, request):
 
 
 def check_framing(t):
+    """A request of ambiguous length must be refused before any handler runs.
+    /healthz answers a well-framed POST with 405, so a 405 means it got through."""
     host = t.c.host.encode()
+
+    def send(rest):
+        return raw_exchange(t, b"POST /healthz HTTP/1.1\r\nHost: " + host + b"\r\n" + rest)
+
+    control = send(b"Content-Length: 4\r\n\r\nabcd")
+    t.ok(control.split(" ")[1:2] == ["405"], f"a well-framed POST to /healthz reaches the handler [{control}]")
     cases = (
         ("two different Content-Length values", b"Content-Length: 4\r\nContent-Length: 40\r\n\r\nabcd", ("400",)),
         ("a Transfer-Encoding with a space before the colon", b"Transfer-Encoding : chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n", ("400",)),
         ("an unsupported transfer coding", b"Transfer-Encoding: chunked, identity\r\n\r\n0\r\n\r\n", ("400", "501")),
     )
     for name, rest, codes in cases:
-        line = raw_exchange(t, b"POST " + API.encode() + b" HTTP/1.1\r\nHost: " + host + b"\r\n" + rest)
-        t.ok(line.split(" ")[1:2] and line.split(" ")[1] in codes, f"a request with {name} is refused [{line}]")
+        line = send(rest)
+        t.ok(line.split(" ")[1:2] and line.split(" ")[1] in codes, f"a request with {name} is refused before any handler [{line}]")
 
 
 def check_host(t):
-    r = t.c.request("GET", "/f/" + random_id(), headers={"Host": "attacker.example"})
+    r = t.c.request("GET", f"{API}/{random_id()}/meta", headers={"Host": "attacker.example"})
+    answered = r.code not in (None, "misdirected")
     reflected = b"attacker.example" in r.body or any("attacker.example" in v for v in r.headers.values())
-    t.ok(not reflected, f"a foreign Host header is not reflected [{r.status}]")
+    t.ok(not answered and not reflected, f"the API does not answer for a foreign Host [{r.status} {r.code}]")
 
 
-def check_slow_headers(t, limit=90):
-    c = t.c
+def check_slow_headers(t):
+    for c in filter(None, (t.c, t.http)):
+        elapsed = slow_headers(c)
+        closed = f"closed after {elapsed:.0f} s" if elapsed is not None else "still open after 90 s"
+        t.ok(elapsed is not None and elapsed <= 15,
+             f"{c.origin}: a connection that never finishes its headers is closed within 15 s ({closed})")
+
+
+def slow_headers(c, limit=90):
+    """Seconds until the server gives up on headers sent one line a second."""
     sock = socket.create_connection((c.host, c.port), timeout=5)
     if c.context:
         sock = c.context.wrap_socket(sock, server_hostname=c.host)
@@ -611,8 +648,7 @@ def check_slow_headers(t, limit=90):
         elapsed = time.monotonic() - start
         break
     sock.close()
-    t.ok(elapsed is not None and elapsed <= 15, "a connection that never finishes its headers is closed within 15 s",
-         f"closed after {elapsed:.0f} s" if elapsed else f"still open after {limit} s")
+    return elapsed
 
 
 CHECKS = [
@@ -631,29 +667,37 @@ def main():
     parser.add_argument("--cafile", help="CA certificate that signs the instance's TLS certificate")
     parser.add_argument("--http-url", help="plain HTTP origin that should redirect to base_url")
     parser.add_argument("--only", action="append", choices=[name for name, _ in CHECKS], help="run only these checks")
-    parser.add_argument("--remote", action="store_true", help="confirm a non-local target is an instance you operate")
+    parser.add_argument("--remote", action="store_true",
+                        help="confirm that non-local targets are instances you operate. Limits count per client "
+                             "address, so behind a proxy the instance does not trust, the rate-limit check spends "
+                             "the create budget all clients share")
     args = parser.parse_args()
 
-    host = urllib.parse.urlsplit(args.base_url).hostname or ""
-    try:
-        local = host == "localhost" or ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        local = False
-    if not local and not args.remote:
-        sys.exit(f"{host} is not local; pass --remote if it is an instance you operate")
+    for url in filter(None, (args.base_url, args.http_url)):
+        host = urllib.parse.urlsplit(url).hostname or ""
+        try:
+            local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = False
+        if not local and not args.remote:
+            sys.exit(f"{host} is not local; pass --remote if it is an instance you operate")
 
-    t = Tester(Client(args.base_url, args.cafile))
+    t = Tester(Client(args.base_url, args.cafile), Client(args.http_url) if args.http_url else None)
     print(f"vault-share black-box checks against {args.base_url}")
     for name, check in CHECKS:
         if args.only and name not in args.only:
             continue
         t.check = name
         try:
-            check(t, args.http_url) if check is check_redirect else check(t)
+            check(t)
         except Exception as e:  # report the broken check and go on with the rest
             t.report("FAIL", f"check stopped: {type(e).__name__}: {e}")
     t.check = "cleanup"
-    t.cleanup()
+    try:
+        failed = t.cleanup()
+        t.ok(failed == 0, f"deletes the {len(t.shares)} test files it created", f"{failed} could not be deleted")
+    except Exception as e:
+        t.report("FAIL", f"cleanup stopped: {type(e).__name__}: {e}")
     print(f"\n{t.counts['PASS']} passed, {t.counts['FAIL']} failed, {t.counts['SKIP']} skipped")
     sys.exit(1 if t.counts["FAIL"] else 0)
 
