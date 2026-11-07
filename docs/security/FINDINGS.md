@@ -39,6 +39,8 @@ Issues found during development, how they were found and how they were fixed. Se
 | F33 | 2026-11-07 | Medium | Adversarial verification of F26 to F32 | Deleting or purging a file mid-upload released its quota charge while its bytes kept arriving | Fixed |
 | F34 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | A client that hung up right after its last byte left a stored object behind a failed upload | Fixed |
 | F35 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | An S3 service that stopped reading mid-upload held the request and its file for good | Fixed |
+| F36 | 2026-11-07 | Low | Simplification review | A file size limit near the int64 maximum overflowed the quota arithmetic and disabled the quota | Fixed |
+| F37 | 2026-11-07 | Low | Simplification review | A leading space let a file name keep its leading dots, and a joiner-only name displayed as blank | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -181,3 +183,11 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F35 Stalled writes to S3 (Low)
 - Impact: F28's response timeout starts only once a body has been sent, and the transport had no write timeout, so a service that stopped reading mid-upload held the request, and with F33 the file's claim, for good. The file answered 409 and cleanup skipped it.
 - Fix: each write to the service has a minute, through a connection wrapper like the one the SDK uses for read timeouts; reads keep no deadline, so slow downloads are unaffected. A test against a service that reads nothing fails the upload in a fraction of a second, where it hung before.
+
+## F36 Quota overflow from an unbounded size limit (Low)
+- Impact: with disk storage `VAULT_MAX_FILE_BYTES` had no upper bound. An operator who set it to the int64 maximum to mean "no limit" made `MaxFileBytes+1 MiB` wrap negative, so any `VAULT_MAX_TOTAL_BYTES` passed, and the router's burst check wrapped too. A client could then declare a size near the maximum: its charge wrapped negative, the per-client budget and the global quota both accepted it, and usage went negative, which disabled the quota (F17) for the hour the record waited for content. Needs an absurd but plausible setting; S3 was capped at 5 GiB.
+- Fix: `VAULT_MAX_FILE_BYTES` is at most 1 TiB and `VAULT_MAX_TOTAL_BYTES` at most 1 PiB, so no sum built on them comes near the limit. Tests load the int64 maximum for each and expect a refusal; they failed before the fix.
+
+## F37 File names that kept their leading dots (Low)
+- Impact: `safeFileName` stripped leading dots before trimming whitespace, so `" .env"` became `.env` and `" ..bashrc"` became `..bashrc` on the download page and in the name suggested for saving. A name made only of joiners, kept for emoji since F10, displayed as an invisible name instead of the fallback. Browsers sanitise the name on disk, so the gap was in what the recipient saw (A5).
+- Fix: leading whitespace and dots are stripped together, and a name with nothing visible left falls back to `download`. Tests cover both cases.
