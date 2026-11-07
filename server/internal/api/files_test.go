@@ -195,9 +195,9 @@ func (e *env) meta(id string) (metaResponse, int) {
 }
 
 func sign(authKey []byte, challenge string) string {
-	nonce, _ := encoding.DecodeString(challenge)
+	raw, _ := encoding.DecodeString(challenge)
 	mac := hmac.New(sha256.New, authKey)
-	mac.Write(nonce)
+	mac.Write(raw)
 	return encoding.EncodeToString(mac.Sum(nil))
 }
 
