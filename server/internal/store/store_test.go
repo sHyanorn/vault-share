@@ -490,3 +490,40 @@ func TestQuotaMigrationChargesExistingRecords(t *testing.T) {
 		t.Errorf("usage after migration %d, want %d", used, want)
 	}
 }
+
+// Transactions take the write lock when they begin, so one that reads and
+// then writes never fails because another wrote in between (F39).
+func TestTransactionsThatReadThenWriteSucceed(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	id, _ := s.CreateUser(ctx, user("alice"), 10)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer tx.Rollback() //nolint:errcheck // no-op after Commit
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, id).Scan(&n); err != nil {
+				t.Error(err)
+				return
+			}
+			time.Sleep(time.Millisecond) // room for another transaction to write
+			if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = ? WHERE id = ?`, n+1, id); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	var n int
+	if err := s.db.QueryRow(`SELECT totp_failures FROM users WHERE id = ?`, id).Scan(&n); err != nil || n != 16 {
+		t.Errorf("16 transactions counted %d (%v)", n, err)
+	}
+}
