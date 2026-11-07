@@ -265,24 +265,38 @@ func (a *accounts) refuse(w http.ResponseWriter, result authResult, status int, 
 }
 
 // issueSession signs the client in to u with a fresh session and returns
-// the token. A session cookie the client already holds is ended, never
-// reused, so no one can fix a session on a victim before sign-in.
+// the token.
 func (a *accounts) issueSession(w http.ResponseWriter, r *http.Request, u store.User) ([]byte, bool) {
-	ctx := r.Context()
-	if old, ok := sessionToken(r); ok {
-		if err := a.store.DeleteSession(ctx, hashToken(old)); err != nil {
-			a.internalError(w, "end session", err)
-			return nil, false
-		}
+	if !a.endPresentedSession(w, r) {
+		return nil, false
 	}
 	token := randomBytes(tokenBytes)
-	if err := a.store.CreateSession(ctx, hashToken(token), u.ID, a.now(), maxSessionsPerUser); err != nil {
+	if err := a.store.CreateSession(r.Context(), hashToken(token), u.ID, a.now(), maxSessionsPerUser); err != nil {
 		a.internalError(w, "create session", err)
 		return nil, false
 	}
+	a.setSessionCookies(w, u, token)
+	return token, true
+}
+
+// endPresentedSession ends the session cookie the client holds, if any, so
+// a sign-in never reuses it and no one can fix a session on a victim before
+// sign-in. It answers the request itself when that fails.
+func (a *accounts) endPresentedSession(w http.ResponseWriter, r *http.Request) bool {
+	old, ok := sessionToken(r)
+	if !ok {
+		return true
+	}
+	if err := a.store.DeleteSession(r.Context(), hashToken(old)); err != nil {
+		a.internalError(w, "end session", err)
+		return false
+	}
+	return true
+}
+
+func (a *accounts) setSessionCookies(w http.ResponseWriter, u store.User, token []byte) {
 	setCookie(w, sessionCookie, encoding.EncodeToString(token), store.SessionLifetime)
 	setCookie(w, deviceCookie, a.newDeviceCookie(u.Username), deviceCookieAge)
-	return token, true
 }
 
 // signedIn describes a fresh session, the sealed account key included.

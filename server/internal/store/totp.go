@@ -127,19 +127,32 @@ func (s *Store) TicketAttempt(ctx context.Context, tokenHash []byte, now time.Ti
 // ErrFactorUsed is returned for a second-step code already used up.
 var ErrFactorUsed = errors.New("code already used")
 
-// CompleteSecondStep spends the ticket and the code together, so neither
-// goes without the other: the TOTP step, or with recoveryHash set, that
-// recovery code. It returns the failed second steps since the last sign-in
-// and starts that count again. A ticket already gone gives ErrNotFound, a
-// code already used ErrFactorUsed, and either way nothing is spent.
-func (s *Store) CompleteSecondStep(ctx context.Context, tokenHash []byte, userID int64, now time.Time, step int64, recoveryHash []byte) (int, error) {
+// SecondStep is a sign-in's second step: the ticket, the code that matched,
+// and the session it opens.
+type SecondStep struct {
+	TicketHash []byte
+	UserID     int64
+	// Step is the TOTP time step, unless RecoveryHash names a recovery code.
+	Step         int64
+	RecoveryHash []byte
+	SessionHash  []byte
+	// KeepSessions is how many of the account's newest sessions stay.
+	KeepSessions int
+}
+
+// CompleteSecondStep spends the ticket and the code and opens the session
+// in one transaction, so none of them happens without the others (F38,
+// F41). It returns the failed second steps since the last sign-in and
+// starts that count again. A ticket already gone gives ErrNotFound, a code
+// already used ErrFactorUsed, and then nothing changes.
+func (s *Store) CompleteSecondStep(ctx context.Context, st SecondStep, now time.Time) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	ticket, err := s.changed(tx.ExecContext(ctx,
-		`DELETE FROM login_tickets WHERE token_hash = ? AND user_id = ? AND expires_at > ?`, tokenHash, userID, now.Unix()))
+		`DELETE FROM login_tickets WHERE token_hash = ? AND user_id = ? AND expires_at > ?`, st.TicketHash, st.UserID, now.Unix()))
 	if err != nil {
 		return 0, err
 	}
@@ -147,12 +160,12 @@ func (s *Store) CompleteSecondStep(ctx context.Context, tokenHash []byte, userID
 		return 0, ErrNotFound
 	}
 	var spent bool
-	if recoveryHash != nil {
+	if st.RecoveryHash != nil {
 		spent, err = s.changed(tx.ExecContext(ctx,
-			`DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`, userID, recoveryHash))
+			`DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`, st.UserID, st.RecoveryHash))
 	} else {
 		spent, err = s.changed(tx.ExecContext(ctx,
-			`UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`, step, userID))
+			`UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`, st.Step, st.UserID))
 	}
 	if err != nil {
 		return 0, err
@@ -161,10 +174,13 @@ func (s *Store) CompleteSecondStep(ctx context.Context, tokenHash []byte, userID
 		return 0, ErrFactorUsed
 	}
 	var failures int
-	if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, userID).Scan(&failures); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, st.UserID).Scan(&failures); err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, st.UserID); err != nil {
+		return 0, err
+	}
+	if err := insertSession(ctx, tx, st.SessionHash, st.UserID, now, st.KeepSessions); err != nil {
 		return 0, err
 	}
 	return failures, tx.Commit()

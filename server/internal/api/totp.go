@@ -214,10 +214,19 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, "load account", err)
 		return
 	}
+	if !a.endPresentedSession(w, r) {
+		return
+	}
+	// The session opens in the transaction that spends the ticket and the
+	// code, so neither is spent without it (F41).
+	token := randomBytes(tokenBytes)
 	var failures int
 	result, f, err := a.secondFactor(ctx, u, req.Code, func(f factor) (bool, error) {
 		var err error
-		failures, err = a.store.CompleteSecondStep(ctx, ticketHash, u.ID, now, f.step, f.recovery)
+		failures, err = a.store.CompleteSecondStep(ctx, store.SecondStep{
+			TicketHash: ticketHash, UserID: u.ID, Step: f.step, RecoveryHash: f.recovery,
+			SessionHash: hashToken(token), KeepSessions: maxSessionsPerUser,
+		}, now)
 		if errors.Is(err, store.ErrFactorUsed) {
 			return false, nil
 		}
@@ -242,10 +251,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.LoginSucceeded, u.ID, clientFrom(ctx))
-	token, ok := a.issueSession(w, r, u)
-	if !ok {
-		return
-	}
+	a.setSessionCookies(w, u, token)
 	resp := a.signedIn(u, token)
 	resp.SecondStepFailures = failures
 	if f.recovery != nil {
