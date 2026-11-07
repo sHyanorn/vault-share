@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/sHyanorn/vault-share/server/internal/blob"
 )
 
 const prefix = "VAULT_"
@@ -142,6 +144,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
 			strings.ContainsAny(cfg.S3.Endpoint, "?#")) {
 			fail("S3_ENDPOINT", errors.New("must be an http(s) URL"))
+		}
+		if cfg.MaxFileBytes > blob.MaxS3ObjectBytes {
+			fail("MAX_FILE_BYTES", errors.New("must be at most 5 GiB with S3, the most it takes in one request"))
 		}
 		// Values are never echoed: one of them is a secret.
 		for name, value := range map[string]string{

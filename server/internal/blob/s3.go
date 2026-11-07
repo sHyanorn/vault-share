@@ -1,7 +1,6 @@
 package blob
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,13 +10,18 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
+// MaxS3ObjectBytes is the largest object S3 accepts in one request, and so
+// the largest blob the S3 store holds.
+const MaxS3ObjectBytes = 5 << 30
+
 // S3Config names a bucket on an S3-compatible service. The bucket belongs to
-// vaultd alone: Sweep aborts any abandoned upload in it.
+// vaultd alone.
 type S3Config struct {
 	// Endpoint is the service URL; empty means AWS. A custom endpoint is
 	// addressed path-style, which every S3-compatible service accepts.
@@ -26,24 +30,14 @@ type S3Config struct {
 	Bucket          string
 	AccessKeyID     string
 	SecretAccessKey string
-	// PartSize is the size of upload parts and the largest object sent in
-	// one request; zero means 8 MiB. S3 needs at least 5 MiB.
-	PartSize int64
 }
 
-const (
-	defaultPartSize = 8 << 20
-	maxParts        = 10_000
-)
-
-// S3 stores each blob as an object named by its id. An upload becomes visible
-// only through its final request, which S3 carries out only if no object of
-// that name exists, so a reader never sees a partial object and an object is
-// never replaced.
+// S3 stores each blob as an object named by its id. The body streams into a
+// single request that S3 carries out only if no object of that name exists,
+// so a reader never sees a partial object and an object is never replaced.
 type S3 struct {
 	client *s3.Client
 	bucket string
-	part   int64
 
 	mu sync.Mutex
 	// open counts the readers of each object, so a Delete while one reads
@@ -58,11 +52,7 @@ type readers struct {
 
 // NewS3 connects to the bucket and checks that it is reachable.
 func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
-	part := cfg.PartSize
-	if part == 0 {
-		part = defaultPartSize
-	}
-	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket, part: part, open: map[string]*readers{}}
+	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket, open: map[string]*readers{}}
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err != nil {
 		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
 	}
@@ -88,117 +78,115 @@ func newS3Client(cfg S3Config) *s3.Client {
 	return s3.New(opts)
 }
 
+// Put streams r into one request, so an upload holds no more memory than the
+// transport's buffers.
 func (s *S3) Put(ctx context.Context, id string, size int64, r io.Reader) error {
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
-	if size < 0 {
+	if size < 0 || size > MaxS3ObjectBytes {
 		return ErrSize
 	}
-	if size <= s.part {
-		// One more byte than declared shows a body that is too long.
-		buf := make([]byte, size+1)
-		n, err := io.ReadFull(r, buf)
-		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	body := &exactReader{ctx: ctx, r: r, left: size}
+	defer body.stop()
+	if size == 0 {
+		// The SDK sends no body for an empty object, so nothing else reads r.
+		if err := body.end(); err != nil {
 			return err
 		}
-		if int64(n) != size {
-			return ErrSize
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        &s.bucket,
-			Key:           &id,
-			Body:          bytes.NewReader(buf[:n]),
-			ContentLength: aws.Int64(size),
-			ContentType:   aws.String("application/octet-stream"),
-			IfNoneMatch:   aws.String("*"),
-		})
-		return putError(err)
 	}
-	return s.putParts(ctx, id, size, r)
-}
-
-// putParts uploads a large body in parts and publishes it only once every
-// byte has arrived and the count matches; otherwise the upload is aborted.
-func (s *S3) putParts(ctx context.Context, id string, size int64, r io.Reader) (err error) {
-	up, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket:      &s.bucket,
-		Key:         &id,
-		ContentType: aws.String("application/octet-stream"),
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil {
-			return
-		}
-		// The request's own context may be what ended the upload.
-		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		_, _ = s.client.AbortMultipartUpload(actx, &s3.AbortMultipartUploadInput{
-			Bucket: &s.bucket, Key: &id, UploadId: up.UploadId,
-		})
-	}()
-
-	part := max(s.part, (size+maxParts-1)/maxParts)
-	buf := make([]byte, part)
-	var parts []types.CompletedPart
-	var total int64
-	for number := int32(1); ; number++ {
-		n, rerr := io.ReadFull(r, buf)
-		if n > 0 {
-			if total += int64(n); total > size {
-				return ErrSize
-			}
-			out, err := s.client.UploadPart(ctx, &s3.UploadPartInput{
-				Bucket:        &s.bucket,
-				Key:           &id,
-				UploadId:      up.UploadId,
-				PartNumber:    aws.Int32(number),
-				Body:          bytes.NewReader(buf[:n]),
-				ContentLength: aws.Int64(int64(n)),
-			})
-			if err != nil {
-				return err
-			}
-			parts = append(parts, types.CompletedPart{ETag: out.ETag, PartNumber: aws.Int32(number)})
-		}
-		if errors.Is(rerr, io.EOF) || errors.Is(rerr, io.ErrUnexpectedEOF) {
-			break
-		}
-		if rerr != nil {
-			return rerr
-		}
-	}
-	if total != size {
-		return ErrSize
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          &s.bucket,
-		Key:             &id,
-		UploadId:        up.UploadId,
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
-		IfNoneMatch:     aws.String("*"),
-	})
-	return putError(err)
-}
-
-// putError maps a refused conditional write to ErrExists. A 409 means a
-// conflicting request was in flight; it is returned as is, because the upload
-// has to start over and its body cannot be read again.
-func putError(err error) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        &s.bucket,
+		Key:           &id,
+		Body:          body,
+		ContentLength: aws.Int64(size),
+		ContentType:   aws.String("application/octet-stream"),
+		IfNoneMatch:   aws.String("*"),
+	}, streamed)
+	// A 409 means a conflicting conditional request was in flight; it is
+	// returned as is, because the body cannot be read again.
 	var resp *smithyhttp.ResponseError
-	if errors.As(err, &resp) && resp.HTTPStatusCode() == http.StatusPreconditionFailed {
+	switch {
+	case errors.As(err, &resp) && resp.HTTPStatusCode() == http.StatusPreconditionFailed:
 		return ErrExists
+	case errors.Is(err, ErrSize):
+		return ErrSize
 	}
 	return err
+}
+
+// streamed sends a body as it arrives. Its hash is only known at the end, so
+// the payload goes unsigned: TLS or the local network carries it, and the
+// browser's authenticated encryption detects any change. It cannot be read
+// twice, so the request is never retried.
+func streamed(o *s3.Options) {
+	o.RetryMaxAttempts = 1
+	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+}
+
+var errStopped = errors.New("upload finished")
+
+// exactReader passes on exactly the declared number of bytes of r. It holds
+// back the last of them until r has ended and the request is still wanted,
+// so a body that is too long or a cancelled upload fails before the request
+// completes and S3 stores nothing. Once stopped it reads no more, so Put
+// never touches the caller's reader after it returns.
+type exactReader struct {
+	mu      sync.Mutex
+	ctx     context.Context
+	r       io.Reader
+	left    int64
+	stopped bool
+}
+
+func (e *exactReader) Read(p []byte) (int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch {
+	case e.stopped:
+		return 0, errStopped
+	case e.left == 0:
+		return 0, io.EOF
+	}
+	n, err := e.r.Read(p[:min(int64(len(p)), e.left)])
+	e.left -= int64(n)
+	switch {
+	case err != nil && err != io.EOF:
+		return 0, err
+	case e.left > 0 && err == io.EOF:
+		return 0, ErrSize
+	case e.left > 0:
+		return n, nil
+	}
+	if err == nil {
+		if err := e.end(); err != nil {
+			return 0, err
+		}
+	}
+	if err := e.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// end checks that r has nothing beyond the declared size.
+func (e *exactReader) end() error {
+	var extra [1]byte
+	n, err := io.ReadFull(e.r, extra[:])
+	switch {
+	case n > 0:
+		return ErrSize
+	case err == io.EOF:
+		return nil
+	}
+	return err
+}
+
+// stop waits for a read in progress and makes every later one fail.
+func (e *exactReader) stop() {
+	e.mu.Lock()
+	e.stopped = true
+	e.mu.Unlock()
 }
 
 func (s *S3) Open(ctx context.Context, id string) (io.ReadCloser, error) {
@@ -285,27 +273,7 @@ func notFound(err error) bool {
 	return errors.As(err, &missing) || errors.As(err, &resp) && resp.HTTPStatusCode() == http.StatusNotFound
 }
 
-// Sweep aborts multipart uploads started before the given time, which a
-// crash or a lost connection left behind.
-func (s *S3) Sweep(ctx context.Context, before time.Time) error {
-	pages := s3.NewListMultipartUploadsPaginator(s.client, &s3.ListMultipartUploadsInput{Bucket: &s.bucket})
-	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx)
-		if err != nil {
-			return err
-		}
-		for _, up := range page.Uploads {
-			if !ValidID(aws.ToString(up.Key)) || up.Initiated == nil || !up.Initiated.Before(before) {
-				continue
-			}
-			_, err := s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
-				Bucket: &s.bucket, Key: up.Key, UploadId: up.UploadId,
-			})
-			var gone *types.NoSuchUpload
-			if err != nil && !errors.As(err, &gone) {
-				return fmt.Errorf("abort upload of %s: %w", aws.ToString(up.Key), err)
-			}
-		}
-	}
+// Sweep has nothing to do: an upload that fails leaves nothing behind.
+func (s *S3) Sweep(context.Context, time.Time) error {
 	return nil
 }
