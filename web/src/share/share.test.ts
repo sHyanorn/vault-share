@@ -7,6 +7,7 @@ import {
   encryptedSize,
   exportAuthKey,
   fromBase64Url,
+  signChallenge,
   toBase64Url,
   unwrapSecret,
 } from '../crypto/index.ts'
@@ -27,7 +28,7 @@ vi.mock('./api.ts', async (importOriginal) => ({
 }))
 
 afterEach(() => {
-  vi.restoreAllMocks()
+  vi.clearAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -95,14 +96,15 @@ async function sharedFile() {
     type: 'text/plain',
     size: plaintext.length,
   })
+  const challenge = randomBytes(32)
   vi.mocked(api.getMeta).mockResolvedValue({
     meta: toBase64Url(meta),
     size: ciphertext.length,
     downloads_left: 2,
     expires_at: 1_800_000_000,
-    challenge: toBase64Url(randomBytes(32)),
+    challenge: toBase64Url(challenge),
   })
-  return { secret, plaintext, ciphertext }
+  return { secret, keys, plaintext, ciphertext, challenge }
 }
 
 function memorySink() {
@@ -122,7 +124,8 @@ function memorySink() {
 
 describe('downloadShare', () => {
   it('signs the challenge, spends one download and decrypts the stream', async () => {
-    const { secret, plaintext, ciphertext } = await sharedFile()
+    const { secret, keys, plaintext, ciphertext, challenge } =
+      await sharedFile()
     vi.mocked(api.requestDownload).mockResolvedValue({
       token: 'tok',
       downloads_left: 1,
@@ -145,11 +148,11 @@ describe('downloadShare', () => {
     expect(granted).toEqual([1])
     expect(last).toBe(1)
     expect(new Uint8Array(chunks.flatMap((c) => [...c]))).toEqual(plaintext)
-    const [, challenge, signature] = vi.mocked(api.requestDownload).mock
-      .calls[0]!
-    expect(fromBase64Url(signature)).toHaveLength(32)
-    expect(challenge).toBe(
-      vi.mocked(api.getMeta).mock.results.at(-1)!.value.challenge ?? challenge,
+    // The issued challenge goes back, signed with the link's auth key.
+    const [, sent, signature] = vi.mocked(api.requestDownload).mock.calls[0]!
+    expect(sent).toBe(toBase64Url(challenge))
+    expect(signature).toBe(
+      toBase64Url(await signChallenge(keys.authKey, challenge)),
     )
   })
 
