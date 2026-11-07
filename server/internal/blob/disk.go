@@ -77,10 +77,13 @@ func (d *Disk) Open(_ context.Context, id string) (io.ReadCloser, error) {
 		return nil, ErrInvalidID
 	}
 	f, err := d.root.Open(id)
-	if errors.Is(err, fs.ErrNotExist) {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return nil, ErrNotFound
+	case err != nil:
+		return nil, err
 	}
-	return f, err
+	return f, nil
 }
 
 func (d *Disk) Delete(_ context.Context, id string) error {
