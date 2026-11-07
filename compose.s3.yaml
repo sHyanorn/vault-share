@@ -1,0 +1,34 @@
+# vaultd on S3, with a throwaway Versity S3 Gateway as the bucket. CI uses it,
+# and it shows the S3 store locally:
+#   docker compose -f compose.yaml -f compose.s3.yaml up --build
+services:
+  s3:
+    image: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
+    # The posix backend serves each top-level directory as a bucket.
+    entrypoint: ["sh", "-c", "mkdir -p /data/vault && exec versitygw posix /data"]
+    environment:
+      ROOT_ACCESS_KEY_ID: test-access-key
+      ROOT_SECRET_ACCESS_KEY: test-secret-key
+      VGW_HEALTH: /health
+    tmpfs: /data
+    # On loopback only, for tests that look into the bucket.
+    ports:
+      - "127.0.0.1:7070:7070"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7070/health"]
+      interval: 2s
+      retries: 15
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  vaultd:
+    environment:
+      VAULT_STORAGE: s3
+      VAULT_S3_ENDPOINT: http://s3:7070
+      VAULT_S3_BUCKET: vault
+      VAULT_S3_ACCESS_KEY_ID: test-access-key
+      VAULT_S3_SECRET_ACCESS_KEY: test-secret-key
+    depends_on:
+      s3:
+        condition: service_healthy
