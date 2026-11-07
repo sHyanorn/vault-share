@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +55,9 @@ type files struct {
 	quota        int64
 	now          func() time.Time
 	log          *slog.Logger
+	// uploading holds the ids with an upload in flight. Only the quota bounds
+	// the bytes in flight, and only while each file takes one body at a time.
+	uploading sync.Map
 }
 
 type createRequest struct {
@@ -145,8 +149,9 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // upload streams the ciphertext to blob storage. The body must be exactly the
-// size declared at creation, content is stored once, and a record that
-// disappeared while the body was in flight takes its bytes with it.
+// size declared at creation, a file takes one upload at a time, content is
+// stored once, and a record that disappeared while the body was in flight
+// takes its bytes with it.
 func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.ownerFile(w, r)
 	if !ok {
@@ -160,6 +165,11 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "body size differs from the declared size")
 		return
 	}
+	if _, busy := h.uploading.LoadOrStore(f.ID, struct{}{}); busy {
+		writeError(w, http.StatusConflict, "conflict", "an upload is already in progress")
+		return
+	}
+	defer h.uploading.Delete(f.ID)
 	ctx := r.Context()
 	extendDeadlines(w, f.SizeBytes)
 	body := &trackedReader{Reader: http.MaxBytesReader(w, r.Body, f.SizeBytes)}
