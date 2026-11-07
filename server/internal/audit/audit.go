@@ -34,6 +34,11 @@ const (
 	LoginFailed     = "login.failed"
 	SessionEnded    = "session.ended"
 	PasswordChanged = "password.changed"
+
+	TOTPEnabled      = "totp.enabled"
+	TOTPDisabled     = "totp.disabled"
+	TOTPFailed       = "totp.failed"
+	RecoveryCodeUsed = "recovery_code.used"
 )
 
 // Retention is how long entries are kept.
@@ -52,7 +57,7 @@ const (
 )
 
 func isFailure(event string) bool {
-	return event == DownloadDenied || event == ClientLocked || event == LoginFailed
+	return event == DownloadDenied || event == ClientLocked || event == LoginFailed || event == TOTPFailed
 }
 
 const keyFile = "audit.key"

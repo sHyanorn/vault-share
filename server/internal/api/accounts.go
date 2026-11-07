@@ -38,12 +38,15 @@ type accounts struct {
 	hasher *hasher
 	keys   serverKeys
 	// Failures per client and username, per username for browsers not known
-	// to the account, and per device cookie for known ones.
-	clientLocks, accountLocks, deviceLocks *lockouts
-	signup                                 bool
-	maxAccounts                            int
-	now                                    func() time.Time
-	log                                    *slog.Logger
+	// to the account, per device cookie for known ones, and second steps per
+	// account.
+	clientLocks, accountLocks, deviceLocks, totpLocks *lockouts
+	// issuer names the service in authenticator apps.
+	issuer      string
+	signup      bool
+	maxAccounts int
+	now         func() time.Time
+	log         *slog.Logger
 }
 
 type signupRequest struct {
@@ -57,6 +60,16 @@ type sessionResponse struct {
 	Username  string `json:"username"`
 	DeviceKey string `json:"device_key"`
 	SealedKey string `json:"sealed_key,omitempty"`
+	// TOTP tells whether two-factor sign-in is on.
+	TOTP bool `json:"totp"`
+	// RecoveryCodes are shown once, when two-factor sign-in is turned on.
+	RecoveryCodes []string `json:"recovery_codes,omitempty"`
+	// RecoveryCodesLeft follows a sign-in with a recovery code.
+	RecoveryCodesLeft *int `json:"recovery_codes_left,omitempty"`
+	// SecondStepFailures counts second steps that failed after a right
+	// password since the last sign-in, so the owner learns their password
+	// is known (OWASP Multifactor Authentication Cheat Sheet).
+	SecondStepFailures int `json:"second_step_failures,omitempty"`
 }
 
 func (a *accounts) signupHandler(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +168,16 @@ func (a *accounts) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if u.TOTPSecret != nil {
+		ticket := randomBytes(tokenBytes)
+		if err := a.store.CreateTicket(ctx, hashToken(ticket), u.ID, a.now().Add(ticketTTL)); err != nil {
+			a.internalError(w, "create ticket", err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, secondStepResponse{SecondStep: true, Ticket: encoding.EncodeToString(ticket)})
+		return
+	}
 	a.audit.RecordAccount(ctx, audit.LoginSucceeded, u.ID, clientFrom(ctx))
 	a.startSession(w, r, u, http.StatusOK)
 }
@@ -226,37 +249,58 @@ func (a *accounts) refuse(w http.ResponseWriter, result authResult, status int, 
 	}
 }
 
-// startSession signs the client in to u with a fresh session. A session
-// cookie the client already holds is ended, never reused, so no one can fix
-// a session on a victim before sign-in.
-func (a *accounts) startSession(w http.ResponseWriter, r *http.Request, u store.User, status int) {
+// issueSession signs the client in to u with a fresh session and returns
+// the token. A session cookie the client already holds is ended, never
+// reused, so no one can fix a session on a victim before sign-in.
+func (a *accounts) issueSession(w http.ResponseWriter, r *http.Request, u store.User) ([]byte, bool) {
 	ctx := r.Context()
 	if old, ok := sessionToken(r); ok {
 		if err := a.store.DeleteSession(ctx, hashToken(old)); err != nil {
 			a.internalError(w, "end session", err)
-			return
+			return nil, false
 		}
 	}
 	token := randomBytes(tokenBytes)
 	if err := a.store.CreateSession(ctx, hashToken(token), u.ID, a.now(), maxSessionsPerUser); err != nil {
 		a.internalError(w, "create session", err)
-		return
+		return nil, false
 	}
 	setCookie(w, sessionCookie, encoding.EncodeToString(token), store.SessionLifetime)
 	setCookie(w, deviceCookie, a.newDeviceCookie(u.Username), deviceCookieAge)
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, sessionResponse{
+	return token, true
+}
+
+// signedIn describes a fresh session, the sealed account key included.
+func (a *accounts) signedIn(u store.User, token []byte) sessionResponse {
+	return sessionResponse{
 		Username:  u.Username,
 		DeviceKey: a.deviceKey(token),
 		SealedKey: encoding.EncodeToString(u.SealedKey),
-	})
+		TOTP:      u.TOTPSecret != nil,
+	}
+}
+
+func (a *accounts) startSession(w http.ResponseWriter, r *http.Request, u store.User, status int) {
+	token, ok := a.issueSession(w, r, u)
+	if !ok {
+		return
+	}
+	writeSession(w, status, a.signedIn(u, token))
+}
+
+func writeSession(w http.ResponseWriter, status int, resp sessionResponse) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, resp)
 }
 
 // currentHandler describes the signed-in account and returns the device key.
 func (a *accounts) currentHandler(w http.ResponseWriter, r *http.Request) {
 	s := sessionFrom(r.Context())
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, sessionResponse{Username: s.user.Username, DeviceKey: a.deviceKey(s.token)})
+	writeSession(w, http.StatusOK, sessionResponse{
+		Username:  s.user.Username,
+		DeviceKey: a.deviceKey(s.token),
+		TOTP:      s.user.TOTPSecret != nil,
+	})
 }
 
 // logoutHandler ends the session the request carries, if any.
@@ -284,6 +328,8 @@ type passwordRequest struct {
 	Salt      string `json:"salt"`
 	NewAuth   string `json:"new_auth"`
 	SealedKey string `json:"sealed_key"`
+	// Code is a TOTP or recovery code, needed while two-factor sign-in is on.
+	Code string `json:"code,omitempty"`
 }
 
 // passwordHandler replaces the password: the current one is asked for
@@ -302,9 +348,8 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	u, result := a.authenticate(r, sessionFrom(ctx).user.Username, auth)
-	if result != authOK {
-		a.refuse(w, result, http.StatusForbidden, "wrong_password", "the current password is wrong")
+	u, ok := a.reauthenticate(w, r, auth, req.Code)
+	if !ok {
 		return
 	}
 	encoded, err := a.hasher.hash(ctx, newAuth)
@@ -316,17 +361,19 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, "set password", err)
 		return
 	}
-	if err := a.store.DeleteSessions(ctx, u.ID); err != nil {
-		a.internalError(w, "end sessions", err)
-		return
-	}
 	a.audit.RecordAccount(ctx, audit.PasswordChanged, u.ID, clientFrom(ctx))
 	u.SealedKey = sealed
-	a.startSession(w, r, u, http.StatusOK)
+	resp, ok := a.renewSessions(w, r, u)
+	if !ok {
+		return
+	}
+	writeSession(w, http.StatusOK, resp)
 }
 
 type confirmRequest struct {
 	Auth string `json:"auth"`
+	// Code is a TOTP or recovery code, needed while two-factor sign-in is on.
+	Code string `json:"code,omitempty"`
 }
 
 // deleteHandler removes the account once the password is given again.
@@ -341,9 +388,8 @@ func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	u, result := a.authenticate(r, sessionFrom(ctx).user.Username, auth)
-	if result != authOK {
-		a.refuse(w, result, http.StatusForbidden, "wrong_password", "the password is wrong")
+	u, ok := a.reauthenticate(w, r, auth, req.Code)
+	if !ok {
 		return
 	}
 	if err := a.store.DeleteUser(ctx, u.ID); err != nil {

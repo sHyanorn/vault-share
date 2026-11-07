@@ -68,6 +68,9 @@ func (j *Job) Run(ctx context.Context) error {
 	if err := j.Store.ExpireSessions(ctx, now); err != nil {
 		errs = append(errs, err)
 	}
+	if err := j.Store.ExpireTickets(ctx, now); err != nil {
+		errs = append(errs, err)
+	}
 	if err := j.Audit.Purge(ctx); err != nil {
 		errs = append(errs, err)
 	}

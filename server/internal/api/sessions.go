@@ -32,6 +32,8 @@ type serverKeys struct {
 	device []byte
 	// deviceCookie signs the cookie that marks a browser that signed in before.
 	deviceCookie []byte
+	// totp seals TOTP secrets.
+	totp []byte
 }
 
 func deriveServerKeys(master []byte) serverKeys {
@@ -42,7 +44,7 @@ func deriveServerKeys(master []byte) serverKeys {
 		}
 		return k
 	}
-	return serverKeys{fakeSalt: key("fake-salt"), device: key("device-key"), deviceCookie: key("device-cookie")}
+	return serverKeys{fakeSalt: key("fake-salt"), device: key("device-key"), deviceCookie: key("device-cookie"), totp: key("totp")}
 }
 
 func mac(key, data []byte) []byte {
