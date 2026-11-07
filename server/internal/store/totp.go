@@ -101,24 +101,6 @@ func (s *Store) SecondStepFailed(ctx context.Context, userID int64) error {
 	return err
 }
 
-// TakeSecondStepFailures returns the failed second steps since the last
-// sign-in and starts the count again.
-func (s *Store) TakeSecondStepFailures(ctx context.Context, userID int64) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, userID).Scan(&n); err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, userID); err != nil {
-		return 0, err
-	}
-	return n, tx.Commit()
-}
-
 // CreateTicket stores a sign-in waiting for its second step.
 func (s *Store) CreateTicket(ctx context.Context, tokenHash []byte, userID int64, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx,
@@ -126,33 +108,66 @@ func (s *Store) CreateTicket(ctx context.Context, tokenHash []byte, userID int64
 	return err
 }
 
-// TicketUser returns the account of a ticket still valid at now.
-func (s *Store) TicketUser(ctx context.Context, tokenHash []byte, now time.Time) (int64, bool, error) {
+// TicketAttempt takes one of the ticket's max attempts, before a code is
+// checked, and returns its account. It reports false for a ticket that is
+// gone, expired or out of attempts. Taking the attempt and checking the
+// count are one statement, so attempts that arrive together get no more.
+func (s *Store) TicketAttempt(ctx context.Context, tokenHash []byte, now time.Time, max int) (int64, bool, error) {
 	var id int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT user_id FROM login_tickets WHERE token_hash = ? AND expires_at > ?`, tokenHash, now.Unix()).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE login_tickets SET attempts = attempts + 1
+		WHERE token_hash = ? AND expires_at > ? AND attempts < ?
+		RETURNING user_id`, tokenHash, now.Unix(), max).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	return id, err == nil, err
 }
 
-// TicketFailed counts a wrong code against the ticket and drops the ticket
-// once it has failed max times.
-func (s *Store) TicketFailed(ctx context.Context, tokenHash []byte, max int) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE login_tickets SET attempts = attempts + 1 WHERE token_hash = ?`, tokenHash); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM login_tickets WHERE token_hash = ? AND attempts >= ?`, tokenHash, max)
-	return err
-}
+// ErrFactorUsed is returned for a second-step code already used up.
+var ErrFactorUsed = errors.New("code already used")
 
-// UseTicket consumes a ticket still valid at now and reports whether it was.
-func (s *Store) UseTicket(ctx context.Context, tokenHash []byte, now time.Time) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx,
-		`DELETE FROM login_tickets WHERE token_hash = ? AND expires_at > ?`, tokenHash, now.Unix()))
+// CompleteSecondStep spends the ticket and the code together, so neither
+// goes without the other: the TOTP step, or with recoveryHash set, that
+// recovery code. It returns the failed second steps since the last sign-in
+// and starts that count again. A ticket already gone gives ErrNotFound, a
+// code already used ErrFactorUsed, and either way nothing is spent.
+func (s *Store) CompleteSecondStep(ctx context.Context, tokenHash []byte, userID int64, now time.Time, step int64, recoveryHash []byte) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	ticket, err := s.changed(tx.ExecContext(ctx,
+		`DELETE FROM login_tickets WHERE token_hash = ? AND user_id = ? AND expires_at > ?`, tokenHash, userID, now.Unix()))
+	if err != nil {
+		return 0, err
+	}
+	if !ticket {
+		return 0, ErrNotFound
+	}
+	var spent bool
+	if recoveryHash != nil {
+		spent, err = s.changed(tx.ExecContext(ctx,
+			`DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`, userID, recoveryHash))
+	} else {
+		spent, err = s.changed(tx.ExecContext(ctx,
+			`UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`, step, userID))
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !spent {
+		return 0, ErrFactorUsed
+	}
+	var failures int
+	if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, userID).Scan(&failures); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, userID); err != nil {
+		return 0, err
+	}
+	return failures, tx.Commit()
 }
 
 // ExpireTickets drops tickets past their expiry.

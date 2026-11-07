@@ -120,3 +120,25 @@ func TestConcurrentDownloadsRespectTheLockout(t *testing.T) {
 		t.Errorf("20 bad signatures at once: %d checked, want %d", denied, lockoutFailures)
 	}
 }
+
+// A code is spent together with its ticket: of several valid recovery
+// codes sent at once on one ticket, one signs in and only that one is used.
+func TestSecondStepSpendsTheCodeWithTheTicket(t *testing.T) {
+	e := newAccountEnv(t)
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	_, codes := owner.enableTOTP(alice)
+	var first secondStepResponse
+	e.browser().send(http.MethodPost, "/api/v1/session", loginRequest{Username: "alice", Auth: encoding.EncodeToString(alice.auth)}, &first)
+	results := parallel(5, func(i int) []byte {
+		_, body := e.browser().send(http.MethodPost, "/api/v1/session/totp", secondStepRequest{Ticket: first.Ticket, Code: codes[i]}, nil)
+		return body
+	})
+	u, _ := e.store.UserByName(context.Background(), "alice")
+	left, _ := e.store.RecoveryCodesLeft(context.Background(), u.ID)
+	if results[""] != 1 || left != recoveryCodeCount-1 {
+		t.Errorf("5 recovery codes at once on one ticket: %v, %d codes left, want one sign-in and %d left",
+			results, left, recoveryCodeCount-1)
+	}
+}

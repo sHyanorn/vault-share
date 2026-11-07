@@ -68,11 +68,15 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	_ = f.Close()
+	// Transactions take the write lock when they begin. A deferred one that
+	// reads before it writes fails at once, past busy_timeout, when another
+	// connection wrote in between.
 	dsn := "file:" + path +
 		"?_pragma=busy_timeout(5000)" +
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
-		"&_pragma=foreign_keys(ON)"
+		"&_pragma=foreign_keys(ON)" +
+		"&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
