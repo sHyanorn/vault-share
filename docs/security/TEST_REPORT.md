@@ -24,7 +24,7 @@ The assessment found eight issues, F18 to F25 in [FINDINGS.md](FINDINGS.md): one
 
 The first test pass found F18 to F22. An independent review of that pass and of its fixes found F23 to F25, and also showed that several checks could pass without proving their claim. Those checks were tightened, and everything below comes from the tightened versions.
 
-| Run on the fixed code (`2e81888`) | Result |
+| Run on the fixed code (`a277b92`) | Result |
 |---|---|
 | `scripts/blackbox.py`, Compose stack | 146 passed |
 | `scripts/blackbox.py`, vaultd direct | 140 passed; 2 skipped, the TLS and redirect checks, which need HTTPS |
@@ -35,7 +35,7 @@ The first test pass found F18 to F22. An independent review of that pass and of 
 | govulncheck on the Caddy binary | 4 advisories (F22) |
 | ZAP baseline in CI | no alert above Informational |
 
-Before the fixes, at `f45771e`, the black-box run on the Compose stack passed 139 checks and failed 3: two for F18 and one for F19 ([`blackbox-before.txt`](evidence/blackbox-before.txt)).
+Before the fixes, at `e5be518`, the black-box run on the Compose stack passed 139 checks and failed 3: two for F18 and one for F19 ([`blackbox-before.txt`](evidence/blackbox-before.txt)).
 
 ## 1. Scope
 
