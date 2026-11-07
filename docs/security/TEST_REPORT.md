@@ -1,6 +1,6 @@
 # Security Test Report
 
-Self-assessment of vault-share against the [OWASP Top 10:2025](https://top10.owasp.org/2025/), carried out in milestone M5 on 2026-11-06 and 2026-11-07. All tests ran against instances of this project that the tester operated.
+Self-assessment of vault-share against the [OWASP Top 10:2025](https://top10.owasp.org/2025/), carried out in milestone M5 on 2026-11-06 and 2026-11-07. Section 7 adds the accounts of M7. All tests ran against instances of this project that the tester operated.
 
 ## Summary
 
@@ -227,7 +227,7 @@ The scope is whether the design bounds abuse: download counts, expiry, burn afte
 
 ### A07:2025 Authentication Failures
 
-There are no user accounts. Authentication here means proving possession of one of these:
+Until M7 there were no user accounts; section 7 covers them. Sharing still authenticates by proving possession of one of these:
 - the link, through an HMAC over a challenge;
 - the delete link's owner token;
 - a download token;
@@ -238,7 +238,7 @@ There are no user accounts. Authentication here means proving possession of one 
 - Five bad signatures lock that client out of that file for 15 minutes, and download authentication has its own rate limit.
 - Challenges expire after 2 minutes and carry an HMAC tag that binds them to their file.
 - Passwords go through Argon2id and, since F21, need at least 8 characters.
-- The server sets no cookies and keeps no sessions.
+- Sharing sets no cookies and needs no session.
 
 | WSTG | Test | Result | Evidence |
 |---|---|---|---|
@@ -367,6 +367,36 @@ CI runs both scripts, and the end-to-end tests in `web/e2e`, against the Compose
 
 The black-box script refuses non-local targets unless `--remote` confirms that the instance is yours. It creates test files and deletes them afterwards, locks one of them, and uses up the client's create budget.
 
+## 7. M7: Accounts
+
+Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose stack, with the black-box checks `accounts`, `totp` and `account-files` and the browser check for accounts. The threat model lists what they cover. The independent review of M7 follows in [FINDINGS.md](FINDINGS.md).
+
+| Run at the end of M7 | Result |
+|---|---|
+| `scripts/blackbox.py`, Compose stack | 170 passed ([`blackbox-m7.txt`](evidence/blackbox-m7.txt)) |
+| `scripts/browser_checks.cjs` | 30 passed ([`browser-checks-m7.txt`](evidence/browser-checks-m7.txt)) |
+| End-to-end tests, disk and S3 | 6 passed on each; the bucket empty afterwards |
+| Go tests with `-race` | 127 passed |
+| Vitest | 107 passed |
+
+| WSTG | Test | Result | Evidence |
+|---|---|---|---|
+| SESS-02 | The cookies set at sign-up | Both `__Host-`, Secure, HttpOnly, SameSite=Strict, for the whole origin and without a Domain; the session lasts a day. Scripts on the page see no cookie | `accounts`, [`browser-checks-m7.txt`](evidence/browser-checks-m7.txt) |
+| SESS-03 | A sign-in while the browser holds a valid session | A new token; the old one gets 401 | `accounts` |
+| SESS-05 | Sign-in, sign-out and every account request marked cross-site, same-site or from another Origin | 403 `cross_origin`, no cookie set, nothing changed (D028) | `accounts`, `TestCrossSiteRequestsCannotUseTheSession` |
+| SESS-06 | Sign-out | 204 and the cookie cleared; the token gets 401 afterwards | `accounts` |
+| SESS-07 | Idle and absolute timeouts | An hour without use or a day after sign-in ends a session (`TestSessionTimeouts`, `TestSessionsEndADayAfterSignIn`) | Go tests |
+| IDNT-04 | Salt lookups and sign-ins for usernames without an account | A stable 16-byte salt; the same 401 body as a wrong password. Sign-up still tells a taken name, which D027 accepts | `accounts` |
+| ATHN-03 | Five failed sign-ins from one client; twenty from many; a browser that signed in before | 429 `locked` with `Retry-After: 900` for that username only; unknown browsers locked, the owner's browser not (`TestLoginLockouts`) | `accounts`, Go tests |
+| ATHN-07 | Account password policy | 15 code points after NFKC normalization, checked in the browser, the only place that sees the password | Vitest |
+| ATHN-09 | Password change | Asks for the current password, and a code while TOTP is on; ends the other sessions | `accounts`, `TestChangesNeedTheCodeWhileTOTPIsOn` |
+| | Second step: a used code, a used ticket, a recovery code used twice, five failures | Each refused; the second step locks after five | `totp`, Go tests |
+| ATHZ-02 | Keeping a file without its owner token, or without a session; listing without a session | 404, 401, 401 | `account-files` |
+| CRYP-04 | Account key derivation | Pinned vectors, computed with hash-wasm and WebCrypto and again with Go's x/crypto/argon2 and standard library | Vitest |
+| | Every request during sign-up, a shared file and My files, in Chromium | None carries the password, the master, wrapping or account key, the share secret or the file name; local storage holds only the sealed account key | [`browser-checks-m7.txt`](evidence/browser-checks-m7.txt), [`my-files.png`](evidence/my-files.png) |
+| | What the database keeps for an account | The browser's salt and sealed key, an Argon2id hash in PHC form, the SHA-256 of the session token; no auth secret, no token | [`database-m7.txt`](evidence/database-m7.txt) |
+| | The vaultd log after all of the above | Paths only: no secret, cookie, username or hash | [`logs-m7.txt`](evidence/logs-m7.txt) |
+
 ## Evidence
 
 | File | Content |
@@ -380,4 +410,5 @@ The black-box script refuses non-local targets unless `--remote` confirms that t
 | [`containers.txt`](evidence/containers.txt), [`database.txt`](evidence/database.txt), [`logs.txt`](evidence/logs.txt) | Container privileges and data permissions; what the database holds; log contents |
 | [`go-test.txt`](evidence/go-test.txt), [`go-scan.txt`](evidence/go-scan.txt), [`web-test.txt`](evidence/web-test.txt), [`semgrep.txt`](evidence/semgrep.txt), [`caddy-govulncheck.txt`](evidence/caddy-govulncheck.txt) | Test and scanner output |
 | [`zap-baseline.png`](evidence/zap-baseline.png), [`zap-report.html`](evidence/zap-report.html) | ZAP baseline from the CI run on the fixed code |
+| [`blackbox-m7.txt`](evidence/blackbox-m7.txt), [`browser-checks-m7.txt`](evidence/browser-checks-m7.txt), [`database-m7.txt`](evidence/database-m7.txt), [`logs-m7.txt`](evidence/logs-m7.txt), [`my-files.png`](evidence/my-files.png) | Section 7: accounts |
 | [`file-name-as-text.png`](evidence/file-name-as-text.png), [`link-after-burn.png`](evidence/link-after-burn.png), [`password-wrong.png`](evidence/password-wrong.png), [`password-minimum.png`](evidence/password-minimum.png), [`framing-refused.png`](evidence/framing-refused.png) | Screenshots |

@@ -1,0 +1,33 @@
+vault-share browser checks against https://localhost
+PASS  the share link carries a 16-byte key in the fragment
+PASS  a file name made of markup is shown as plain text
+PASS  no element is created from the file name
+PASS  the download decrypts to the original bytes
+PASS  after its one permitted download the link shows the file as gone
+PASS  no script ran from the file name
+PASS  every request body was captured, the 200000-byte upload included
+PASS  none of 16 requests (7 to the API) carries the fragment, the secret, the file or metadata key, the file name or the plaintext
+PASS  the auth key reaches the server once, in the create request, as designed
+PASS  no request carries a Referer header
+PASS  a protected link carries the 60-byte wrapped secret instead
+PASS  a wrong password is rejected in the browser without contacting the server
+PASS  the right password unlocks the share
+PASS  neither the password nor the wrapped secret is sent
+PASS  the delete link removes the share
+PASS  injected handlers, inline and remote scripts, javascript: URLs and string timers do not run
+PASS  the browser reports violations of script-src, script-src-attr, script-src-elem
+PASS  an uploaded script does not run in the app origin: the browser refuses its MIME type
+PASS  a page on another origin cannot frame the app
+PASS  the browser cites frame-ancestors when it refuses the frame
+PASS  a create sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  a read sent from a page on another site is refused by the server [403, Sec-Fetch-Site cross-site]
+PASS  the browser sends them without a CORS preflight
+PASS  after a reload My files opens the account again and shows the file name
+PASS  sign-up sends the auth secret derived from the password, as D026 has it
+PASS  none of 12 requests carries the password, the master, wrapping or account key, the share secret or the file name
+PASS  the session cookie is HttpOnly, Secure and SameSite=Strict
+PASS  scripts on the page see no cookie at all
+PASS  local storage holds only the account key sealed under the session's device key
+PASS  deleting the account clears what this browser kept
+
+30 passed, 0 failed

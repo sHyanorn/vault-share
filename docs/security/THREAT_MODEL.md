@@ -11,6 +11,10 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | Delete token | High |
 | Ciphertext | Medium (unreadable without the key, but size and timing can be analyzed) |
 | Audit log | Medium |
+| Account password and account key (M7) | Highest: the key opens the entries, and through them every file an account keeps; neither reaches the server (D026) |
+| Session token, device key and device cookie | High: a live session releases the device key that opens this browser's copy of the account key |
+| TOTP secrets and recovery codes | High: each completes a sign-in whose password is known |
+| Users table | Medium: Argon2id hashes of auth secrets and account keys sealed under passwords, guessable offline at Argon2id cost |
 
 ## 2. Trust Boundaries
 
@@ -19,6 +23,7 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 3. Between the server and storage
 4. Frontend code delivery (the server serves JS to the browser)
 5. Build and CI pipeline (GitHub Actions, npm and Go modules, container base images)
+6. The browser's storage, which keeps the account key sealed between page loads (M7)
 
 ## 3. Attackers
 
@@ -27,6 +32,7 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - A3 Attacker who has obtained the database and storage
 - A4 Attacker in full control of the server
 - A5 Malicious uploader (abuses the service to spread malicious files or exhaust resources)
+- A6 Account attacker (guesses or reuses passwords, phishes, or steals a session or a device; M7)
 
 ## 4. Threats and Mitigations
 
@@ -54,12 +60,27 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | D Denial of service | A stalled S3 service holds requests and stops the cleanup job | One-minute timeouts on responses and on each write; each cleanup run has a deadline | Done (M6, F28, F35) |
 | D Denial of service | Made-up download tokens make vaultd send requests to S3 | The token is checked before the object is opened | Done (M6, F32) |
 | T Tampering | A1 between vaultd and the S3 service reads or alters ciphertext | https except to this machine or a single-label host; the browser's authenticated encryption detects any change to the unsigned payload | Covered by design |
+| S Spoofing | A6 guesses passwords online or replays leaked ones | Failures counted per client and username, per username for browsers that never signed in, per known browser (D027); Argon2id in the browser makes every guess cost 64 MiB; 15-character passwords; optional TOTP | Done (M7) |
+| D Denial of service | Failed sign-ins lock the owner out | A browser that signed in before carries a signed device cookie and is counted on its own, so a campaign locks only unknown browsers (OWASP device cookies, D027) | Done (M7) |
+| I Information disclosure | Probing which usernames exist | A username without an account gets a stable salt and fails after the same work with the same answer | Partly: sign-up still tells a taken name, at five tries an hour per client (D027) |
+| S Spoofing | Session theft or fixation | `__Host-` cookie, HttpOnly, Secure, SameSite=Strict; a new token at every sign-in and privilege change; an hour idle, a day in all; sign-out and password changes end sessions server-side | Done (M7, D027) |
+| S Spoofing | Another site uses or plants a session (CSRF, login CSRF) | The Fetch Metadata and Origin checks of D022 on every account request; SameSite=Strict | Done (M7, D028) |
+| S Spoofing | A6 with the password guesses or replays a second-step code | One step either way, each step usable once, five tries per ticket, five failures per account lock the second step; failures after a right password are reported at the next sign-in | Done (M7, D029) |
+| E Elevation of privilege | A stolen session turns off the second factor, changes the password or deletes the account | Each asks for the password again, and for a code while TOTP is on | Done (M7, D029) |
+| I Information disclosure | A3 reads the users table and the files' entries | Guessing a password costs Argon2id in the browser and again on the server per attempt; entries and names open only with the account key; TOTP secrets are sealed under a server key | Covered by design (the key sits in the data directory, so A3 with all of it can produce codes) |
+| I Information disclosure | A copy of the browser's storage | It holds the account key only sealed under a device key that the server derives from the session token and releases while the session lasts | Done (M7, D026) |
+| D Denial of service | Sign-ins and sign-ups exhaust CPU, memory or the database | Four server-side Argon2id hashes at once with a bounded wait; five sign-ups an hour and a sign-in budget per client; 10,000 accounts and ten sessions per account | Done (M7, D027) |
+| R Repudiation | An owner denies an account change | Sign-ins, failures, TOTP changes, password changes and deletions are audited with the account id and hashed client | Done (M7) |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
 
 ## 5. Residual Risks
 
-- A4 can serve malicious frontend code to steal keys. This limitation is shared by all web-based encryption products and must be stated in the README
+- A4 can serve malicious frontend code to steal keys. This limitation is shared by all web-based encryption products and must be stated in the README. With an account the reach grows: a captured account password opens every file the account keeps
+- There is no password reset: a forgotten account password loses the account and its list; shared links keep working (D026)
+- The server knows which files belong to which account and when they were shared; anonymous shares stay unlinked (D030)
+- Someone who keeps failing for a username locks it for 15 minutes for browsers that never signed in to it, at 20 attempts every 15 minutes; the owner's known browsers keep working (D027)
+- TOTP does not stop a phishing page that relays a code within its step
 - File size and upload time are visible to the server
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
 - A copy of the database lets its holder fetch every live ciphertext and spend its download count through the API, without being able to decrypt (F20)

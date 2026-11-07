@@ -33,6 +33,7 @@ In scope:
 - code in this repository, and instances you run from it yourself
 - anything that lets the server or the network read file contents or file names, or learn the secret in a link
 - ways around download limits, expiry, delete tokens, rate limits or the storage quota
+- anything that lets the server learn an account password or open an account key, signs in without the password or the second factor, or keeps a session alive past sign-out or its timeouts
 
 Out of scope:
 
