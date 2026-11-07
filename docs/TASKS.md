@@ -46,7 +46,7 @@
 - [x] Write SECURITY.md
 
 ## M6 Showcase and Deployment
-- [ ] S3-compatible storage implementation (tested with MinIO)
+- [x] S3-compatible storage implementation (tested with Versity S3 Gateway)
 - [ ] Playwright end-to-end tests
 - [ ] English README: encryption flow diagram, GIF, threat model summary, known limitations
 
