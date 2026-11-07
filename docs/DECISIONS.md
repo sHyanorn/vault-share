@@ -43,13 +43,13 @@
 ## D009 vaultd serves the web client, Caddy only terminates TLS
 - Date: 2026-11-05
 - Decision: the built frontend is served by vaultd from `VAULT_WEB_DIR`; Caddy reverse proxies every request
-- Rationale: the security headers and CSP of M4 are then set in one place for both the API and the HTML, and trust boundary 4 (frontend code delivery) is owned by code under test; the Caddyfile stays three lines
+- Rationale: the security headers and CSP of M4 are then set in one place for both the API and the HTML, and trust boundary 4 (frontend code delivery) is owned by code under test; the Caddyfile stays small (three lines at first; D020 and F23 added global options and an explicit HTTP site)
 - Trade-off: Go serves static files less efficiently than Caddy; irrelevant at this scale
 
 ## D010 Request logs carry the path but never the query string
 - Date: 2026-11-05
 - Decision: the request log records method, path, status, size and duration; no query string, no client address
-- Rationale: download tokens travel in the query string (SPEC §7); client addresses belong in the audit log as salted hashes (M4)
+- Rationale: download tokens travel in the query string (SPEC §7); client addresses belong in the audit log as keyed hashes (D018)
 
 ## D011 Supply chain pinning
 - Date: 2026-11-05
@@ -71,7 +71,7 @@
 
 ## D013 Tokens are random secrets hashed with SHA-256
 - Date: 2026-11-06
-- Decision: the owner token and download tokens are 32 random bytes; the server stores their SHA-256 and compares hashes in constant time. Challenge nonces are 32 random bytes stored as is and deleted on first use
+- Decision: the owner token and download tokens are 32 random bytes; the server stores their SHA-256 and compares hashes in constant time. Challenge nonces are 32 random bytes stored as is and deleted on first use (superseded: challenges are stateless, see D014 and F8)
 - Rationale: Argon2id (CLAUDE.md) protects low-entropy passwords; a 256-bit random token cannot be guessed, so a fast hash is enough and still keeps a database leak from yielding usable tokens
 
 ## D014 Download accounting
