@@ -153,3 +153,41 @@ func TestCompleteSecondStepSpendsBothOrNeither(t *testing.T) {
 		t.Errorf("after a session that failed to open: ticket usable %v, %d codes left", ok, left())
 	}
 }
+
+// A change to how an account signs in ends its sign-ins waiting for the
+// second step, and only its own (F43).
+func TestChangesEndTickets(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(s *Store, id int64) error{
+		"password": func(s *Store, id int64) error {
+			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"))
+		},
+		"enable": func(s *Store, id int64) error {
+			if err := s.SetPendingTOTP(ctx, id, []byte("sealed")); err != nil {
+				return err
+			}
+			if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 1, nil); !ok {
+				return errors.Join(errors.New("nothing pending"), err)
+			}
+			return nil
+		},
+		"disable": func(s *Store, id int64) error { return s.DisableTOTP(ctx, id) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openTest(t)
+			alice, _ := s.CreateUser(ctx, user("alice"), 10)
+			bob, _ := s.CreateUser(ctx, user("bob"), 10)
+			s.CreateTicket(ctx, []byte("alice"), alice, t0.Add(time.Minute))
+			s.CreateTicket(ctx, []byte("bob"), bob, t0.Add(time.Minute))
+			if err := change(s, alice); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, _ := s.TicketAttempt(ctx, []byte("alice"), t0, 5); ok {
+				t.Error("the account's ticket outlived the change")
+			}
+			if _, ok, _ := s.TicketAttempt(ctx, []byte("bob"), t0, 5); !ok {
+				t.Error("another account's ticket ended")
+			}
+		})
+	}
+}
