@@ -144,9 +144,26 @@ func TestLoadS3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := S3{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "vault", AccessKeyID: "AKID", SecretAccessKey: "the-secret-value"}
+	want := S3{Endpoint: "https://s3.example.com", Region: "us-east-1", Bucket: "vault", AccessKeyID: "AKID", SecretAccessKey: "the-secret-value", PathStyle: true}
 	if cfg.Storage != "s3" || cfg.S3 != want {
 		t.Errorf("got %q %+v", cfg.Storage, cfg.S3)
+	}
+	for _, c := range []struct {
+		endpoint, pathStyle string
+		want                bool
+	}{{"", "", false}, {"https://s3.example.com", "false", false}, {"", "true", true}} {
+		changed := maps.Clone(env)
+		changed["VAULT_S3_ENDPOINT"], changed["VAULT_S3_PATH_STYLE"] = c.endpoint, c.pathStyle
+		if cfg, err := Load(lookupFrom(changed)); err != nil || cfg.S3.PathStyle != c.want {
+			t.Errorf("endpoint %q, path style %q: %v %v", c.endpoint, c.pathStyle, cfg.S3.PathStyle, err)
+		}
+	}
+	for _, local := range []string{"http://localhost:9000", "http://127.0.0.1:7070", "http://[::1]:7070", "http://s3:7070"} {
+		changed := maps.Clone(env)
+		changed["VAULT_S3_ENDPOINT"] = local
+		if _, err := Load(lookupFrom(changed)); err != nil {
+			t.Errorf("plain http to %s: %v", local, err)
+		}
 	}
 
 	for _, missing := range []string{"VAULT_S3_BUCKET", "VAULT_S3_ACCESS_KEY_ID", "VAULT_S3_SECRET_ACCESS_KEY"} {
@@ -156,7 +173,8 @@ func TestLoadS3(t *testing.T) {
 			t.Errorf("without %s: %v", missing, err)
 		}
 	}
-	for _, bad := range []string{"s3.example.com", "ftp://s3.example.com", "https://u:p@s3.example.com", "https://s3.example.com?x=1"} {
+	for _, bad := range []string{"s3.example.com", "ftp://s3.example.com", "https://u:p@s3.example.com", "https://s3.example.com?x=1",
+		"http://s3.example.com", "http://10.0.0.5:9000"} {
 		broken := maps.Clone(env)
 		broken["VAULT_S3_ENDPOINT"] = bad
 		_, err := Load(lookupFrom(broken))
@@ -176,9 +194,16 @@ func TestLoadS3(t *testing.T) {
 	if _, err := Load(lookupFrom(map[string]string{"VAULT_STORAGE": "tape"})); err == nil || !strings.Contains(err.Error(), "VAULT_STORAGE") {
 		t.Errorf("unknown storage: %v", err)
 	}
-	// Without s3 the S3 settings are ignored, so a stale secret is not kept.
+	pathStyle := maps.Clone(env)
+	pathStyle["VAULT_S3_PATH_STYLE"] = "maybe"
+	if _, err := Load(lookupFrom(pathStyle)); err == nil || !strings.Contains(err.Error(), "VAULT_S3_PATH_STYLE") {
+		t.Errorf("path style %q: %v", "maybe", err)
+	}
+	// S3 settings without S3 storage are a mistake to report: the files
+	// would stay on disk.
 	env["VAULT_STORAGE"] = "disk"
-	if cfg, err := Load(lookupFrom(env)); err != nil || cfg.S3 != (S3{}) {
-		t.Errorf("disk storage kept S3 settings: %+v %v", cfg.S3, err)
+	_, err = Load(lookupFrom(env))
+	if err == nil || !strings.Contains(err.Error(), "VAULT_S3_BUCKET") || strings.Contains(err.Error(), "the-secret-value") {
+		t.Errorf("disk storage with S3 settings: %v", err)
 	}
 }

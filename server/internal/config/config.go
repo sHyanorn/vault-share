@@ -59,7 +59,12 @@ type S3 struct {
 	// (VAULT_S3_ACCESS_KEY_ID, VAULT_S3_SECRET_ACCESS_KEY).
 	AccessKeyID     string
 	SecretAccessKey string
+	// PathStyle puts the bucket in the path instead of the host name; on by
+	// default with a custom endpoint (VAULT_S3_PATH_STYLE).
+	PathStyle bool
 }
+
+var s3Variables = []string{"S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_PATH_STYLE"}
 
 // Load reads settings through lookup, normally os.LookupEnv. Unset or empty
 // variables take their defaults. Every invalid variable is reported.
@@ -132,6 +137,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	cfg.Storage = get("STORAGE", "disk")
 	switch cfg.Storage {
 	case "disk":
+		// A bucket configured by mistake would leave the files on disk
+		// while the operator believes they are in S3.
+		for _, name := range s3Variables {
+			if get(name, "") != "" {
+				fail(name, errors.New("is set but VAULT_STORAGE is not s3"))
+			}
+		}
 	case "s3":
 		cfg.S3 = S3{
 			Endpoint:        get("S3_ENDPOINT", ""),
@@ -140,10 +152,15 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			AccessKeyID:     get("S3_ACCESS_KEY_ID", ""),
 			SecretAccessKey: get("S3_SECRET_ACCESS_KEY", ""),
 		}
-		if u, err := url.Parse(cfg.S3.Endpoint); cfg.S3.Endpoint != "" && (err != nil ||
-			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
-			strings.ContainsAny(cfg.S3.Endpoint, "?#")) {
-			fail("S3_ENDPOINT", errors.New("must be an http(s) URL"))
+		if cfg.S3.Endpoint != "" {
+			if err := checkEndpoint(cfg.S3.Endpoint); err != nil {
+				fail("S3_ENDPOINT", err)
+			}
+		}
+		if b, err := strconv.ParseBool(get("S3_PATH_STYLE", strconv.FormatBool(cfg.S3.Endpoint != ""))); err != nil {
+			fail("S3_PATH_STYLE", errors.New("must be true or false"))
+		} else {
+			cfg.S3.PathStyle = b
 		}
 		if cfg.MaxFileBytes > blob.MaxS3ObjectBytes {
 			fail("MAX_FILE_BYTES", errors.New("must be at most 5 GiB with S3, the most it takes in one request"))
@@ -161,6 +178,28 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	return cfg, errors.Join(errs...)
+}
+
+// checkEndpoint accepts an http(s) URL with no credentials, query or
+// fragment. Plain http must stay on this machine or reach a single-label
+// name, such as a Compose service; anything further needs TLS.
+func checkEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+		strings.ContainsAny(endpoint, "?#") {
+		return errors.New("must be an http(s) URL")
+	}
+	if u.Scheme == "http" {
+		host := u.Hostname()
+		local := !strings.Contains(host, ".")
+		if ip, err := netip.ParseAddr(host); err == nil {
+			local = ip.IsLoopback()
+		}
+		if !local {
+			return errors.New("must use https unless it is on this machine or a single-label host such as a Compose service")
+		}
+	}
+	return nil
 }
 
 // parseProxy accepts an address or a CIDR in the form clients are matched

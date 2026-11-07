@@ -12,6 +12,7 @@ services:
       VAULT_S3_BUCKET: ${VAULT_S3_BUCKET:-}
       VAULT_S3_ACCESS_KEY_ID: ${VAULT_S3_ACCESS_KEY_ID:-}
       VAULT_S3_SECRET_ACCESS_KEY: ${VAULT_S3_SECRET_ACCESS_KEY:-}
+      VAULT_S3_PATH_STYLE: ${VAULT_S3_PATH_STYLE:-}
       # Only Caddy can reach vaultd: its port is not published and the
       # Compose network is private, so forwarded addresses from it are trusted.
       VAULT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8
