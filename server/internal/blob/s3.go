@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"sync"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -38,21 +39,11 @@ type S3Config struct {
 type S3 struct {
 	client *s3.Client
 	bucket string
-
-	mu sync.Mutex
-	// open counts the readers of each object, so a Delete while one reads
-	// waits for the last to close, as removing an open file does on disk.
-	open map[string]*readers
-}
-
-type readers struct {
-	n       int
-	deleted bool
 }
 
 // NewS3 connects to the bucket and checks that it is reachable.
 func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
-	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket, open: map[string]*readers{}}
+	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket}
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err != nil {
 		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
 	}
@@ -200,77 +191,47 @@ func (s *S3) Open(ctx context.Context, id string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	st := s.open[id]
-	if st == nil {
-		st = &readers{}
-		s.open[id] = st
-	}
-	st.n++
-	s.mu.Unlock()
-	return &s3Reader{ReadCloser: out.Body, store: s, id: id}, nil
+	return out.Body, nil
 }
 
-type s3Reader struct {
-	io.ReadCloser
-	store *S3
-	id    string
-	once  sync.Once
-}
-
-func (r *s3Reader) Close() error {
-	err := r.ReadCloser.Close()
-	r.once.Do(func() { r.store.release(r.id) })
-	return err
-}
-
-// release drops one reader and carries out a Delete that waited for it.
-func (s *S3) release(id string) {
-	s.mu.Lock()
-	st := s.open[id]
-	st.n--
-	remove := st.n == 0 && st.deleted
-	if st.n == 0 {
-		delete(s.open, id)
-	}
-	s.mu.Unlock()
-	if remove {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = s.deleteObject(ctx, id)
-	}
-}
-
-// Delete removes the object. While it is open for reading, the last reader
-// to close removes it instead.
+// Delete removes the object at once. A download already streaming still
+// gets every byte: S3 updates a key atomically, and the store contract
+// checks it on each service tested.
 func (s *S3) Delete(ctx context.Context, id string) error {
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
-	s.mu.Lock()
-	if st := s.open[id]; st != nil {
-		st.deleted = true
-		s.mu.Unlock()
-		return nil
-	}
-	s.mu.Unlock()
-	return s.deleteObject(ctx, id)
-}
-
-// deleteObject treats a missing object as deleted; S3 itself does, some
-// compatible services answer 404.
-func (s *S3) deleteObject(ctx context.Context, id string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &id})
+	// S3 answers success for a missing key, some compatible services 404.
 	if notFound(err) {
 		return nil
 	}
 	return err
 }
 
+// notFound reports a missing object. A missing bucket is an error: it means
+// the configuration is wrong, not that the file is gone.
 func notFound(err error) bool {
-	var missing *types.NoSuchKey
-	var resp *smithyhttp.ResponseError
-	return errors.As(err, &missing) || errors.As(err, &resp) && resp.HTTPStatusCode() == http.StatusNotFound
+	var api smithy.APIError
+	return errors.As(err, &api) && api.ErrorCode() == "NoSuchKey"
+}
+
+func (s *S3) IDs(ctx context.Context) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		pages := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: &s.bucket})
+		for pages.HasMorePages() {
+			page, err := pages.NextPage(ctx)
+			if err != nil {
+				yield("", err)
+				return
+			}
+			for _, obj := range page.Contents {
+				if id := aws.ToString(obj.Key); ValidID(id) && !yield(id, nil) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Sweep has nothing to do: an upload that fails leaves nothing behind.

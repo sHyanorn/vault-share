@@ -67,6 +67,28 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func TestIDsListOnlyBlobs(t *testing.T) {
+	d, root := newDisk(t)
+	if err := d.Put(context.Background(), id, 1, strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"notes.txt", "tmp/upload-partial"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var listed []string
+	for got, err := range d.IDs(context.Background()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed = append(listed, got)
+	}
+	if len(listed) != 1 || listed[0] != id {
+		t.Errorf("listed %q", listed)
+	}
+}
+
 func TestSweepRemovesOnlyOldTempFiles(t *testing.T) {
 	d, root := newDisk(t)
 	old := filepath.Join(root, "tmp", "upload-old")

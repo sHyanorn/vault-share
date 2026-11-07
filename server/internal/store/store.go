@@ -195,6 +195,16 @@ func (s *Store) GetFile(ctx context.Context, id string) (File, error) {
 	return f, nil
 }
 
+// FileExists reports whether id has a record, live or not.
+func (s *Store) FileExists(ctx context.Context, id string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM files WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // MarkUploaded records that the content is stored. It reports false when the
 // record is gone or already marked.
 func (s *Store) MarkUploaded(ctx context.Context, id string, at time.Time) (bool, error) {

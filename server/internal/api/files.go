@@ -185,13 +185,17 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, "store content", err)
 		return
 	}
+	// The content is stored; a client hanging up now must not leave the
+	// record waiting for it.
+	ctx = context.WithoutCancel(ctx)
 	marked, err := h.store.MarkUploaded(ctx, f.ID, h.now())
 	if err != nil {
 		h.internalError(w, "mark uploaded", err)
 		return
 	}
 	if !marked {
-		// Deleted or purged while the body was in flight.
+		// Deleted or purged while the body was in flight. Should this fail,
+		// cleanup finds the content without a record and deletes it.
 		if err := h.blobs.Delete(ctx, f.ID); err != nil {
 			h.log.Error("discard orphaned content", "id", f.ID, "err", err)
 		}
@@ -348,7 +352,7 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 // burn removes a file whose downloads are used up, unless another download
 // token is still pending for it. The record goes first so the content can
 // never be taken from a download in progress; a failed content deletion is
-// logged and left for an operator, the cleanup job cannot see it any more.
+// logged, and cleanup deletes the content once it finds no record for it.
 func (h *files) burn(ctx context.Context, id string, now time.Time) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
