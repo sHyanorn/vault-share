@@ -26,6 +26,9 @@ Issues found during development, how they were found and how they were fixed. Se
 | F20 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | The database holds the keys that pass the download check, which the docs denied | Fixed (documentation) |
 | F21 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | Password protection accepted passwords of any length | Fixed |
 | F22 | 2026-11-06 | Info | OWASP Top 10 self-assessment (M5) | The pinned Caddy release carries modules with published advisories | Accepted |
+| F23 | 2026-11-06 | Low | Independent review of M5 | Caddy's HTTP redirect server kept the default timeouts after F19 | Fixed |
+| F24 | 2026-11-06 | Low | Independent review of M5 | Cross-site reads through visitors' browsers could keep their request budget empty | Fixed |
+| F25 | 2026-11-06 | Low | Independent review of M5 | The API answered any Host, so a rebound name reached a directly exposed vaultd as same-origin | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -116,3 +119,15 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F22 Advisories in the pinned Caddy (Info)
 - Impact: govulncheck in binary mode reports GO-2026-6866 and GO-2026-6860 (`golang.org/x/net/html`), GO-2026-6865 (`klauspost/compress`) and GO-2026-5932 (`golang.org/x/crypto/openpgp`) in the Caddy 2.11.9 binary. The Caddyfile enables none of the handlers that use these packages (templates, Markdown, response compression), though binary mode cannot prove that no path reaches them.
 - Status: accepted until upstream ships a fixed release; 2.11.9 is the latest, and Dependabot proposes the next image.
+
+## F23 HTTP redirect server kept Caddy's defaults (Low)
+- Impact: the timeouts of F19 went into the `servers` options of the Caddyfile, but Caddy builds its HTTP to HTTPS redirect server itself, after the Caddyfile is adapted and without those options. Port 80 still closed unfinished headers only after 60 s. The F19 check had probed port 443 only.
+- Fix: an explicit HTTP site in the Caddyfile issues the same redirect, so the adapted configuration holds both servers with `read_header 10s` and `idle 2m`; measured afterwards at 10 s on both ports. The black-box slow-header check now probes the HTTP origin too.
+
+## F24 Cross-site reads spent the visitor's budget (Low)
+- Impact: F18's fix refused cross-origin writes only. A page on another site could still make its visitors' browsers send reads. The page never sees the answers, but every read counts against the visitor's request budget (D017), so two a second keep that budget empty while the page is open.
+- Fix: every API request that Fetch Metadata marks `cross-site` or `same-site` is refused with 403 before the rate limiter (D022). A test sends ten cross-site reads against a budget of three and checks that the client's own three requests still pass.
+
+## F25 Any Host reached the API (Low)
+- Impact: vaultd answered whatever Host a request named. A page that rebinds its own name to a directly reachable vaultd, such as a developer's local instance, is same-origin to the browser, so F18's protection let its writes through. The shipped Compose stack was not affected, because Caddy forwards only its own site name.
+- Fix: the API answers 421 `misdirected` unless the Host, compared without port and case, is the host of `VAULT_BASE_URL` (D022). The health check and the web client still answer any name.

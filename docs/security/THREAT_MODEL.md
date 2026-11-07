@@ -43,8 +43,10 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | D Denial of service | Metadata requests create server state | Challenges are stateless, see D014 | Done (M2) |
 | D Denial of service | Failures from many addresses fill the audit log | Process-wide budget for failure events, 1,000,000-row cap (D018) | Done (M4, F16) |
 | S Spoofing | A client names itself in X-Forwarded-For behind a proxy that appends a header line | Only the last entry of the last line counts (D017) | Done (M4, F15) |
-| S Spoofing | A page on another site makes its visitors' browsers create files, each visitor counting as a separate client | Cross-origin writes refused through Fetch Metadata, with Origin as a fallback (D022) | Done (M5, F18) |
-| D Denial of service | Slow clients hold connections open | Header timeout of 10 s and idle timeout of 2 minutes at Caddy and vaultd; uploads and downloads get a deadline from their size | Done (M5, F19) |
+| S Spoofing | A page on another site makes its visitors' browsers create files, each visitor counting as a separate client, or drain their budget with reads | Requests marked cross-site or same-site refused for every method, cross-origin writes also judged by Origin (D022) | Done (M5, F18, F24) |
+| S Spoofing | A page rebinds its own name to a directly reachable vaultd and acts as same-origin | The API answers only for the host of `VAULT_BASE_URL` (D022) | Done (M5, F25) |
+| T Tampering | A link to the content URL spends a download | The URL carries a one-time 256-bit token that only the downloading browser holds | Covered by design |
+| D Denial of service | Slow clients hold connections open | Header timeout of 10 s and idle timeout of 2 minutes at Caddy, on both ports, and at vaultd; uploads and downloads get a deadline from their size | Done (M5, F19, F23) |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB bounds offline guessing; the lockout bounds signature forgery, a guess never reaches the server, see D019; M5: passwords need 8 characters, F21) |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
@@ -55,6 +57,7 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - File size and upload time are visible to the server
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
 - A copy of the database lets its holder fetch every live ciphertext and spend its download count through the API, without being able to decrypt (F20)
+- A power loss can roll back the newest download decrement and so grant one extra download (D005)
 - Rate limits and lockouts count one IPv4 address or one IPv6 /64 as one client; an attacker holding many of those is bounded only by the per-file download count and the total disk. Clients behind one address share their limits
 - The server is a single instance; its in-memory limiter state resets on restart
 - A group of clients with upload bandwidth can fill the storage quota and keep uploads unavailable until their files expire, up to seven days; their creates also push older audit entries out, at most a few entries per record and quota / 64 KiB records at a time (D021)

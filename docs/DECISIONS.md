@@ -118,7 +118,7 @@
 - Decision: `Dockerfile.caddy` runs Caddy as uid 65532 with a read-only root filesystem and no capabilities; it listens on 8080 and 8443 inside the container and Compose maps 80 and 443 to them
 - Rationale: SPEC section 8 asks every container to run as a non-root user; binding the privileged ports would have required a capability, and Caddy's `http_port` and `https_port` options exist for exactly this port-forwarding setup
 - Note: HTTP/3 is off because Caddy would advertise the internal port in `Alt-Svc`; a deployment that upgrades from the root-owned Caddy needs fresh `caddy-data` and `caddy-config` volumes
-- Timeouts (F19): `read_header 10s` and `idle 2m`, the values of vaultd's own server; bodies and responses are left to vaultd, which gives each transfer a deadline from its size
+- Timeouts (F19, F23): `read_header 10s` and `idle 2m`, the values of vaultd's own server, on both ports; the HTTP site is declared in the Caddyfile because the redirect server Caddy adds by itself ignores server options. Bodies and responses are left to vaultd, which gives each transfer a deadline from its size
 
 ## D021 Storage quota and per-client storage budget
 - Date: 2026-11-06
@@ -129,9 +129,9 @@
 
 ## D022 Cross-origin writes are refused
 - Date: 2026-11-06
-- Decision: the API runs behind Go's `http.CrossOriginProtection`. A write (any method but GET, HEAD and OPTIONS) is refused when its `Sec-Fetch-Site` is neither `same-origin` nor `none`, or, from a browser that sends no Fetch Metadata, when its `Origin` host differs from `Host`. Refusals answer 403 with code `cross_origin` before the rate limiter, so they spend no client budget. Requests with neither header, such as scripts, pass
+- Decision: every API request whose `Sec-Fetch-Site` is `cross-site` or `same-site` is refused, reads included (F24). Writes also pass Go's `http.CrossOriginProtection`, which judges browsers without Fetch Metadata by their `Origin`. Refusals answer 403 with code `cross_origin` before the rate limiter, so they spend no client budget. Requests with neither header, such as scripts, pass. The API answers only requests whose Host, without port and case, is the host of `VAULT_BASE_URL`, and 421 `misdirected` to any other (F25)
 - Rationale: F18. The check is in the standard library since Go 1.25 and follows the Fetch Metadata isolation policy that OWASP recommends against CSRF; the API has no sessions, so no token is needed. Requiring `application/json` would also force a preflight, but only through the CORS rules, without stating the rule
-- Trade-off: a web client served from another origin than the API would need `AddTrustedOrigin`
+- Trade-off: a web client served from another origin than the API would need `AddTrustedOrigin`; a proxy in front must keep the Host header, as Caddy does, and a local run must set `VAULT_BASE_URL` to the address it is opened at
 
 ## D023 No Subresource Integrity
 - Date: 2026-11-06
