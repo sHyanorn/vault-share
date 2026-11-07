@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// renewal stands in for the session a change to how an account signs in
+// opens.
+var renewal = Renewal{SessionHash: []byte("renewed"), Now: t0}
+
 func user(name string) User {
 	return User{Username: name, Salt: []byte("salt-16-bytes!!!"), AuthHash: "$argon2id$hash",
 		SealedKey: []byte("sealed"), CreatedAt: t0}
@@ -155,7 +159,7 @@ func TestSetPassword(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
-	if err := s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed")); err != nil {
+	if err := s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := s.UserByName(ctx, "alice")

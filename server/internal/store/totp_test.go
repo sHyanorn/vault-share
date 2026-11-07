@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,7 +18,7 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 		t.Fatal("a step was used while two-factor sign-in is off")
 	}
 	s.SetPendingTOTP(ctx, id, []byte("sealed"))
-	if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 100, [][]byte{[]byte("a"), []byte("b")}); !ok || err != nil {
+	if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 100, [][]byte{[]byte("a"), []byte("b")}, renewal); !ok || err != nil {
 		t.Fatalf("enable: %v %v", ok, err)
 	}
 	// Two requests with the same code at once: one wins.
@@ -44,10 +45,10 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 	if n, _ := s.RecoveryCodesLeft(ctx, id); n != 2 {
 		t.Errorf("%d recovery codes", n)
 	}
-	if ok, _ := s.EnableTOTP(ctx, id, []byte("again"), 0, nil); ok {
+	if ok, _ := s.EnableTOTP(ctx, id, []byte("again"), 0, nil, renewal); ok {
 		t.Error("enabled without a pending secret")
 	}
-	if err := s.DisableTOTP(ctx, id); err != nil {
+	if err := s.DisableTOTP(ctx, id, renewal); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := s.UserByName(ctx, "alice")
@@ -95,7 +96,7 @@ func TestCompleteSecondStepSpendsBothOrNeither(t *testing.T) {
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
 	s.SetPendingTOTP(ctx, id, []byte("sealed"))
-	s.EnableTOTP(ctx, id, []byte("sealed"), 100, [][]byte{[]byte("code-a"), []byte("code-b")})
+	s.EnableTOTP(ctx, id, []byte("sealed"), 100, [][]byte{[]byte("code-a"), []byte("code-b")}, renewal)
 	s.SecondStepFailed(ctx, id)
 	s.SecondStepFailed(ctx, id)
 	left := func() int {
@@ -154,39 +155,69 @@ func TestCompleteSecondStepSpendsBothOrNeither(t *testing.T) {
 	}
 }
 
-// A change to how an account signs in ends its sign-ins waiting for the
-// second step, and only its own (F43).
-func TestChangesEndTickets(t *testing.T) {
+// A change to how an account signs in ends the account's sessions and its
+// sign-ins waiting for a second step, and nobody else's, and opens the
+// renewal session in the same transaction: when that session cannot open,
+// nothing changes (F43, F46).
+func TestChangesRestartSignIns(t *testing.T) {
 	ctx := context.Background()
 	for name, change := range map[string]func(s *Store, id int64) error{
 		"password": func(s *Store, id int64) error {
-			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"))
+			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal)
 		},
 		"enable": func(s *Store, id int64) error {
-			if err := s.SetPendingTOTP(ctx, id, []byte("sealed")); err != nil {
-				return err
-			}
-			if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 1, nil); !ok {
+			if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 1, nil, renewal); !ok {
 				return errors.Join(errors.New("nothing pending"), err)
 			}
 			return nil
 		},
-		"disable": func(s *Store, id int64) error { return s.DisableTOTP(ctx, id) },
+		"disable": func(s *Store, id int64) error { return s.DisableTOTP(ctx, id, renewal) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := openTest(t)
 			alice, _ := s.CreateUser(ctx, user("alice"), 10)
 			bob, _ := s.CreateUser(ctx, user("bob"), 10)
-			s.CreateTicket(ctx, []byte("alice"), alice, t0.Add(time.Minute))
-			s.CreateTicket(ctx, []byte("bob"), bob, t0.Add(time.Minute))
+			s.SetPendingTOTP(ctx, alice, []byte("sealed"))
+			// The existing sessions look newer than the renewal, as after the
+			// clock was set back, so keeping only the newest would keep them.
+			for _, id := range []int64{alice, bob} {
+				key := []byte(fmt.Sprint("signed-in-", id))
+				s.CreateSession(ctx, key, id, t0.Add(time.Hour), 10)
+				s.CreateTicket(ctx, key, id, t0.Add(time.Minute))
+			}
+			state := func() string {
+				var users, sessions, tickets string
+				s.db.QueryRow(`SELECT group_concat(id || auth_hash || hex(ifnull(totp_secret, '')) || hex(ifnull(totp_pending, '')), ',') FROM users`).Scan(&users)
+				s.db.QueryRow(`SELECT group_concat(user_id || hex(token_hash), ',') FROM (SELECT * FROM sessions ORDER BY token_hash)`).Scan(&sessions)
+				s.db.QueryRow(`SELECT group_concat(user_id || hex(token_hash), ',') FROM (SELECT * FROM login_tickets ORDER BY token_hash)`).Scan(&tickets)
+				return users + " | " + sessions + " | " + tickets
+			}
+			before := state()
+			if _, err := s.db.Exec(`CREATE TRIGGER no_sessions BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'full'); END`); err != nil {
+				t.Fatal(err)
+			}
+			if err := change(s, alice); err == nil {
+				t.Fatal("the change went through without its session")
+			}
+			if after := state(); after != before {
+				t.Errorf("a change whose session failed to open left\n%s\nwhere there was\n%s", after, before)
+			}
+			s.db.Exec(`DROP TRIGGER no_sessions`)
 			if err := change(s, alice); err != nil {
 				t.Fatal(err)
 			}
-			if _, ok, _ := s.TicketAttempt(ctx, []byte("alice"), t0, 5); ok {
+			var sessions string
+			s.db.QueryRow(`SELECT group_concat(CAST(token_hash AS TEXT), ',') FROM (SELECT * FROM sessions WHERE user_id = ? ORDER BY token_hash)`, alice).Scan(&sessions)
+			if sessions != "renewed" {
+				t.Errorf("the account's sessions after the change: %q", sessions)
+			}
+			if _, ok, _ := s.TicketAttempt(ctx, []byte(fmt.Sprint("signed-in-", alice)), t0, 5); ok {
 				t.Error("the account's ticket outlived the change")
 			}
-			if _, ok, _ := s.TicketAttempt(ctx, []byte("bob"), t0, 5); !ok {
-				t.Error("another account's ticket ended")
+			var others int
+			s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM sessions WHERE user_id = ?1) + (SELECT COUNT(*) FROM login_tickets WHERE user_id = ?1)`, bob).Scan(&others)
+			if others != 2 {
+				t.Errorf("another account kept %d of its session and ticket", others)
 			}
 		})
 	}

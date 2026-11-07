@@ -355,7 +355,8 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	try.pass(true)
 	codes, hashes := newRecoveryCodes()
-	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, step, hashes)
+	token := randomBytes(tokenBytes)
+	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, step, hashes, a.renewal(token))
 	if err != nil {
 		a.internalError(w, "enable TOTP", err)
 		return
@@ -366,10 +367,8 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit.RecordAccount(ctx, audit.TOTPEnabled, u.ID, clientFrom(ctx))
 	u.TOTPSecret = sealed
-	resp, ok := a.renewSessions(w, r, u)
-	if !ok {
-		return
-	}
+	a.setSessionCookies(w, u, token)
+	resp := a.signedIn(u, token)
 	resp.RecoveryCodes = codes
 	writeSession(w, http.StatusOK, resp)
 }
@@ -395,30 +394,13 @@ func (a *accounts) totpDisableHandler(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := a.store.DisableTOTP(ctx, u.ID); err != nil {
+	token := randomBytes(tokenBytes)
+	if err := a.store.DisableTOTP(ctx, u.ID, a.renewal(token)); err != nil {
 		a.internalError(w, "disable TOTP", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.TOTPDisabled, u.ID, clientFrom(ctx))
 	u.TOTPSecret = nil
-	resp, ok := a.renewSessions(w, r, u)
-	if !ok {
-		return
-	}
-	writeSession(w, http.StatusOK, resp)
-}
-
-// renewSessions ends every session of u after a change to how it signs in
-// and gives this browser a new one (OWASP: renew the session ID after any
-// privilege level change).
-func (a *accounts) renewSessions(w http.ResponseWriter, r *http.Request, u store.User) (sessionResponse, bool) {
-	if err := a.store.DeleteSessions(r.Context(), u.ID); err != nil {
-		a.internalError(w, "end sessions", err)
-		return sessionResponse{}, false
-	}
-	token, ok := a.issueSession(w, r, u)
-	if !ok {
-		return sessionResponse{}, false
-	}
-	return a.signedIn(u, token), true
+	a.setSessionCookies(w, u, token)
+	writeSession(w, http.StatusOK, a.signedIn(u, token))
 }

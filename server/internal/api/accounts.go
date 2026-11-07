@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -332,9 +333,10 @@ func (a *accounts) currentHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// logoutHandler ends the session the request carries, if any.
+// logoutHandler ends the session the request carries, if any, even when the
+// client hangs up meanwhile (F46).
 func (a *accounts) logoutHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := context.WithoutCancel(r.Context())
 	if token, ok := sessionToken(r); ok {
 		u, valid, err := a.store.SessionUser(ctx, hashToken(token), a.now())
 		if err == nil {
@@ -362,7 +364,8 @@ type passwordRequest struct {
 }
 
 // passwordHandler replaces the password: the current one is asked for
-// again, every session of the account ends, and this browser gets a new one.
+// again, and in the same transaction every session of the account ends and
+// this browser gets a new one.
 func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 	var req passwordRequest
 	if !decodeJSON(w, r, &req) {
@@ -386,17 +389,22 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		busy(w)
 		return
 	}
-	if err := a.store.SetPassword(ctx, u.ID, salt, encoded, sealed); err != nil {
+	token := randomBytes(tokenBytes)
+	if err := a.store.SetPassword(ctx, u.ID, salt, encoded, sealed, a.renewal(token)); err != nil {
 		a.internalError(w, "set password", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.PasswordChanged, u.ID, clientFrom(ctx))
 	u.SealedKey = sealed
-	resp, ok := a.renewSessions(w, r, u)
-	if !ok {
-		return
-	}
-	writeSession(w, http.StatusOK, resp)
+	a.setSessionCookies(w, u, token)
+	writeSession(w, http.StatusOK, a.signedIn(u, token))
+}
+
+// renewal is the session with token that replaces all of an account's
+// sessions in the transaction of a change to how it signs in, so no step
+// after the commit can leave the old ones (F46).
+func (a *accounts) renewal(token []byte) store.Renewal {
+	return store.Renewal{SessionHash: hashToken(token), Now: a.now()}
 }
 
 type confirmRequest struct {

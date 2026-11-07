@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -91,6 +92,49 @@ func (b *browser) send(method, path string, body, out any) (int, []byte) {
 		}
 	}
 	return resp.StatusCode, data
+}
+
+// direct sends a request from b straight to the handler under ctx, as a
+// client that may hang up while it is handled.
+func (b *browser) direct(ctx context.Context, method, path string, body any) *httptest.ResponseRecorder {
+	b.e.t.Helper()
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			b.e.t.Fatal(err)
+		}
+		reader = bytes.NewReader(data)
+	}
+	req := httptest.NewRequestWithContext(ctx, method, b.e.srv.URL+path, reader)
+	for name, value := range b.cookies {
+		req.AddCookie(&http.Cookie{Name: name, Value: value})
+	}
+	rec := httptest.NewRecorder()
+	b.e.srv.Config.Handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// newHangUpEnv builds an account env and a source of request contexts that
+// are cancelled when the next audit event is recorded, as if the client hung
+// up right then.
+func newHangUpEnv(t *testing.T) (*env, func() context.Context) {
+	var hangUp atomic.Pointer[context.CancelFunc]
+	e := newEnvWith(t, func(o *Options) {
+		o.TrustedProxies = loopbackProxies
+		clock := o.Audit.Now
+		o.Audit.Now = func() time.Time {
+			if cancel := hangUp.Swap(nil); cancel != nil {
+				(*cancel)()
+			}
+			return clock()
+		}
+	})
+	return e, func() context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		hangUp.Store(&cancel)
+		return ctx
+	}
 }
 
 func (b *browser) signup(c creds) (int, sessionResponse) {
@@ -667,5 +711,18 @@ func TestHashingIsBounded(t *testing.T) {
 	<-h.slots
 	if _, err := h.hash(context.Background(), randomBytes(32)); err != nil {
 		t.Errorf("hash with a slot free: %v", err)
+	}
+}
+
+// A sign-out ends the session even when the client hangs up at once (F46).
+func TestSignOutFinishesAfterHangUp(t *testing.T) {
+	e := newAccountEnv(t)
+	b := e.browser()
+	b.signup(newCreds("alice"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b.direct(ctx, http.MethodDelete, "/api/v1/session", nil)
+	if status, _ := b.current(); status != http.StatusUnauthorized {
+		t.Errorf("a session after its sign-out: %d", status)
 	}
 }
