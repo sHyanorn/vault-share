@@ -240,7 +240,8 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, "complete second step", err)
 		return
 	case result == authFailed:
-		if err := a.store.SecondStepFailed(ctx, u.ID); err != nil {
+		// Counted even if the client has hung up, so the owner hears of it (F45).
+		if err := a.store.SecondStepFailed(context.WithoutCancel(ctx), u.ID); err != nil {
 			a.internalError(w, "count failed second step", err)
 			return
 		}

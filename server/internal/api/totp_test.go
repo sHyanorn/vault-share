@@ -3,10 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,5 +422,41 @@ func TestChangesEndPendingSignIns(t *testing.T) {
 	fresh, _ := owner.enableTOTP(next)
 	if code := step(pending, e.code(fresh, 0)); code != "ticket_expired" {
 		t.Errorf("a ticket from before two-factor sign-in was turned off and on: %q", code)
+	}
+}
+
+// A client that hangs up once its code was checked still has the failure
+// counted, so the owner hears of it at the next sign-in (F45).
+func TestSecondStepFailureCountsAfterHangUp(t *testing.T) {
+	var hangUp atomic.Pointer[context.CancelFunc]
+	e := newEnvWith(t, func(o *Options) {
+		o.TrustedProxies = loopbackProxies
+		// The failed code is recorded after the check and before the count.
+		clock := o.Audit.Now
+		o.Audit.Now = func() time.Time {
+			if cancel := hangUp.Load(); cancel != nil {
+				(*cancel)()
+			}
+			return clock()
+		}
+	})
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	secret, _ := owner.enableTOTP(alice)
+	var first secondStepResponse
+	e.browser().send(http.MethodPost, "/api/v1/session", loginRequest{Username: alice.username, Auth: encoding.EncodeToString(alice.auth)}, &first)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	hangUp.Store(&cancel)
+	body, _ := json.Marshal(secondStepRequest{Ticket: first.Ticket, Code: "000000"})
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, e.srv.URL+"/api/v1/session/totp", bytes.NewReader(body))
+	e.srv.Config.Handler.ServeHTTP(httptest.NewRecorder(), req)
+	hangUp.Store(nil)
+	if ctx.Err() == nil {
+		t.Fatal("the request was not cancelled")
+	}
+	if _, resp, body := e.browser().secondStep(alice, e.code(secret, 0)); resp.SecondStepFailures != 1 {
+		t.Errorf("failures reported after a hang-up: %d %s", resp.SecondStepFailures, body)
 	}
 }
