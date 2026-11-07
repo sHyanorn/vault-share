@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -55,9 +54,6 @@ type files struct {
 	quota        int64
 	now          func() time.Time
 	log          *slog.Logger
-	// uploading holds the ids with an upload in flight. Only the quota bounds
-	// the bytes in flight, and only while each file takes one body at a time.
-	uploading sync.Map
 }
 
 type createRequest struct {
@@ -149,31 +145,37 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // upload streams the ciphertext to blob storage. The body must be exactly the
-// size declared at creation, a file takes one upload at a time, content is
-// stored once, and a record that disappeared while the body was in flight
-// takes its bytes with it.
+// size declared at creation, a file takes one upload at a time and is not
+// deleted while it runs, and content is stored once.
 func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.ownerFile(w, r)
 	if !ok {
-		return
-	}
-	if f.Uploaded {
-		writeError(w, http.StatusConflict, "conflict", "content already uploaded")
 		return
 	}
 	if r.ContentLength >= 0 && r.ContentLength != f.SizeBytes {
 		writeError(w, http.StatusBadRequest, "invalid_request", "body size differs from the declared size")
 		return
 	}
-	if _, busy := h.uploading.LoadOrStore(f.ID, struct{}{}); busy {
+	if !h.store.Claim(f.ID) {
 		writeError(w, http.StatusConflict, "conflict", "an upload is already in progress")
 		return
 	}
-	defer h.uploading.Delete(f.ID)
+	defer h.store.Release(f.ID)
 	ctx := r.Context()
+	// Nothing deletes a claimed record, so what is read now holds until the
+	// upload ends.
+	f, err := h.store.GetFile(ctx, f.ID)
+	if err != nil {
+		h.lookupError(w, r, "load file", err)
+		return
+	}
+	if f.Uploaded {
+		writeError(w, http.StatusConflict, "conflict", "content already uploaded")
+		return
+	}
 	extendDeadlines(w, f.SizeBytes)
 	body := &trackedReader{Reader: http.MaxBytesReader(w, r.Body, f.SizeBytes)}
-	err := h.blobs.Put(ctx, f.ID, f.SizeBytes, body)
+	err = h.blobs.Put(ctx, f.ID, f.SizeBytes, body)
 	switch {
 	case errors.Is(err, blob.ErrExists):
 		writeError(w, http.StatusConflict, "conflict", "content already uploaded")
@@ -194,8 +196,8 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !marked {
-		// Deleted or purged while the body was in flight. Should this fail,
-		// cleanup finds the content without a record and deletes it.
+		// The claim keeps the record, so this is only a safety net. Should
+		// the delete fail, cleanup finds the content without a record.
 		if err := h.blobs.Delete(ctx, f.ID); err != nil {
 			h.log.Error("discard orphaned content", "id", f.ID, "err", err)
 		}
@@ -385,6 +387,13 @@ func (h *files) remove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// While its upload runs a file stays, or the bytes in flight would no
+	// longer count against the quota.
+	if !h.store.Claim(f.ID) {
+		writeError(w, http.StatusConflict, "conflict", "an upload is in progress")
+		return
+	}
+	defer h.store.Release(f.ID)
 	ctx := r.Context()
 	if err := h.blobs.Delete(ctx, f.ID); err != nil {
 		h.internalError(w, "delete content", err)
