@@ -166,7 +166,11 @@ func (s *S3) Put(ctx context.Context, id string, size int64, r io.Reader) error 
 			return err
 		}
 	}
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	// The caller's ctx governs only the body, which body checks before its
+	// last bytes go out. Past that point the service may store the object at
+	// any moment, so a cancellation then would report failure for a stored
+	// object; the request runs to its answer instead.
+	_, err := s.client.PutObject(context.WithoutCancel(ctx), &s3.PutObjectInput{
 		Bucket:        &s.bucket,
 		Key:           &id,
 		Body:          body,
