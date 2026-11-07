@@ -119,15 +119,18 @@ func (e *env) request(method, path string, body any, headers map[string]string, 
 		}
 		req.Header.Set(k, v)
 	}
+	// Error, not Fatal: tests call this from goroutines of their own, where
+	// Fatal would end the goroutine before it reports a result.
 	resp, err := e.srv.Client().Do(req)
 	if err != nil {
-		e.t.Fatal(err)
+		e.t.Errorf("%s %s: %v", method, path, err)
+		return 0, nil
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if out != nil && resp.StatusCode < 300 {
 		if err := json.Unmarshal(data, out); err != nil {
-			e.t.Fatalf("decode %s %s: %v (%q)", method, path, err, data)
+			e.t.Errorf("decode %s %s: %v (%q)", method, path, err, data)
 		}
 	}
 	return resp.StatusCode, data
