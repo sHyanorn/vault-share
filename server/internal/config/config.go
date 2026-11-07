@@ -38,6 +38,25 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	// LogLevel is the minimum level written to the log (VAULT_LOG_LEVEL).
 	LogLevel slog.Level
+	// Storage is where ciphertext lives: "disk", under DataDir, or "s3"
+	// (VAULT_STORAGE).
+	Storage string
+	// S3 names the bucket when Storage is "s3" (VAULT_S3_*).
+	S3 S3
+}
+
+// S3 is an S3-compatible bucket that belongs to vaultd alone.
+type S3 struct {
+	// Endpoint is the service URL; empty means AWS (VAULT_S3_ENDPOINT).
+	Endpoint string
+	// Region defaults to us-east-1 (VAULT_S3_REGION).
+	Region string
+	// Bucket must exist (VAULT_S3_BUCKET).
+	Bucket string
+	// AccessKeyID and SecretAccessKey are static credentials
+	// (VAULT_S3_ACCESS_KEY_ID, VAULT_S3_SECRET_ACCESS_KEY).
+	AccessKeyID     string
+	SecretAccessKey string
 }
 
 // Load reads settings through lookup, normally os.LookupEnv. Unset or empty
@@ -106,6 +125,34 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			continue
 		}
 		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
+	}
+
+	cfg.Storage = get("STORAGE", "disk")
+	switch cfg.Storage {
+	case "disk":
+	case "s3":
+		cfg.S3 = S3{
+			Endpoint:        get("S3_ENDPOINT", ""),
+			Region:          get("S3_REGION", "us-east-1"),
+			Bucket:          get("S3_BUCKET", ""),
+			AccessKeyID:     get("S3_ACCESS_KEY_ID", ""),
+			SecretAccessKey: get("S3_SECRET_ACCESS_KEY", ""),
+		}
+		if u, err := url.Parse(cfg.S3.Endpoint); cfg.S3.Endpoint != "" && (err != nil ||
+			(u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+			strings.ContainsAny(cfg.S3.Endpoint, "?#")) {
+			fail("S3_ENDPOINT", errors.New("must be an http(s) URL"))
+		}
+		// Values are never echoed: one of them is a secret.
+		for name, value := range map[string]string{
+			"S3_BUCKET": cfg.S3.Bucket, "S3_ACCESS_KEY_ID": cfg.S3.AccessKeyID, "S3_SECRET_ACCESS_KEY": cfg.S3.SecretAccessKey,
+		} {
+			if value == "" {
+				fail(name, errors.New("is required when VAULT_STORAGE is s3"))
+			}
+		}
+	default:
+		fail("STORAGE", errors.New(`must be "disk" or "s3"`))
 	}
 
 	return cfg, errors.Join(errs...)

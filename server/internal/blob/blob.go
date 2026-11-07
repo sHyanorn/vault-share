@@ -1,6 +1,6 @@
-// Package blob stores ciphertext behind a small interface, first on local
-// disk and later on S3-compatible object storage. Ids are opaque to this
-// package except for the strict format check that keeps them path-safe.
+// Package blob stores ciphertext behind a small interface, on local disk or
+// in an S3-compatible bucket. Ids are opaque to this package except for the
+// strict format check that keeps them path-safe.
 package blob
 
 import (
@@ -29,7 +29,8 @@ type Store interface {
 	Put(ctx context.Context, id string, size int64, r io.Reader) error
 	// Open returns the content stored under id.
 	Open(ctx context.Context, id string) (io.ReadCloser, error)
-	// Delete removes the content; a missing id is not an error.
+	// Delete removes the content; a missing id is not an error. A reader
+	// opened before Delete still reads the whole content.
 	Delete(ctx context.Context, id string) error
 	// Sweep removes partial uploads abandoned before the given time.
 	Sweep(ctx context.Context, before time.Time) error

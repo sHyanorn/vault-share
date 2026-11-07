@@ -6,6 +6,12 @@ services:
       VAULT_MAX_FILE_BYTES: ${VAULT_MAX_FILE_BYTES:-1073741824}
       VAULT_MAX_TOTAL_BYTES: ${VAULT_MAX_TOTAL_BYTES:-21474836480}
       VAULT_LOG_LEVEL: ${VAULT_LOG_LEVEL:-info}
+      VAULT_STORAGE: ${VAULT_STORAGE:-disk}
+      VAULT_S3_ENDPOINT: ${VAULT_S3_ENDPOINT:-}
+      VAULT_S3_REGION: ${VAULT_S3_REGION:-}
+      VAULT_S3_BUCKET: ${VAULT_S3_BUCKET:-}
+      VAULT_S3_ACCESS_KEY_ID: ${VAULT_S3_ACCESS_KEY_ID:-}
+      VAULT_S3_SECRET_ACCESS_KEY: ${VAULT_S3_SECRET_ACCESS_KEY:-}
       # Only Caddy can reach vaultd: its port is not published and the
       # Compose network is private, so forwarded addresses from it are trusted.
       VAULT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fd00::/8
