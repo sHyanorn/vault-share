@@ -12,7 +12,7 @@ docker compose up --build
 
 Then open <https://localhost>. Caddy signs the `localhost` certificate with its own local CA, so the browser warns once; accept it for local use.
 
-For development without Docker: `cd server && go run ./cmd/vaultd` and `cd web && npm install && npm run dev`. Settings are documented in [.env.example](.env.example).
+For development without Docker: `cd server && go run ./cmd/vaultd` and `cd web && npm ci && npm run dev`. Settings are documented in [.env.example](.env.example).
 
 Caddy runs unprivileged since M4; a deployment created before that needs fresh volumes once (`docker compose down --volumes`).
 
