@@ -81,6 +81,26 @@ jobs:
           name: zap-report
           path: .zap/report.html
           if-no-files-found: ignore
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Playwright
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        working-directory: web
+        run: npm run e2e
+      - name: Browser security checks
+        run: NODE_PATH="$PWD/web/node_modules" node scripts/browser_checks.cjs https://localhost
+      # Last: its rate-limit check spends the client's create budget.
+      - name: Black-box security checks
+        run: |
+          docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt root.crt
+          python3 scripts/blackbox.py https://localhost --cafile root.crt --http-url http://localhost
       - if: failure()
         run: docker compose logs
       - if: always()
