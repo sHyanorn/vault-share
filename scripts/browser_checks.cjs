@@ -253,21 +253,24 @@ async function checkCSP(context) {
   await page.close()
 }
 
+// A create request for a one-download file with random metadata.
+function createBody(size, authKey = crypto.randomBytes(32)) {
+  return {
+    size,
+    meta: crypto.randomBytes(40).toString('base64url'),
+    auth_key: authKey.toString('base64url'),
+    expires_in: 3600,
+    max_downloads: 1,
+  }
+}
+
 // Uploaded bytes are never executable in the app's origin, even when they are
 // a script: the content endpoint answers application/octet-stream with nosniff.
 async function checkUploadedScript(context) {
   const api = context.request
   const authKey = crypto.randomBytes(32)
   const payload = Buffer.from('window.__uploaded = 1;'.padEnd(64))
-  const created = await api.post(base + '/api/v1/files', {
-    data: {
-      size: payload.length,
-      meta: crypto.randomBytes(40).toString('base64url'),
-      auth_key: authKey.toString('base64url'),
-      expires_in: 3600,
-      max_downloads: 1,
-    },
-  })
+  const created = await api.post(base + '/api/v1/files', { data: createBody(payload.length, authKey) })
   const { id, owner_token: owner } = await created.json()
   await api.put(`${base}/api/v1/files/${id}/content`, {
     data: payload,
@@ -333,13 +336,7 @@ async function checkCrossSite(browser) {
   })
   cdp.on('Network.responseReceivedExtraInfo', (e) => (entry(e.requestId).status = e.statusCode))
   await page.goto(url)
-  const body = JSON.stringify({
-    size: 64,
-    meta: crypto.randomBytes(40).toString('base64url'),
-    auth_key: crypto.randomBytes(32).toString('base64url'),
-    expires_in: 3600,
-    max_downloads: 1,
-  })
+  const body = JSON.stringify(createBody(64))
   const id = crypto.randomBytes(16).toString('base64url')
   await page.evaluate(
     async ({ base, body, id }) => {
