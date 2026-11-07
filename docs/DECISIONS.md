@@ -139,3 +139,9 @@
 - Rationale: every asset comes from the same origin as the page that references it. SRI protects a page against a third party that alters a sub-resource, such as a CDN; an attacker in control of the server (A4) serves index.html as well and rewrites the hashes along with the scripts
 - Revisit: if assets move to another origin
 
+## D024 No public demo site
+- Date: 2026-11-07
+- Decision: the project runs no public instance. The README shows the flow in a recorded GIF, and one command starts the full stack locally
+- Rationale: an anonymous, end-to-end encrypted file host attracts malware and phishing distribution, which the operator cannot inspect and can only answer by deleting links; Firefox Send was shut down in 2020 for that reason. A public instance would also face the residual risks of the threat model, quota filling and CPU saturation from many addresses, without upstream protection, and need ongoing patching and abuse handling
+- Revisit: a short-lived instance with tight limits on downloads and retention, if a live link is ever needed
+

@@ -48,7 +48,6 @@
 ## M6 Showcase and Deployment
 - [ ] S3-compatible storage implementation (tested with MinIO)
 - [ ] Playwright end-to-end tests
-- [ ] Deploy a public demo site (with size and retention limits)
 - [ ] English README: encryption flow diagram, GIF, threat model summary, known limitations
 
 ## Optional M7 User Accounts
