@@ -376,7 +376,8 @@ type confirmRequest struct {
 	Code string `json:"code,omitempty"`
 }
 
-// deleteHandler removes the account once the password is given again.
+// deleteHandler removes the account once the password is given again. Its
+// files go with it.
 func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	var req confirmRequest
 	if !decodeJSON(w, r, &req) {
@@ -392,7 +393,7 @@ func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := a.store.DeleteUser(ctx, u.ID); err != nil {
+	if err := a.store.DeleteUser(ctx, u.ID, a.now()); err != nil {
 		a.internalError(w, "delete account", err)
 		return
 	}

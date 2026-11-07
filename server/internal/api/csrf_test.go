@@ -35,6 +35,11 @@ func TestCrossSiteRequestsCannotUseTheSession(t *testing.T) {
 			Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
 			NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed)}},
 		{"account deletion", http.MethodDelete, "/api/v1/account", confirmRequest{Auth: encoding.EncodeToString(alice.auth)}},
+		{"two-factor setup", http.MethodPost, "/api/v1/account/totp/setup", nil},
+		{"two-factor change", http.MethodPost, "/api/v1/account/totp", totpRequest{Auth: encoding.EncodeToString(alice.auth), Code: "123456"}},
+		{"second step", http.MethodPost, "/api/v1/session/totp", secondStepRequest{Ticket: encoding.EncodeToString(randomBytes(32)), Code: "123456"}},
+		{"file list", http.MethodGet, "/api/v1/account/files", nil},
+		{"keeping a file", http.MethodPut, "/api/v1/account/files/" + encoding.EncodeToString(randomBytes(16)), keepRequest{Entry: encoding.EncodeToString(randomBytes(100))}},
 	}
 	attacks := []map[string]string{
 		{"Sec-Fetch-Site": "cross-site"},

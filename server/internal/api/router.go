@@ -138,6 +138,8 @@ func NewRouter(opts Options) (http.Handler, error) {
 		r.With(login).Post("/account/totp/setup", a.withSession(a.totpSetupHandler))
 		r.With(login).Post("/account/totp", a.withSession(a.totpEnableHandler))
 		r.With(login).Delete("/account/totp", a.withSession(a.totpDisableHandler))
+		r.Get("/account/files", a.withSession(h.keptFiles))
+		r.Put("/account/files/{id}", a.withSession(h.keepFile))
 		r.Get("/session", a.withSession(a.currentHandler))
 		r.Delete("/session", a.logoutHandler)
 	})
