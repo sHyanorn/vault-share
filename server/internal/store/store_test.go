@@ -241,11 +241,23 @@ func TestDownloadTokensAreOneTime(t *testing.T) {
 	if ok, _ := s.ConsumeDownloadToken(ctx, "file-a", hash, t0.Add(6*time.Minute)); ok {
 		t.Error("expired token accepted")
 	}
+	for _, c := range []struct {
+		file string
+		at   time.Time
+		want bool
+	}{{"file-a", t0, true}, {"other", t0, false}, {"file-a", t0.Add(6 * time.Minute), false}} {
+		if ok, err := s.DownloadTokenValid(ctx, c.file, hash, c.at); err != nil || ok != c.want {
+			t.Errorf("DownloadTokenValid(%s, %v) = %v %v", c.file, c.at, ok, err)
+		}
+	}
 	if ok, _ := s.ConsumeDownloadToken(ctx, "file-a", hash, t0); !ok {
-		t.Error("valid token rejected")
+		t.Error("valid token rejected after the checks")
 	}
 	if ok, _ := s.ConsumeDownloadToken(ctx, "file-a", hash, t0); ok {
 		t.Error("token accepted twice")
+	}
+	if ok, _ := s.DownloadTokenValid(ctx, "file-a", hash, t0); ok {
+		t.Error("a used token is still valid")
 	}
 }
 

@@ -298,10 +298,11 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// content streams the ciphertext for a one-time download token. The content
-// is opened before the token is consumed, so no purge can take the bytes from
-// a granted download; on the last permitted download the file is removed
-// before the stream starts, and the open reader still delivers every byte.
+// content streams the ciphertext for a one-time download token. A token that
+// is not valid costs no storage request. The content is opened before the
+// token is consumed, so no purge can take the bytes from a granted download;
+// on the last permitted download the file is removed before the stream
+// starts, and the open reader still delivers every byte.
 func (h *files) content(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	token, ok := decodeFixed(r.URL.Query().Get("token"), tokenBytes)
@@ -315,6 +316,16 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		h.lookupError(w, r, "load file", err)
 		return
 	}
+	now := h.now()
+	valid, err := h.store.DownloadTokenValid(ctx, id, hashToken(token), now)
+	if err != nil {
+		h.internalError(w, "check download token", err)
+		return
+	}
+	if !valid {
+		notFound(w, r)
+		return
+	}
 	rc, err := h.blobs.Open(ctx, id)
 	if errors.Is(err, blob.ErrNotFound) {
 		notFound(w, r)
@@ -325,8 +336,7 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	now := h.now()
-	valid, err := h.store.ConsumeDownloadToken(ctx, id, hashToken(token), now)
+	valid, err = h.store.ConsumeDownloadToken(ctx, id, hashToken(token), now)
 	if err != nil {
 		h.internalError(w, "consume download token", err)
 		return

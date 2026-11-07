@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -450,6 +451,35 @@ func TestDownloadTokenRules(t *testing.T) {
 	}
 	if status, _, _ := e.content(sh.id, dl.Token); status != http.StatusOK {
 		t.Errorf("token after HEAD: %d", status)
+	}
+}
+
+type countingBlobs struct {
+	blob.Store
+	opens atomic.Int32
+}
+
+func (c *countingBlobs) Open(ctx context.Context, id string) (io.ReadCloser, error) {
+	c.opens.Add(1)
+	return c.Store.Open(ctx, id)
+}
+
+func TestInvalidTokensOpenNoContent(t *testing.T) {
+	counting := &countingBlobs{}
+	e := newEnvWith(t, func(o *Options) {
+		counting.Store = o.Blobs
+		o.Blobs = counting
+	})
+	sh := e.shared(100, 1, 3600)
+	if status, _, _ := e.content(sh.id, encoding.EncodeToString(randomContent(tokenBytes))); status != http.StatusNotFound {
+		t.Errorf("invalid token: %d", status)
+	}
+	if n := counting.opens.Load(); n != 0 {
+		t.Errorf("an invalid token opened the content %d times", n)
+	}
+	dl, _ := e.token(sh)
+	if status, body, _ := e.content(sh.id, dl.Token); status != http.StatusOK || !bytes.Equal(body, sh.content) {
+		t.Errorf("valid token: %d", status)
 	}
 }
 
