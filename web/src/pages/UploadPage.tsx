@@ -6,6 +6,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from 'react'
+import { useAccount } from '../account/session.ts'
 import { MIN_PASSWORD_LENGTH, passwordTooShort } from '../crypto/index.ts'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
@@ -18,6 +19,7 @@ import {
 } from '../share/share.ts'
 import { Button, Hero, Progress, Segmented, Stepper } from '../ui/controls.tsx'
 import { CheckIcon, FileIcon, LinkOffIcon, UploadIcon } from '../ui/icons.tsx'
+import { Link } from '../ui/RouterProvider.tsx'
 
 type Phase =
   | { kind: 'pick' }
@@ -38,6 +40,7 @@ export default function UploadPage() {
   const [maxDownloads, setMaxDownloads] = useState(1)
   const [password, setPassword] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'pick' })
+  const account = useAccount()
   const shortPassword = password !== null && passwordTooShort(password)
 
   async function start() {
@@ -49,7 +52,12 @@ export default function UploadPage() {
     try {
       const share = await uploadFile(
         file,
-        { expiresIn, maxDownloads, password: password || undefined },
+        {
+          expiresIn,
+          maxDownloads,
+          password: password || undefined,
+          account: account ?? undefined,
+        },
         (progress) => setPhase({ kind: 'working', progress }),
       )
       setPhase({ kind: 'done', share })
@@ -299,6 +307,14 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
           {share.protected && ' · Password'}
         </span>
       </div>
+      {share.kept === true && (
+        <Link to="/files" className="kept-note">
+          Saved to My files
+        </Link>
+      )}
+      {share.kept === false && (
+        <p className="fine">Could not save it to My files.</p>
+      )}
       <div className="field">
         <span>Delete link</span>
         <div className="share-link">
