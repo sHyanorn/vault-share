@@ -84,16 +84,17 @@ class Client:
         self.scheme, self.host = url.scheme, url.hostname
         self.port = url.port or (443 if url.scheme == "https" else 80)
         self.origin = f"{url.scheme}://{url.netloc}"
-        self.cafile = cafile
-        self.context = self.tls_context() if url.scheme == "https" else None
-
-    def tls_context(self):
-        return ssl.create_default_context(cafile=self.cafile)
+        self.context = ssl.create_default_context(cafile=cafile) if url.scheme == "https" else None
 
     def connect(self, timeout=30):
         if self.context:
             return http.client.HTTPSConnection(self.host, self.port, timeout=timeout, context=self.context)
         return http.client.HTTPConnection(self.host, self.port, timeout=timeout)
+
+    def raw_socket(self):
+        """A socket to the instance, TLS-wrapped for https, for bytes http.client would not send."""
+        sock = socket.create_connection((self.host, self.port), timeout=5)
+        return self.context.wrap_socket(sock, server_hostname=self.host) if self.context else sock
 
     def request(self, method, path, body=None, headers=None, wait=True):
         """Sends one request on a fresh connection. Unless wait is false, a 429
@@ -121,7 +122,7 @@ class Share:
     """A test file: what the uploader holds after creating it."""
 
     def __init__(self, file_id, owner, auth_key, size):
-        self.id, self.owner, self.auth_key, self.size = file_id, owner, auth_key, size
+        self.id, self.owner, self.auth_key = file_id, owner, auth_key
         self.content = secrets.token_bytes(size)
 
     @property
@@ -489,8 +490,9 @@ def check_not_found(t):
     token = b64(secrets.token_bytes(32))
     cases = []
     for label, file_id in (("live", live.id), ("missing", random_id()), ("deleted", gone.id), ("malformed", "not-an-id")):
+        if label != "live":  # a live file's metadata answers 200
+            cases.append((f"metadata of a {label} id", "GET", f"{API}/{file_id}/meta", None, {}))
         cases += [
-            (f"metadata of a {label} id", "GET", f"{API}/{file_id}/meta", None, {}),
             (f"content of a {label} id with a wrong token", "GET", f"{API}/{file_id}/content?token={token}", None, {}),
             (f"upload to a {label} id with a wrong owner token", "PUT", f"{API}/{file_id}/content", b"x" * 64, wrong),
             (f"delete of a {label} id with a wrong owner token", "DELETE", f"{API}/{file_id}", None, wrong),
@@ -498,8 +500,6 @@ def check_not_found(t):
              json.dumps(signed).encode(), {"Content-Type": "application/json"}),
         ]
     for name, method, path, body, headers in cases:
-        if name == "metadata of a live id":
-            continue
         r = t.c.request(method, path, body, headers)
         t.ok(r.status == 404 and r.body == NOT_FOUND, f"{name} is the same 404", f"{r.status} {r.body[:80]!r}")
     bad = b'{"challenge":"x"}'
@@ -573,7 +573,7 @@ def check_rate_limit(t):
             break
     retry = refused.header("Retry-After") if refused else None
     t.ok(refused is not None and refused.code == "rate_limited" and retry and retry.isdigit(),
-         f"creates answer 429 with Retry-After once the client's bucket is empty", f"after {accepted}: {retry}")
+         "creates answer 429 with Retry-After once the client's bucket is empty", f"after {accepted}: {retry}")
     statuses = [spoofed()[0].status for _ in range(5)]
     t.ok(statuses == [429] * 5, "five more creates, each naming a new client address in forwarding headers, get 429 too",
          str(statuses))
@@ -581,11 +581,7 @@ def check_rate_limit(t):
 
 def raw_exchange(t, request):
     """Sends raw bytes on a fresh connection; returns the first status line."""
-    c = t.c
-    sock = socket.create_connection((c.host, c.port), timeout=5)
-    if c.context:
-        sock = c.context.wrap_socket(sock, server_hostname=c.host)
-    with sock:
+    with t.c.raw_socket() as sock:
         sock.sendall(request)
         try:
             return sock.recv(4096).split(b"\r\n", 1)[0].decode(errors="replace")
@@ -630,25 +626,20 @@ def check_slow_headers(t):
 
 def slow_headers(c, limit=90):
     """Seconds until the server gives up on headers sent one line a second."""
-    sock = socket.create_connection((c.host, c.port), timeout=5)
-    if c.context:
-        sock = c.context.wrap_socket(sock, server_hostname=c.host)
-    start = time.monotonic()
-    sock.sendall(f"GET / HTTP/1.1\r\nHost: {c.host}\r\n".encode())
-    elapsed = None
-    for i in range(limit):
-        try:
-            sock.sendall(f"X-Slow-{i}: x\r\n".encode())
-            sock.settimeout(1)
-            sock.recv(1024)  # an answer or the end of the stream: the server gave up
-        except socket.timeout:
-            continue
-        except OSError:
-            pass
-        elapsed = time.monotonic() - start
-        break
-    sock.close()
-    return elapsed
+    with c.raw_socket() as sock:
+        start = time.monotonic()
+        sock.sendall(f"GET / HTTP/1.1\r\nHost: {c.host}\r\n".encode())
+        for i in range(limit):
+            try:
+                sock.sendall(f"X-Slow-{i}: x\r\n".encode())
+                sock.settimeout(1)
+                sock.recv(1024)  # an answer or the end of the stream: the server gave up
+            except socket.timeout:
+                continue
+            except OSError:
+                pass
+            return time.monotonic() - start
+    return None
 
 
 CHECKS = [
