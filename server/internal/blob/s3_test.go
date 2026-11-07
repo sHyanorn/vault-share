@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -159,6 +160,51 @@ func TestNewS3ChecksTheBucket(t *testing.T) {
 		case len(fake.keys) != 0:
 			t.Errorf("versioning %q, conditional %v: probe left behind", c.versioning, c.conditional)
 		}
+	}
+}
+
+func TestS3UploadsFailWhenTheServiceStopsReading(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The service accepts the connection and reads nothing.
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			conn.Close()
+		}
+	})
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	defer func(saved time.Duration) { writeTimeout = saved }(writeTimeout)
+	writeTimeout = 200 * time.Millisecond
+	s := &S3{client: newS3Client(S3Config{Endpoint: "http://" + ln.Addr().String(), Region: "us-east-1",
+		AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true}), bucket: "vault"}
+	// Far more than the socket buffers hold, so a write has to block.
+	const size = 64 << 20
+	done := make(chan error, 1)
+	go func() { done <- s.Put(context.Background(), newID(), size, bytes.NewReader(make([]byte, size))) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("Put succeeded against a service that reads nothing")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a service that stopped reading held the upload")
 	}
 }
 
