@@ -48,6 +48,12 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 | T Tampering | A link to the content URL spends a download | The URL carries a one-time 256-bit token that only the downloading browser holds | Covered by design |
 | D Denial of service | Slow clients hold connections open | Header timeout of 10 s and idle timeout of 2 minutes at Caddy, on both ports, and at vaultd; uploads and downloads get a deadline from their size | Done (M5, F19, F23) |
 | D Denial of service | Password brute forcing | Browser-side Argon2id plus server-side lockout after failed authentication | Done (M4: Argon2id 64 MiB bounds offline guessing; the lockout bounds signature forgery, a guess never reaches the server, see D019; M5: passwords need 8 characters, F21) |
+| D Denial of service | Many uploads at once fill vaultd's memory or the disk beyond the quota | One upload at a time per file, so the bytes in flight stay within the quota; S3 uploads stream without buffering (D025) | Done (M6, F26) |
+| I Information disclosure | Burned, expired or deleted ciphertext stays in the bucket after a failed delete, a crash or under versioning | Deletes at once and reports errors; cleanup deletes content without a record; a versioned bucket is refused at startup | Done (M6, F27, F29, F31) |
+| T Tampering | An S3-compatible service ignores If-None-Match and lets stored content be replaced | One upload at a time per file; a startup probe refuses such a service | Done (M6, F30) |
+| D Denial of service | A stalled S3 service holds requests and stops the cleanup job | One-minute response timeout; each cleanup run has a deadline | Done (M6, F28) |
+| D Denial of service | Made-up download tokens make vaultd send requests to S3 | The token is checked before the object is opened | Done (M6, F32) |
+| T Tampering | A1 between vaultd and the S3 service reads or alters ciphertext | https except to this machine or a single-label host; the browser's authenticated encryption detects any change to the unsigned payload | Covered by design |
 | E Elevation of privilege | Path traversal to read arbitrary files | Strict file id validation; storage paths never built from user input; static files served through `os.Root`, which refuses symlinks and dot segments that leave the web dir, with no directory listing | Done (M2: ids must be 22 base64url characters before any path is built) |
 | E Elevation of privilege | XSS stealing the key from the page | Strict CSP, no inline scripts, React default escaping, no rendering of user HTML | Done (M4: CSP without unsafe-inline or unsafe-eval, D016) |
 
@@ -60,5 +66,6 @@ Method: STRIDE. This file is a starting point; Claude Code and Aaron update it t
 - A power loss can roll back the newest download decrement and so grant one extra download (D005)
 - Rate limits and lockouts count one IPv4 address or one IPv6 /64 as one client; an attacker holding many of those is bounded only by the per-file download count and the total disk. Clients behind one address share their limits
 - The server is a single instance; its in-memory limiter state resets on restart
+- The S3 credentials in vaultd's environment can read and delete every object in the bucket, so the bucket must belong to vaultd alone; cleanup also deletes any object named like a file id that has no record
 - A group of clients with upload bandwidth can fill the storage quota and keep uploads unavailable until their files expire, up to seven days; their creates also push older audit entries out, at most a few entries per record and quota / 64 KiB records at a time (D021)
 - An attacker with many IPv6 /64s can saturate the CPU: a measured flood raised another client's p99 latency from under 1 ms to 37 ms. Per-client limits cannot stop this; it needs protection upstream of the server

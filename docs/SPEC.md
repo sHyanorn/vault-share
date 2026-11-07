@@ -83,7 +83,7 @@ Browser (React)                  Server (Go)                                    
 └──────────────┘                 └──────────────────────────────────────────────────────┘
 ```
 
-Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented for local disk and for S3-compatible storage (tested with Versity S3 Gateway, D025).
+Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented for local disk and for S3-compatible storage (tested with Versity S3 Gateway, D025). The bucket must belong to vaultd alone, keep no old versions and honour conditional writes; vaultd checks the last two at startup, and files on S3 are capped at 5 GiB.
 
 ## 6. Data Model
 
