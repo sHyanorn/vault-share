@@ -132,18 +132,23 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID int6
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if err := insertSession(ctx, tx, tokenHash, userID, now, keep); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertSession(ctx context.Context, tx *sql.Tx, tokenHash []byte, userID int64, now time.Time, keep int) error {
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO sessions (token_hash, user_id, created_at, seen_at) VALUES (?, ?, ?, ?)`,
 		tokenHash, userID, now.Unix(), now.Unix()); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		DELETE FROM sessions WHERE user_id = ?1 AND rowid NOT IN (
 			SELECT rowid FROM sessions WHERE user_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2)`,
-		userID, keep); err != nil {
-		return err
-	}
-	return tx.Commit()
+		userID, keep)
+	return err
 }
 
 // SessionUser returns the account of a session that is still valid at now

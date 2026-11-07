@@ -103,27 +103,53 @@ func TestCompleteSecondStepSpendsBothOrNeither(t *testing.T) {
 		return n
 	}
 
-	// A code already used keeps the ticket.
+	complete := func(ticket string, step int64, recovery string) (int, error) {
+		st := SecondStep{TicketHash: []byte(ticket), UserID: id, Step: step,
+			SessionHash: []byte("session-" + ticket + recovery), KeepSessions: 10}
+		if recovery != "" {
+			st.RecoveryHash = []byte(recovery)
+		}
+		return s.CompleteSecondStep(ctx, st, t0)
+	}
+	opened := func(ticket, recovery string) bool {
+		_, ok, _ := s.SessionUser(ctx, []byte("session-"+ticket+recovery), t0)
+		return ok
+	}
+
+	// A code already used keeps the ticket and opens nothing.
 	s.CreateTicket(ctx, []byte("t1"), id, t0.Add(time.Minute))
-	if _, err := s.CompleteSecondStep(ctx, []byte("t1"), id, t0, 100, nil); !errors.Is(err, ErrFactorUsed) {
+	if _, err := complete("t1", 100, ""); !errors.Is(err, ErrFactorUsed) || opened("t1", "") {
 		t.Errorf("a used step: %v", err)
 	}
-	if _, err := s.CompleteSecondStep(ctx, []byte("t1"), id, t0, 0, []byte("not-a-code")); !errors.Is(err, ErrFactorUsed) {
+	if _, err := complete("t1", 0, "not-a-code"); !errors.Is(err, ErrFactorUsed) {
 		t.Errorf("an unknown recovery code: %v", err)
 	}
-	failures, err := s.CompleteSecondStep(ctx, []byte("t1"), id, t0, 0, []byte("code-a"))
-	if err != nil || failures != 2 || left() != 1 {
+	failures, err := complete("t1", 0, "code-a")
+	if err != nil || failures != 2 || left() != 1 || !opened("t1", "code-a") {
 		t.Errorf("a recovery code: %d failures, %v, %d codes left", failures, err, left())
 	}
 	// A ticket already gone keeps the code.
-	if _, err := s.CompleteSecondStep(ctx, []byte("t1"), id, t0, 0, []byte("code-b")); !errors.Is(err, ErrNotFound) || left() != 1 {
+	if _, err := complete("t1", 0, "code-b"); !errors.Is(err, ErrNotFound) || left() != 1 || opened("t1", "code-b") {
 		t.Errorf("a used ticket: %v, %d codes left", err, left())
 	}
 	s.CreateTicket(ctx, []byte("t2"), id, t0.Add(time.Minute))
-	if failures, err := s.CompleteSecondStep(ctx, []byte("t2"), id, t0, 101, nil); err != nil || failures != 0 {
+	if failures, err := complete("t2", 101, ""); err != nil || failures != 0 || !opened("t2", "") {
 		t.Errorf("a fresh step: %d failures, %v", failures, err)
 	}
-	if _, err := s.CompleteSecondStep(ctx, []byte("t2"), id, t0, 102, nil); !errors.Is(err, ErrNotFound) {
+	if _, err := complete("t2", 102, ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a second sign-in on one ticket: %v", err)
+	}
+
+	// A session that cannot be opened spends nothing (F41).
+	s.CreateTicket(ctx, []byte("t3"), id, t0.Add(time.Minute))
+	if _, err := s.db.Exec(`CREATE TRIGGER no_sessions BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := complete("t3", 0, "code-b"); err == nil {
+		t.Fatal("a session that failed to open did not fail the step")
+	}
+	s.db.Exec(`DROP TRIGGER no_sessions`)
+	if _, ok, _ := s.TicketAttempt(ctx, []byte("t3"), t0, 5); !ok || left() != 1 {
+		t.Errorf("after a session that failed to open: ticket usable %v, %d codes left", ok, left())
 	}
 }
