@@ -6,9 +6,9 @@ PASS  tls          refuses TLS 1.2 with CBC or RSA key exchange suites
 PASS  redirect     plain HTTP answers a permanent redirect to the same HTTPS URL
 PASS  headers      GET / [200] carries every security header
 PASS  headers      GET /assets/index-D8lmzqd_.js [200] carries every security header
-PASS  headers      GET /f/alCm7GfnwKiLddwHfivtlg [200] carries every security header
+PASS  headers      GET /f/B19qbfsKbeeFoD_Pm3hHRQ [200] carries every security header
 PASS  headers      GET /healthz [200] carries every security header
-PASS  headers      GET /api/v1/files/iaEII-IZsUBsdP5hb5nw1A/meta [404] carries every security header
+PASS  headers      GET /api/v1/files/J2h6PJe53uhh-ovn3bNNrg/meta [404] carries every security header
 PASS  headers      PATCH /api/v1/files [405] carries every security header
 PASS  headers      POST /api/v1/nope [404] carries every security header
 PASS  page         index.html has no inline script, event handler or style attribute
@@ -20,8 +20,8 @@ PASS  cache        download token response is no-store
 PASS  cache        the ciphertext comes back unchanged
 PASS  cache        ciphertext response is no-store
 PASS  cache        ciphertext is an attachment of type application/octet-stream
-PASS  cors         GET /api/v1/files/HmjjFcIH_tHJZOI66jKMPw/meta [200] grants no cross-origin read
-PASS  cors         GET /api/v1/files/l4g97Rxi91mzze6pNVhWuQ/meta [404] grants no cross-origin read
+PASS  cors         GET /api/v1/files/f6DlJqJjWEGG-I0dfqWpNQ/meta [200] grants no cross-origin read
+PASS  cors         GET /api/v1/files/kaEgcD8yU2A6jNJqn1G4fQ/meta [404] grants no cross-origin read
 PASS  cors         GET /healthz [200] grants no cross-origin read
 PASS  cors         CORS preflight is refused [405]
 PASS  cross-site   cross-site POST with fetch metadata is refused
@@ -44,11 +44,11 @@ PASS  methods      OPTIONS /api/v1/files is refused [405]
 PASS  methods      PATCH /api/v1/files is refused [405]
 PASS  methods      PROPFIND /api/v1/files is refused [405]
 PASS  methods      FOO /api/v1/files is refused [405]
-PASS  methods      TRACE /api/v1/files/pMGqanx-5pDtQsqSEWUpQQ/meta is refused [405]
-PASS  methods      OPTIONS /api/v1/files/pMGqanx-5pDtQsqSEWUpQQ/meta is refused [405]
-PASS  methods      PATCH /api/v1/files/pMGqanx-5pDtQsqSEWUpQQ/meta is refused [405]
-PASS  methods      PROPFIND /api/v1/files/pMGqanx-5pDtQsqSEWUpQQ/meta is refused [405]
-PASS  methods      FOO /api/v1/files/pMGqanx-5pDtQsqSEWUpQQ/meta is refused [405]
+PASS  methods      TRACE /api/v1/files/ys91q8_gtAQX0oBoDp77Zg/meta is refused [405]
+PASS  methods      OPTIONS /api/v1/files/ys91q8_gtAQX0oBoDp77Zg/meta is refused [405]
+PASS  methods      PATCH /api/v1/files/ys91q8_gtAQX0oBoDp77Zg/meta is refused [405]
+PASS  methods      PROPFIND /api/v1/files/ys91q8_gtAQX0oBoDp77Zg/meta is refused [405]
+PASS  methods      FOO /api/v1/files/ys91q8_gtAQX0oBoDp77Zg/meta is refused [405]
 PASS  methods      method override headers and parameters are ignored
 PASS  errors       malformed JSON gets a client error without internals [400]
 PASS  errors       unknown API route gets a client error without internals [404]
@@ -95,8 +95,8 @@ PASS  input        create rejects 101 downloads [400 invalid_request]
 PASS  input        create rejects 31-byte auth key [400 invalid_request]
 PASS  input        create rejects 33-byte auth key [400 invalid_request]
 PASS  input        GET /api/v1/files/'%20OR%20'1'='1/meta is refused without detail [404]
-PASS  input        GET /api/v1/files/BkrYgmphKq26CT1yVPRsTQ'--/meta is refused without detail [404]
-PASS  input        GET /api/v1/files/rY-6nrDVYEUcyby-XXP9eQ/content?token='%20OR%20'1'='1 is refused without detail [404]
+PASS  input        GET /api/v1/files/33C6Ih_c-wNmgPDCAT7h7A'--/meta is refused without detail [404]
+PASS  input        GET /api/v1/files/VVstCTqB-C_cpum2irYOyg/content?token='%20OR%20'1'='1 is refused without detail [404]
 PASS  input        GET /api/v1/files/%00/meta is refused without detail [404]
 PASS  not-found    content of a live id with a wrong token is the same 404
 PASS  not-found    upload to a live id with a wrong owner token is the same 404
