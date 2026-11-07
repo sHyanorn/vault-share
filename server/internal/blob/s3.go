@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -50,10 +51,18 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	return s, nil
 }
 
+// responseTimeout bounds the wait for a response once a request is sent. The
+// bodies of uploads and downloads stream at the client's pace, and a client
+// that goes away cancels its request.
+var responseTimeout = time.Minute
+
 func newS3Client(cfg S3Config) *s3.Client {
 	key, secret := cfg.AccessKeyID, cfg.SecretAccessKey
 	opts := s3.Options{
 		Region: cfg.Region,
+		HTTPClient: awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+			t.ResponseHeaderTimeout = responseTimeout
+		}),
 		Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
 			return aws.Credentials{AccessKeyID: key, SecretAccessKey: secret, Source: "vaultd configuration"}, nil
 		})),
