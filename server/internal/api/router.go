@@ -40,6 +40,13 @@ type Options struct {
 	// WebDir is the built frontend served for every path outside /api and
 	// /healthz. Empty disables static serving.
 	WebDir string
+	// AccountKey is the 32-byte key the server keys for accounts derive
+	// from; nil draws one that lasts until the process ends.
+	AccountKey []byte
+	// SignupClosed refuses new accounts; existing ones still sign in.
+	SignupClosed bool
+	// MaxAccounts caps the number of accounts; zero disables the cap.
+	MaxAccounts int
 }
 
 // NewRouter returns the root handler of vaultd.
@@ -65,10 +72,32 @@ func NewRouter(opts Options) (http.Handler, error) {
 		blobs:        opts.Blobs,
 		audit:        opts.Audit,
 		challenges:   newChallenger(),
-		locks:        newLockouts(now),
+		locks:        newLockouts(lockoutFailures, now),
 		storage:      newLimiterSet(limits.Storage, now),
 		maxFileBytes: opts.MaxFileBytes,
 		quota:        quota,
+		now:          now,
+		log:          opts.Logger,
+	}
+
+	accountKey := opts.AccountKey
+	if accountKey == nil {
+		accountKey = randomBytes(32)
+	}
+	maxAccounts := opts.MaxAccounts
+	if maxAccounts <= 0 {
+		maxAccounts = math.MaxInt32
+	}
+	a := &accounts{
+		store:        opts.Store,
+		audit:        opts.Audit,
+		hasher:       newHasher(),
+		keys:         deriveServerKeys(accountKey),
+		clientLocks:  newLockouts(lockoutFailures, now),
+		accountLocks: newLockouts(accountFailures, now),
+		deviceLocks:  newLockouts(lockoutFailures, now),
+		signup:       !opts.SignupClosed,
+		maxAccounts:  maxAccounts,
 		now:          now,
 		log:          opts.Logger,
 	}
@@ -94,6 +123,16 @@ func NewRouter(opts Options) (http.Handler, error) {
 		r.With(rateLimit(newLimiterSet(limits.Download, now))).Post("/files/{id}/download", h.download)
 		r.Get("/files/{id}/content", h.content)
 		r.Delete("/files/{id}", h.remove)
+
+		signup := rateLimit(newLimiterSet(limits.Signup, now))
+		login := rateLimit(newLimiterSet(limits.Login, now))
+		r.With(signup).Post("/account", a.signupHandler)
+		r.With(login).Post("/account/salt", a.saltHandler)
+		r.With(login).Post("/account/password", a.withSession(a.passwordHandler))
+		r.With(login).Delete("/account", a.withSession(a.deleteHandler))
+		r.With(login).Post("/session", a.loginHandler)
+		r.Get("/session", a.withSession(a.currentHandler))
+		r.Delete("/session", a.logoutHandler)
 	})
 
 	if opts.WebDir != "" {

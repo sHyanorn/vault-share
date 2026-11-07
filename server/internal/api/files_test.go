@@ -62,7 +62,8 @@ func newEnvWith(t *testing.T, mutate func(*Options)) *env {
 	auditor.Now = e.clock
 	e.job = &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger, Now: e.clock}
 	// Rate limits are exercised by their own test; elsewhere they stay out of the way.
-	unlimited := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9}, Storage: Budget{1e12, 1 << 40}}
+	unlimited := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9}, Storage: Budget{1e12, 1 << 40},
+		Signup: Budget{1e9, 1e9}, Login: Budget{1e9, 1e9}}
 	opts := Options{Logger: logger, Store: st, Blobs: blobs, Audit: auditor, MaxFileBytes: maxTestFileBytes, Limits: &unlimited, Now: e.clock}
 	if mutate != nil {
 		mutate(&opts)

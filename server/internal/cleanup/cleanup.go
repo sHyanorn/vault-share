@@ -1,6 +1,6 @@
 // Package cleanup deletes files that expired, were downloaded for the last
-// time or never received their content, sweeps abandoned uploads and deletes
-// content left without a record.
+// time or never received their content, sweeps abandoned uploads, deletes
+// content left without a record and drops sessions that can no longer be used.
 package cleanup
 
 import (
@@ -63,6 +63,9 @@ func (j *Job) Run(ctx context.Context) error {
 		j.Log.Info("purged files", "count", purged)
 	}
 	if err := j.Store.ExpireTokens(ctx, now); err != nil {
+		errs = append(errs, err)
+	}
+	if err := j.Store.ExpireSessions(ctx, now); err != nil {
 		errs = append(errs, err)
 	}
 	if err := j.Audit.Purge(ctx); err != nil {

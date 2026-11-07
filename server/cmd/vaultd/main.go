@@ -17,6 +17,7 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/cleanup"
 	"github.com/sHyanorn/vault-share/server/internal/config"
+	"github.com/sHyanorn/vault-share/server/internal/keyfile"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
@@ -61,6 +62,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("audit key: %w", err)
 	}
+	accountKey, err := keyfile.Load(cfg.DataDir, "account.key")
+	if err != nil {
+		return fmt.Errorf("account key: %w", err)
+	}
 	job := &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
 	go job.Loop(ctx, cleanupInterval)
 
@@ -74,6 +79,9 @@ func run() error {
 		MaxFileBytes:   cfg.MaxFileBytes,
 		MaxTotalBytes:  cfg.MaxTotalBytes,
 		WebDir:         cfg.WebDir,
+		AccountKey:     accountKey,
+		SignupClosed:   cfg.SignupClosed,
+		MaxAccounts:    cfg.MaxAccounts,
 	})
 	if err != nil {
 		return err

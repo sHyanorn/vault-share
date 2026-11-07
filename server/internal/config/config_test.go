@@ -30,6 +30,7 @@ func TestLoadDefaults(t *testing.T) {
 		MaxFileBytes:  1 << 30,
 		MaxTotalBytes: 20 << 30,
 		LogLevel:      slog.LevelInfo,
+		MaxAccounts:   10_000,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -46,6 +47,8 @@ func TestLoadOverrides(t *testing.T) {
 		"VAULT_WEB_DIR":         "/srv/web",
 		"VAULT_LOG_LEVEL":       "debug",
 		"VAULT_TRUSTED_PROXIES": "10.0.0.0/8, 192.168.1.5",
+		"VAULT_SIGNUP":          "closed",
+		"VAULT_MAX_ACCOUNTS":    "25",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +64,8 @@ func TestLoadOverrides(t *testing.T) {
 		WebDir:         "/srv/web",
 		LogLevel:       slog.LevelDebug,
 		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("192.168.1.5/32")},
+		SignupClosed:   true,
+		MaxAccounts:    25,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -87,6 +92,8 @@ func TestLoadInvalid(t *testing.T) {
 		"VAULT_LOG_LEVEL":       "loud",
 		"VAULT_TRUSTED_PROXIES": "10.0.0.0/8, proxy",
 		"VAULT_STORAGE":         "tape",
+		"VAULT_SIGNUP":          "invite",
+		"VAULT_MAX_ACCOUNTS":    "0",
 	}
 	for name, value := range cases {
 		t.Run(name, func(t *testing.T) {
