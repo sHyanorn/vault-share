@@ -97,38 +97,21 @@ func recoveryCodeHash(code string) ([]byte, bool) {
 // of its own per account. It reports whether a recovery code was spent.
 func (a *accounts) secondFactor(ctx context.Context, u store.User, code string) (authResult, bool) {
 	key := strconv.FormatInt(u.ID, 10)
-	if a.totpLocks.locked(key) {
+	if !a.totpLocks.admit(key) {
 		return authLocked, false
 	}
-	code = strings.NewReplacer(" ", "", "-", "").Replace(code)
-	if len(code) == totp.Digits {
-		secret, err := a.openTOTP(u.ID, u.TOTPSecret)
-		if err != nil {
-			a.log.Error("open TOTP secret", "err", err)
-			return authError, false
-		}
-		if step, ok := totp.Match(secret, code, a.now()); ok {
-			used, err := a.store.UseTOTPStep(ctx, u.ID, step)
-			if err != nil {
-				a.log.Error("use TOTP step", "err", err)
-				return authError, false
-			}
-			if used {
-				a.totpLocks.reset(key)
-				return authOK, false
-			}
-		}
-	} else if hash, ok := recoveryCodeHash(code); ok {
-		used, err := a.store.UseRecoveryCode(ctx, u.ID, hash)
-		if err != nil {
-			a.log.Error("use recovery code", "err", err)
-			return authError, false
-		}
-		if used {
-			a.totpLocks.reset(key)
+	used, recovery, err := a.spendFactor(ctx, u, code)
+	switch {
+	case err != nil:
+		a.totpLocks.passed(key, false)
+		a.log.Error("check second factor", "err", err)
+		return authError, false
+	case used:
+		a.totpLocks.passed(key, true)
+		if recovery {
 			a.audit.RecordAccount(ctx, audit.RecoveryCodeUsed, u.ID, clientFrom(ctx))
-			return authOK, true
 		}
+		return authOK, recovery
 	}
 	client := clientFrom(ctx)
 	a.audit.RecordAccount(ctx, audit.TOTPFailed, u.ID, client)
@@ -136,6 +119,29 @@ func (a *accounts) secondFactor(ctx context.Context, u store.User, code string) 
 		a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
 	}
 	return authFailed, false
+}
+
+// spendFactor uses up code if it is a TOTP code for a step not used yet or
+// one of u's recovery codes, and reports which it was.
+func (a *accounts) spendFactor(ctx context.Context, u store.User, code string) (used, recovery bool, err error) {
+	code = strings.NewReplacer(" ", "", "-", "").Replace(code)
+	if len(code) == totp.Digits {
+		secret, err := a.openTOTP(u.ID, u.TOTPSecret)
+		if err != nil {
+			return false, false, err
+		}
+		step, ok := totp.Match(secret, code, a.now())
+		if !ok {
+			return false, false, nil
+		}
+		used, err := a.store.UseTOTPStep(ctx, u.ID, step)
+		return used, false, err
+	}
+	if hash, ok := recoveryCodeHash(code); ok {
+		used, err := a.store.UseRecoveryCode(ctx, u.ID, hash)
+		return used, used, err
+	}
+	return false, false, nil
 }
 
 // reauthenticate asks the signed-in owner for the password again, and for
@@ -314,7 +320,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strconv.FormatInt(u.ID, 10)
-	if a.totpLocks.locked(key) {
+	if !a.totpLocks.admit(key) {
 		a.refuse(w, authLocked, 0, "", "")
 		return
 	}
@@ -328,6 +334,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "wrong_code", "the code is wrong")
 		return
 	}
+	a.totpLocks.passed(key, true)
 	codes, hashes := newRecoveryCodes()
 	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, step, hashes)
 	if err != nil {
