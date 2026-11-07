@@ -25,13 +25,27 @@ const (
 
 // User is an account. AuthHash is the Argon2id hash of the auth secret in
 // the PHC string format; Salt and SealedKey are the browser's (D026).
+// TOTPSecret is sealed under a server key and nil while two-factor sign-in
+// is off; TOTPStep is the last time step a code was accepted for.
 type User struct {
-	ID        int64
-	Username  string
-	Salt      []byte
-	AuthHash  string
-	SealedKey []byte
-	CreatedAt time.Time
+	ID         int64
+	Username   string
+	Salt       []byte
+	AuthHash   string
+	SealedKey  []byte
+	CreatedAt  time.Time
+	TOTPSecret []byte
+	TOTPStep   int64
+}
+
+const userColumns = `u.id, u.username, u.salt, u.auth_hash, u.sealed_key, u.created_at, u.totp_secret, u.totp_step`
+
+func scanUser(scan func(...any) error, extra ...any) (User, error) {
+	var u User
+	var created int64
+	err := scan(append([]any{&u.ID, &u.Username, &u.Salt, &u.AuthHash, &u.SealedKey, &created, &u.TOTPSecret, &u.TOTPStep}, extra...)...)
+	u.CreatedAt = time.Unix(created, 0).UTC()
+	return u, err
 }
 
 // CreateUser inserts the account while fewer than max exist and returns its
@@ -64,19 +78,22 @@ func (s *Store) CreateUser(ctx context.Context, u User, max int) (int64, error) 
 
 // UserByName returns the account or ErrNotFound.
 func (s *Store) UserByName(ctx context.Context, username string) (User, error) {
-	var u User
-	var created int64
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, username, salt, auth_hash, sealed_key, created_at FROM users WHERE username = ?`,
-		username).Scan(&u.ID, &u.Username, &u.Salt, &u.AuthHash, &u.SealedKey, &created)
+	u, err := scanUser(s.db.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users u WHERE u.username = ?`, username).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
-	if err != nil {
-		return User{}, err
+	return u, err
+}
+
+// UserByID returns the account or ErrNotFound.
+func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
+	u, err := scanUser(s.db.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users u WHERE u.id = ?`, id).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrNotFound
 	}
-	u.CreatedAt = time.Unix(created, 0).UTC()
-	return u, nil
+	return u, err
 }
 
 // SetPassword replaces what the account's password protects: the browser's
@@ -119,21 +136,18 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID int6
 // and records the session's use. It reports false for an unknown, idle or
 // expired session.
 func (s *Store) SessionUser(ctx context.Context, tokenHash []byte, now time.Time) (User, bool, error) {
-	var u User
-	var created, seen int64
-	err := s.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.salt, u.auth_hash, u.sealed_key, u.created_at, s.seen_at
+	var seen int64
+	u, err := scanUser(s.db.QueryRowContext(ctx, `
+		SELECT `+userColumns+`, s.seen_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = ? AND s.seen_at > ? AND s.created_at > ?`,
-		tokenHash, now.Add(-SessionIdle).Unix(), now.Add(-SessionLifetime).Unix()).Scan(
-		&u.ID, &u.Username, &u.Salt, &u.AuthHash, &u.SealedKey, &created, &seen)
+		tokenHash, now.Add(-SessionIdle).Unix(), now.Add(-SessionLifetime).Unix()).Scan, &seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, false, nil
 	}
 	if err != nil {
 		return User{}, false, err
 	}
-	u.CreatedAt = time.Unix(created, 0).UTC()
 	if now.Unix()-seen >= int64(touchEvery/time.Second) {
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE sessions SET seen_at = ? WHERE token_hash = ?`, now.Unix(), tokenHash); err != nil {

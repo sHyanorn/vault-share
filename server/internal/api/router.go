@@ -2,6 +2,7 @@
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"math"
@@ -96,6 +97,8 @@ func NewRouter(opts Options) (http.Handler, error) {
 		clientLocks:  newLockouts(lockoutFailures, now),
 		accountLocks: newLockouts(accountFailures, now),
 		deviceLocks:  newLockouts(lockoutFailures, now),
+		totpLocks:    newLockouts(lockoutFailures, now),
+		issuer:       cmp.Or(opts.Host, "vault-share"),
 		signup:       !opts.SignupClosed,
 		maxAccounts:  maxAccounts,
 		now:          now,
@@ -131,6 +134,10 @@ func NewRouter(opts Options) (http.Handler, error) {
 		r.With(login).Post("/account/password", a.withSession(a.passwordHandler))
 		r.With(login).Delete("/account", a.withSession(a.deleteHandler))
 		r.With(login).Post("/session", a.loginHandler)
+		r.With(login).Post("/session/totp", a.secondStepHandler)
+		r.With(login).Post("/account/totp/setup", a.withSession(a.totpSetupHandler))
+		r.With(login).Post("/account/totp", a.withSession(a.totpEnableHandler))
+		r.With(login).Delete("/account/totp", a.withSession(a.totpDisableHandler))
 		r.Get("/session", a.withSession(a.currentHandler))
 		r.Delete("/session", a.logoutHandler)
 	})
