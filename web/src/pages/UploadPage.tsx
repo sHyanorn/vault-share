@@ -10,7 +10,7 @@ import { MIN_PASSWORD_LENGTH, passwordTooShort } from '../crypto/index.ts'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
 import {
-  deleteShare,
+  deleteShareById,
   uploadFile,
   type ExpiresIn,
   type Progress as ShareProgress,
@@ -269,7 +269,7 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
 
   async function remove() {
     try {
-      await deleteShare(share)
+      await deleteShareById(share.id, share.ownerToken)
       onDeleted()
     } catch (error) {
       // Already gone counts as deleted.

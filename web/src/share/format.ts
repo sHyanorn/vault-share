@@ -24,7 +24,10 @@ export function formatBytes(bytes: number): string {
     value /= 1000
     unit++
   }
-  const digits = unit === 0 || value >= 99.95 ? 0 : value >= 9.995 ? 1 : 2
+  // Three significant digits (1.23, 12.3, 123); bytes are always whole.
+  let digits = 2
+  if (unit === 0 || value >= 99.95) digits = 0
+  else if (value >= 9.995) digits = 1
   return `${value.toFixed(digits)} ${units[unit]}`
 }
 

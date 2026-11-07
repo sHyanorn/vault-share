@@ -13,6 +13,18 @@ async function metaKey() {
   return (await deriveKeys(generateSecret())).metaKey
 }
 
+/** iv | AES-GCM(plain), built by hand so a test can choose the plaintext. */
+async function seal(key: CryptoKey, plain: Uint8Array<ArrayBuffer>) {
+  const iv = randomBytes(12)
+  const cipher = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain),
+  )
+  const out = new Uint8Array(12 + cipher.length)
+  out.set(iv)
+  out.set(cipher, 12)
+  return out
+}
+
 describe('metadata', () => {
   it('round-trips', async () => {
     const key = await metaKey()
@@ -52,19 +64,8 @@ describe('metadata', () => {
 
   it('keeps only name, type and size and validates their shape', async () => {
     const key = await metaKey()
-    const encrypt = async (value: unknown) => {
-      const iv = randomBytes(12)
-      const plain = new TextEncoder().encode(JSON.stringify(value))
-      const cipher = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        plain,
-      )
-      const out = new Uint8Array(12 + cipher.byteLength)
-      out.set(iv)
-      out.set(new Uint8Array(cipher), 12)
-      return out
-    }
+    const encrypt = (value: unknown) =>
+      seal(key, new TextEncoder().encode(JSON.stringify(value)))
     expect(
       await decryptMetadata(key, await encrypt({ ...meta, extra: 1 })),
     ).toEqual(meta)
@@ -85,14 +86,10 @@ describe('metadata', () => {
 describe('errors', () => {
   it('keep the plaintext out of the message when it is not JSON', async () => {
     const key = await metaKey()
-    const iv = randomBytes(12)
-    const plain = new TextEncoder().encode('Q3 payroll (confidential).xlsx')
-    const cipher = new Uint8Array(
-      await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain),
+    const blob = await seal(
+      key,
+      new TextEncoder().encode('Q3 payroll (confidential).xlsx'),
     )
-    const blob = new Uint8Array(12 + cipher.length)
-    blob.set(iv)
-    blob.set(cipher, 12)
     const error = await decryptMetadata(key, blob).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toBe('malformed metadata')

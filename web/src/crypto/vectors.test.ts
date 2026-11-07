@@ -70,21 +70,6 @@ describe('aes128gcm content encoding (RFC 8188 section 3)', () => {
     const out = await collect(decryptStream(streamOf(body, 7), ikm, options))
     expect(new TextDecoder().decode(out)).toBe('I am the walrus')
   })
-
-  it('3.2: rejects a header that carries a key id', async () => {
-    const withKeyId = fromBase64Url(
-      'uNCkWiNYzKTnBN9ji3-qWAAAABkCYTHOG8chz_gnvgOqdGYovxyjuqRyJFjEDyoF1Fvkj6hQPdPHI51OEUKEpgz3SsLWIqS_uA',
-    )
-    const stream = decryptStream(
-      streamOf(withKeyId),
-      fromBase64Url('BO3ZVPxUlnLORbVGMpbT1Q'),
-      {
-        rs: 25,
-        keyLength: 16,
-      },
-    )
-    await expect(collect(stream)).rejects.toThrow('unsupported header')
-  })
 })
 
 describe('AES-256-GCM (NIST CAVP gcmEncryptExtIV256, count 0 of the first 96-bit IV group)', () => {
@@ -120,6 +105,11 @@ describe('aes128gcm with multiple records (RFC 8188 section 3.2)', () => {
   )
   const ikm = fromBase64Url('BO3ZVPxUlnLORbVGMpbT1Q')
   const options = { rs: 25, keyLength: 16 as const }
+
+  it('rejects the published header, which carries a key id', async () => {
+    const stream = decryptStream(streamOf(body), ikm, options)
+    await expect(collect(stream)).rejects.toThrow('unsupported header')
+  })
 
   it('decrypts once the key id is removed from the header', async () => {
     // The key id names the key; it is not an input to the key derivation.

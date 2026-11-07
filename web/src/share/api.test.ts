@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { collect } from '../crypto/testutil.ts'
 import {
   ApiError,
   createFile,
@@ -87,13 +88,6 @@ describe('api client', () => {
       vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]))),
     )
     const body = await downloadContent('x', 'tok')
-    const chunks = []
-    const reader = body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(...value)
-    }
-    expect(chunks).toEqual([1, 2, 3])
+    expect(await collect(body)).toEqual(new Uint8Array([1, 2, 3]))
   })
 })

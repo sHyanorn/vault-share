@@ -1,4 +1,4 @@
-// Helpers shared by the crypto tests.
+// Helpers shared by the unit tests.
 
 export function fromHex(hex: string): Uint8Array<ArrayBuffer> {
   const clean = hex.replace(/\s+/g, '')

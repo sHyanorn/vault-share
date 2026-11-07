@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { unwrapSecret } from '../crypto/index.ts'
 import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
-import { parseLocation } from '../share/link.ts'
+import { parseLocation, type ShareLocation } from '../share/link.ts'
 import { chooseSink, type Sink } from '../share/save.ts'
 import {
   downloadShare,
@@ -29,13 +29,7 @@ export default function DownloadPage() {
     parseLocation(window.location.pathname, window.location.hash),
   )
   const [secret, setSecret] = useState(location?.secret ?? null)
-  const [phase, setPhase] = useState<Phase>(
-    !location
-      ? { kind: 'invalid' }
-      : location.wrapped
-        ? { kind: 'locked', wrong: false, busy: false }
-        : { kind: 'loading' },
-  )
+  const [phase, setPhase] = useState(() => initialPhase(location))
   const [attempt, setAttempt] = useState(0)
   const busy = useRef(false)
   const granted = useRef<number | null>(null)
@@ -253,6 +247,12 @@ function FileHero({ info }: { info: ShareInfo }) {
       text={`${formatBytes(info.size)} · ${downloads} · Expires in ${formatExpiry(info.expiresAt)}`}
     />
   )
+}
+
+function initialPhase(location: ShareLocation | null): Phase {
+  if (!location) return { kind: 'invalid' }
+  if (location.wrapped) return { kind: 'locked', wrong: false, busy: false }
+  return { kind: 'loading' }
 }
 
 function openFailure(error: unknown): Phase {

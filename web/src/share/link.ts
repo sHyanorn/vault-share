@@ -13,7 +13,9 @@ export type ShareLocation =
   | { id: string; secret: Uint8Array<ArrayBuffer>; wrapped?: undefined }
   | { id: string; wrapped: Uint8Array<ArrayBuffer>; secret?: undefined }
 
-const idPattern = /^[A-Za-z0-9_-]{22}$/
+const downloadPath = /^\/f\/([A-Za-z0-9_-]{22})\/?$/
+const deletePath = /^\/d\/([A-Za-z0-9_-]{22})\/?$/
+const ownerTokenPattern = /^[A-Za-z0-9_-]{43}$/
 
 export function buildLink(origin: string, id: string, key: Uint8Array): string {
   return `${origin}/f/${id}#${toBase64Url(key)}`
@@ -24,16 +26,16 @@ export function parseLocation(
   pathname: string,
   hash: string,
 ): ShareLocation | null {
-  const match = /^\/f\/([^/]+)\/?$/.exec(pathname)
-  if (!match || !idPattern.test(match[1]!)) return null
+  const id = downloadPath.exec(pathname)?.[1]
+  if (!id) return null
   let key: Uint8Array<ArrayBuffer>
   try {
     key = fromBase64Url(hash.replace(/^#/, ''))
   } catch {
     return null
   }
-  if (key.length === SECRET_LENGTH) return { id: match[1]!, secret: key }
-  if (key.length === WRAPPED_LENGTH) return { id: match[1]!, wrapped: key }
+  if (key.length === SECRET_LENGTH) return { id, secret: key }
+  if (key.length === WRAPPED_LENGTH) return { id, wrapped: key }
   return null
 }
 
@@ -54,15 +56,10 @@ export function parseDeleteLocation(
   pathname: string,
   hash: string,
 ): { id: string; ownerToken: string } | null {
-  const match = /^\/d\/([^/]+)\/?$/.exec(pathname)
-  const token = hash.replace(/^#/, '')
-  if (
-    !match ||
-    !idPattern.test(match[1]!) ||
-    !/^[A-Za-z0-9_-]{43}$/.test(token)
-  )
-    return null
-  return { id: match[1]!, ownerToken: token }
+  const id = deletePath.exec(pathname)?.[1]
+  const ownerToken = hash.replace(/^#/, '')
+  if (!id || !ownerTokenPattern.test(ownerToken)) return null
+  return { id, ownerToken }
 }
 
 export function isDeletePath(pathname: string): boolean {

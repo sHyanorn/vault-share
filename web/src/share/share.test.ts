@@ -2,18 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   decryptStream,
   deriveKeys,
+  encryptMetadata,
   encryptStream,
   encryptedSize,
   exportAuthKey,
   fromBase64Url,
   toBase64Url,
+  unwrapSecret,
 } from '../crypto/index.ts'
 import { collect, randomBytes, streamOf } from '../crypto/testutil.ts'
 import * as api from './api.ts'
 import { parseLocation } from './link.ts'
 import type { Sink } from './save.ts'
 import { downloadShare, openShare, uploadFile } from './share.ts'
-import { unwrapSecret } from '../crypto/index.ts'
 
 vi.mock('./api.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api.ts')>()),
@@ -25,7 +26,10 @@ vi.mock('./api.ts', async (importOriginal) => ({
   deleteFile: vi.fn(),
 }))
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 const encoder = new TextEncoder()
 
@@ -76,7 +80,6 @@ describe('uploadFile', () => {
     expect(toBase64Url(await exportAuthKey(keys.authKey))).toBe(
       request.auth_key,
     )
-    vi.unstubAllGlobals()
   })
 })
 
@@ -87,7 +90,6 @@ async function sharedFile() {
   const ciphertext = await collect(
     encryptStream(streamOf(plaintext), keys.fileKey),
   )
-  const { encryptMetadata } = await import('../crypto/index.ts')
   const meta = await encryptMetadata(keys.metaKey, {
     name: 'hello.txt',
     type: 'text/plain',
@@ -109,12 +111,7 @@ function memorySink() {
     kind: 'download',
     discarded: false,
     async consume(stream) {
-      const reader = stream.getReader()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-      }
+      for await (const chunk of stream) chunks.push(chunk)
     },
     async discard() {
       sink.discarded = true
@@ -147,12 +144,7 @@ describe('downloadShare', () => {
     )
     expect(granted).toEqual([1])
     expect(last).toBe(1)
-    const received = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
-    chunks.reduce(
-      (offset, c) => (received.set(c, offset), offset + c.length),
-      0,
-    )
-    expect(received).toEqual(plaintext)
+    expect(new Uint8Array(chunks.flatMap((c) => [...c]))).toEqual(plaintext)
     const [, challenge, signature] = vi.mocked(api.requestDownload).mock
       .calls[0]!
     expect(fromBase64Url(signature)).toHaveLength(32)
@@ -218,6 +210,5 @@ describe('uploadFile with a password', () => {
     const del = new URL(share.deleteLink)
     expect(del.pathname).toBe('/d/AAAAAAAAAAAAAAAAAAAAAA')
     expect(del.hash).toBe('#' + share.ownerToken)
-    vi.unstubAllGlobals()
   }, 30_000)
 })
