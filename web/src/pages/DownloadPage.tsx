@@ -140,7 +140,7 @@ export default function DownloadPage() {
           />
           <form className="stack" onSubmit={unlock}>
             <label className="field">
-              <span>Password</span>
+              <span id="unlock-label">Password</span>
               <input
                 className="text"
                 type="password"
@@ -148,6 +148,7 @@ export default function DownloadPage() {
                 autoComplete="current-password"
                 autoFocus
                 required
+                aria-labelledby="unlock-label"
                 aria-invalid={phase.wrong || undefined}
                 aria-describedby={phase.wrong ? 'password-error' : undefined}
               />
