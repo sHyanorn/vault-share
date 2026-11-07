@@ -59,7 +59,9 @@ test('a shared file downloads once, decrypted, and is then gone', async ({
   page,
   context,
 }) => {
-  const content = randomBytes(300_000) // several 64 KiB records
+  // Many 64 KiB records, and above 2 MB, where the S3 client asks the
+  // service to accept the request before it sends the body.
+  const content = randomBytes(3 << 20)
   const { link } = await share(page, 'report.pdf', content)
   expect(new URL(link).hash).toMatch(/^#[A-Za-z0-9_-]{22}$/)
 
