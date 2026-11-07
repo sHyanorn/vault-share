@@ -646,20 +646,19 @@ func TestOneUploadAtATimePerFile(t *testing.T) {
 }
 
 func TestNoDeleteDuringUpload(t *testing.T) {
-	e := newEnv(t)
+	held := &heldBlobs{held: make(chan struct{}), release: make(chan struct{})}
+	e := newEnvWith(t, func(o *Options) {
+		held.Store = o.Blobs
+		o.Blobs = held
+	})
 	sh := e.create(1000, 1, 3600)
-
-	pw, done := pipeBody(t, e, sh, sh.owner)
-	if _, err := pw.Write(sh.content[:999]); err != nil {
-		t.Fatal(err)
-	}
-	// The pipe hands over the first bytes once the handler reads them, and
-	// it reads only after taking the claim.
+	done := make(chan int, 1)
+	go func() { done <- e.upload(sh, sh.owner, sh.content) }()
+	<-held.held
 	if status := e.remove(sh.id, sh.owner); status != http.StatusConflict {
 		t.Errorf("delete during the upload: %d", status)
 	}
-	pw.Write(sh.content[999:])
-	pw.Close()
+	close(held.release)
 	if status := <-done; status != http.StatusNoContent {
 		t.Fatalf("upload: %d", status)
 	}
