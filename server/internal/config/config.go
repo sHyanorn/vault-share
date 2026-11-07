@@ -91,6 +91,11 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		fail("LISTEN_ADDR", err)
 	}
 
+	// The database DSN would read these as the start of its options.
+	if strings.ContainsAny(cfg.DataDir, "?#") {
+		fail("DATA_DIR", errors.New("must not contain ? or #"))
+	}
+
 	if u, err := url.Parse(cfg.BaseURL); err != nil {
 		fail("BASE_URL", err)
 	} else if !bareHTTPURL(u, cfg.BaseURL) {
