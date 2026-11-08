@@ -21,6 +21,7 @@ import {
   accountPasswordTooShort,
 } from '../crypto/index.ts'
 import { Button, Collapse, Hero } from '../ui/controls.tsx'
+import { useCopy } from '../ui/copy.ts'
 import { ChevronIcon, ShieldIcon, UserIcon } from '../ui/icons.tsx'
 import { QrCode } from '../ui/qr.tsx'
 import { useRouter } from '../ui/router.ts'
@@ -247,7 +248,7 @@ function TotpOn({
     null,
   )
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const { busy, error, run } = useAction()
   const started = useRef(false)
 
@@ -274,17 +275,6 @@ function TotpOn({
     })
   }
 
-  async function copyKey() {
-    if (!setup) return
-    try {
-      await navigator.clipboard.writeText(setup.secret)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-    } catch {
-      // no clipboard access; the key is shown
-    }
-  }
-
   if (!setup) return <FormError error={loadError} />
   return (
     <form className="stack" onSubmit={submit}>
@@ -292,7 +282,7 @@ function TotpOn({
         <QrCode value={setup.uri} label="QR code for your authenticator app" />
         <div className="secret">
           <code>{setup.secret.match(/.{1,4}/g)?.join(' ')}</code>
-          <Button variant="quiet" onClick={copyKey}>
+          <Button variant="quiet" onClick={() => copy(setup.secret)}>
             {copied ? 'Copied' : 'Copy key'}
           </Button>
         </div>
@@ -462,18 +452,8 @@ function RecoveryCodes({
   codes: string[]
   onDone: () => void
 }) {
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const text = codes.join('\n') + '\n'
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-    } catch {
-      // no clipboard access; the codes are shown
-    }
-  }
 
   function download() {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
@@ -500,7 +480,7 @@ function RecoveryCodes({
         ))}
       </ol>
       <div className="code-actions">
-        <Button variant="quiet" onClick={copy}>
+        <Button variant="quiet" onClick={() => copy(text)}>
           {copied ? 'Copied' : 'Copy'}
         </Button>
         <Button variant="quiet" onClick={download}>

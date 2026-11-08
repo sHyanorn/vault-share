@@ -10,6 +10,7 @@ import { ApiError } from '../share/api.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
 import { deleteShareById } from '../share/share.ts'
 import { Button, Hero } from '../ui/controls.tsx'
+import { useCopy } from '../ui/copy.ts'
 import { FileIcon, LockIcon, TrashIcon } from '../ui/icons.tsx'
 import { useRouter } from '../ui/router.ts'
 
@@ -116,7 +117,7 @@ function Row({ file, index, onRemoved }: RowProps) {
   const [confirming, setConfirming] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const [failed, setFailed] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const delay = { animationDelay: `${Math.min(index, 8) * 30}ms` }
 
   if (file.unreadable)
@@ -129,17 +130,6 @@ function Row({ file, index, onRemoved }: RowProps) {
         </div>
       </li>
     )
-
-  async function copy() {
-    if (file.unreadable) return
-    try {
-      await navigator.clipboard.writeText(file.link)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-    } catch {
-      // no clipboard access
-    }
-  }
 
   async function remove() {
     if (file.unreadable) return
@@ -207,7 +197,7 @@ function Row({ file, index, onRemoved }: RowProps) {
           {file.uploaded && (
             <Button
               variant="quiet"
-              onClick={copy}
+              onClick={() => copy(file.link)}
               aria-label={copied ? 'Copied' : `Copy link to ${name}`}
             >
               {copied ? (

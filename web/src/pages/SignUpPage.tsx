@@ -17,13 +17,11 @@ export default function SignUpPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const nameOk = validUsername(normalizeUsername(username))
+  const name = normalizeUsername(username)
+  const nameOk = validUsername(name)
   // Only a name that cannot become valid by typing on is flagged.
   const nameWrong =
-    username !== '' &&
-    !nameOk &&
-    (normalizeUsername(username).length > 2 ||
-      !/^[a-z0-9]/.test(normalizeUsername(username)))
+    username !== '' && !nameOk && (name.length > 2 || !/^[a-z0-9]/.test(name))
   const passwordOk = !accountPasswordTooShort(password)
 
   async function submit(event: FormEvent<HTMLFormElement>) {

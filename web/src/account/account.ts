@@ -150,12 +150,7 @@ export async function restore(): Promise<Account | null> {
     forget()
     return null
   }
-  return {
-    username: resp.username,
-    totp: resp.totp,
-    key: await importAccountKey(raw),
-    raw,
-  }
+  return accountFrom(resp, raw)
 }
 
 export async function signOut(): Promise<void> {
@@ -251,6 +246,13 @@ async function remember(
   } catch {
     // Storage may be off; the account then lasts until the page closes.
   }
+  return accountFrom(resp, raw)
+}
+
+async function accountFrom(
+  resp: api.SessionResponse,
+  raw: Uint8Array<ArrayBuffer>,
+): Promise<Account> {
   return {
     username: resp.username,
     totp: resp.totp,
