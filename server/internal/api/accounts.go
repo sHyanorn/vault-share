@@ -265,19 +265,19 @@ func (a *accounts) refuse(w http.ResponseWriter, result authResult, status int, 
 	}
 }
 
-// issueSession signs the client in to u with a fresh session and returns
-// the token.
-func (a *accounts) issueSession(w http.ResponseWriter, r *http.Request, u store.User) ([]byte, bool) {
+// startSession signs the client in to u with a fresh session and answers
+// with it.
+func (a *accounts) startSession(w http.ResponseWriter, r *http.Request, u store.User, status int) {
 	if !a.endPresentedSession(w, r) {
-		return nil, false
+		return
 	}
 	token := randomBytes(tokenBytes)
 	if err := a.store.CreateSession(r.Context(), hashToken(token), u.ID, a.now(), maxSessionsPerUser); err != nil {
 		a.internalError(w, "create session", err)
-		return nil, false
+		return
 	}
 	a.setSessionCookies(w, u, token)
-	return token, true
+	writeSession(w, status, a.signedIn(u, token))
 }
 
 // endPresentedSession ends the session cookie the client holds, if any, so
@@ -310,14 +310,6 @@ func (a *accounts) signedIn(u store.User, token []byte) sessionResponse {
 	}
 }
 
-func (a *accounts) startSession(w http.ResponseWriter, r *http.Request, u store.User, status int) {
-	token, ok := a.issueSession(w, r, u)
-	if !ok {
-		return
-	}
-	writeSession(w, status, a.signedIn(u, token))
-}
-
 func writeSession(w http.ResponseWriter, status int, resp sessionResponse) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, resp)
@@ -338,9 +330,10 @@ func (a *accounts) currentHandler(w http.ResponseWriter, r *http.Request) {
 func (a *accounts) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := context.WithoutCancel(r.Context())
 	if token, ok := sessionToken(r); ok {
-		u, valid, err := a.store.SessionUser(ctx, hashToken(token), a.now())
+		hash := hashToken(token)
+		u, valid, err := a.store.SessionUser(ctx, hash, a.now())
 		if err == nil {
-			err = a.store.DeleteSession(ctx, hashToken(token))
+			err = a.store.DeleteSession(ctx, hash)
 		}
 		if err != nil {
 			a.internalError(w, "end session", err)

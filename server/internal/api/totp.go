@@ -138,12 +138,18 @@ func (a *accounts) secondFactor(ctx context.Context, u store.User, code string, 
 		}
 		return authOK, f, nil
 	}
-	client := clientFrom(ctx)
-	a.audit.RecordAccount(ctx, audit.TOTPFailed, u.ID, client)
-	if try.fail() {
-		a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
-	}
+	a.wrongCode(ctx, u.ID, try)
 	return authFailed, f, nil
+}
+
+// wrongCode ends try as a failure and records it, and the lockout it
+// starts, if any.
+func (a *accounts) wrongCode(ctx context.Context, userID int64, try *attempt) {
+	client := clientFrom(ctx)
+	a.audit.RecordAccount(ctx, audit.TOTPFailed, userID, client)
+	if try.fail() {
+		a.audit.RecordAccount(ctx, audit.ClientLocked, userID, client)
+	}
 }
 
 // reauthenticate asks the signed-in owner for the password again, and for
@@ -345,11 +351,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 	defer try.end()
 	step, ok := totp.Match(secret, strings.ReplaceAll(req.Code, " ", ""), a.now())
 	if !ok {
-		client := clientFrom(ctx)
-		a.audit.RecordAccount(ctx, audit.TOTPFailed, u.ID, client)
-		if try.fail() {
-			a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
-		}
+		a.wrongCode(ctx, u.ID, try)
 		writeError(w, http.StatusForbidden, "wrong_code", "the code is wrong")
 		return
 	}

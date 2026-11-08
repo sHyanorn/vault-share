@@ -229,18 +229,26 @@ type attempt struct {
 	ended bool
 }
 
-// entry returns key's entry, starting a new window once the last one is
-// over and no refusal is in force. The caller holds l.mu.
+// entry returns key's entry, its window restarted if due. The caller holds
+// l.mu.
 func (l *lockouts) entry(key string, now time.Time) *lockoutEntry {
 	entry, ok := l.table.entries[key]
 	if !ok {
 		l.table.makeRoom(now)
 		entry = &lockoutEntry{first: now}
 		l.table.entries[key] = entry
-	} else if now.Sub(entry.first) > lockoutWindow && !now.Before(entry.until) {
-		entry.failures, entry.first = 0, now
+	} else {
+		entry.restartWindow(now)
 	}
 	return entry
+}
+
+// restartWindow starts a new window once the last one is over and no
+// refusal is in force. The caller holds the lock of the entry's lockouts.
+func (e *lockoutEntry) restartWindow(now time.Time) {
+	if now.Sub(e.first) > lockoutWindow && !now.Before(e.until) {
+		e.failures, e.first = 0, now
+	}
 }
 
 // admit reserves an attempt for key, or says why it may not be tried now.
@@ -271,9 +279,7 @@ func (a *attempt) fail() bool {
 	now := l.now()
 	e := a.entry
 	e.inflight--
-	if now.Sub(e.first) > lockoutWindow && !now.Before(e.until) {
-		e.failures, e.first = 0, now
-	}
+	e.restartWindow(now)
 	e.failures++
 	if e.failures == l.failures {
 		e.until = now.Add(lockoutPeriod)
