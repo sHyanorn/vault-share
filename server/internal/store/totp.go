@@ -83,17 +83,24 @@ func replaceCodes(ctx context.Context, tx *sql.Tx, userID int64, codeHashes [][]
 	return nil
 }
 
+// The statements that spend a second-step code, alone or in
+// CompleteSecondStep; each changes a row only for a code not yet used.
+const (
+	// useTOTPStep takes the step and the account id.
+	useTOTPStep = `UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`
+	// useRecoveryCode takes the account id and the code's hash.
+	useRecoveryCode = `DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`
+)
+
 // UseTOTPStep records step as used and reports false when it, or a later
 // one, already was: the same code never works twice, even in parallel.
 func (s *Store) UseTOTPStep(ctx context.Context, userID, step int64) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx,
-		`UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`, step, userID))
+	return s.changed(s.db.ExecContext(ctx, useTOTPStep, step, userID))
 }
 
 // UseRecoveryCode spends a recovery code and reports whether it was one.
 func (s *Store) UseRecoveryCode(ctx context.Context, userID int64, codeHash []byte) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx,
-		`DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`, userID, codeHash))
+	return s.changed(s.db.ExecContext(ctx, useRecoveryCode, userID, codeHash))
 }
 
 // RecoveryCodesLeft counts the account's unused recovery codes.
@@ -169,11 +176,9 @@ func (s *Store) CompleteSecondStep(ctx context.Context, st SecondStep, now time.
 	}
 	var spent bool
 	if st.RecoveryHash != nil {
-		spent, err = s.changed(tx.ExecContext(ctx,
-			`DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`, st.UserID, st.RecoveryHash))
+		spent, err = s.changed(tx.ExecContext(ctx, useRecoveryCode, st.UserID, st.RecoveryHash))
 	} else {
-		spent, err = s.changed(tx.ExecContext(ctx,
-			`UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`, st.Step, st.UserID))
+		spent, err = s.changed(tx.ExecContext(ctx, useTOTPStep, st.Step, st.UserID))
 	}
 	if err != nil {
 		return 0, err
