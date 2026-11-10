@@ -12,11 +12,12 @@ import {
   wrapSecret,
 } from '../crypto/index.ts'
 import { randomBytes } from '../crypto/testutil.ts'
+import { ApiError } from '../http.ts'
 import * as shareApi from '../share/api.ts'
 import { uploadFile } from '../share/share.ts'
 import type { Account } from './account.ts'
 import * as api from './api.ts'
-import { listKept } from './files.ts'
+import { keepShare, listKept } from './files.ts'
 
 vi.mock('./api.ts', () => ({ listFiles: vi.fn(), keepFile: vi.fn() }))
 vi.mock('../share/api.ts', async (importOriginal) => ({
@@ -137,7 +138,11 @@ describe('uploadFile with an account', () => {
     const file = new File([randomBytes(1000)], 'report.pdf')
     const share = await uploadFile(
       file,
-      { expiresIn: 3600, maxDownloads: 1, account },
+      {
+        expiresIn: 3600,
+        maxDownloads: 1,
+        keep: (share) => keepShare(account, share),
+      },
       () => {},
     )
     expect(share.kept).toBe(true)
@@ -154,13 +159,16 @@ describe('uploadFile with an account', () => {
 
   it('still shares the file when keeping it fails, and keeps nothing without an account', async () => {
     created()
-    vi.mocked(api.keepFile).mockRejectedValue(
-      new shareApi.ApiError(500, 'internal'),
-    )
+    vi.mocked(api.keepFile).mockRejectedValue(new ApiError(500, 'internal'))
     const file = new File([randomBytes(10)], 'a.txt')
+    const account = await newAccount()
     const share = await uploadFile(
       file,
-      { expiresIn: 3600, maxDownloads: 1, account: await newAccount() },
+      {
+        expiresIn: 3600,
+        maxDownloads: 1,
+        keep: (share) => keepShare(account, share),
+      },
       () => {},
     )
     expect(share.kept).toBe(false)

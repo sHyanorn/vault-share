@@ -1,7 +1,7 @@
 // Typed client for the account endpoints of the vaultd API. Everything sent
 // is derived in the browser (crypto/account.ts); the password never is.
 
-import { request } from '../share/api.ts'
+import { request } from '../http.ts'
 
 export interface SessionResponse {
   username: string

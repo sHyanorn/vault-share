@@ -7,7 +7,7 @@ import {
   toBase64Url,
 } from '../crypto/index.ts'
 import { randomBytes } from '../crypto/testutil.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import {
   changePassword,
   completeSignIn,

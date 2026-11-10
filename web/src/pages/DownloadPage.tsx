@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { unwrapSecret } from '../crypto/index.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
 import { parseLocation, type ShareLocation } from '../share/link.ts'
 import { chooseSink, type Sink } from '../share/save.ts'

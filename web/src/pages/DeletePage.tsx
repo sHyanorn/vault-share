@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import { parseDeleteLocation } from '../share/link.ts'
 import { deleteShareById } from '../share/share.ts'
 import { Button, Hero } from '../ui/controls.tsx'

@@ -17,7 +17,7 @@ import {
   toBase64Url,
   type AccountCredentials,
 } from '../crypto/index.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import * as api from './api.ts'
 
 export interface Account {

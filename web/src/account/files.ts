@@ -7,8 +7,11 @@ import {
   deriveKeys,
   fromBase64Url,
   openEntry,
+  sealEntry,
+  toBase64Url,
 } from '../crypto/index.ts'
 import { buildLink } from '../share/link.ts'
+import type { NewShare } from '../share/share.ts'
 import type { Account } from './account.ts'
 import * as api from './api.ts'
 
@@ -34,6 +37,27 @@ export interface UnreadableFile {
   unreadable: true
   expiresAt: Date
   createdAt: Date
+}
+
+/**
+ * Keeps a new share in the account's list, so that it shows up there and
+ * can be deleted. A failure costs the list entry, not the share.
+ */
+export async function keepShare(
+  account: Account,
+  share: NewShare,
+): Promise<boolean> {
+  try {
+    const entry = await sealEntry(account.key, share.id, {
+      secret: share.secret,
+      linkKey: share.linkKey,
+      ownerToken: share.ownerToken,
+    })
+    await api.keepFile(share.id, share.ownerToken, toBase64Url(entry))
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function listKept(

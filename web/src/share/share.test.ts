@@ -12,6 +12,7 @@ import {
   unwrapSecret,
 } from '../crypto/index.ts'
 import { collect, randomBytes, streamOf } from '../crypto/testutil.ts'
+import { ApiError } from '../http.ts'
 import * as api from './api.ts'
 import { parseLocation } from './link.ts'
 import type { Sink } from './save.ts'
@@ -159,7 +160,7 @@ describe('downloadShare', () => {
   it('discards the sink when no download was granted', async () => {
     const { secret } = await sharedFile()
     vi.mocked(api.requestDownload).mockRejectedValue(
-      new api.ApiError(404, 'not_found'),
+      new ApiError(404, 'not_found'),
     )
     const info = await openShare('AAAAAAAAAAAAAAAAAAAAAA', secret)
     const { sink, chunks } = memorySink()

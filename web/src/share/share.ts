@@ -1,7 +1,5 @@
 // Upload and download flows: everything the server receives is ciphertext.
 
-import type { Account } from '../account/account.ts'
-import { keepFile } from '../account/api.ts'
 import {
   decryptMetadata,
   decryptStream,
@@ -12,7 +10,6 @@ import {
   exportAuthKey,
   fromBase64Url,
   generateSecret,
-  sealEntry,
   signChallenge,
   toBase64Url,
   wrapSecret,
@@ -29,8 +26,20 @@ export interface UploadOptions {
   maxDownloads: number
   /** When set, the link carries the secret wrapped under this password. */
   password?: string
-  /** When set, the file is also kept in this account's list. */
-  account?: Account
+  /**
+   * When set, called before the content goes up, so a file whose upload
+   * breaks off is already kept. Resolves to whether it was kept.
+   */
+  keep?: (share: NewShare) => Promise<boolean>
+}
+
+/** A file the server has a record of and no content for yet. */
+export interface NewShare {
+  id: string
+  ownerToken: string
+  secret: Uint8Array<ArrayBuffer>
+  /** What the link carries: the secret, or the secret wrapped under a password. */
+  linkKey: Uint8Array<ArrayBuffer>
 }
 
 export interface Progress {
@@ -45,7 +54,7 @@ export interface Share {
   ownerToken: string
   expiresAt: Date
   protected: boolean
-  /** Whether the file made it into the account's list; unset without one. */
+  /** What keep resolved to; unset without one. */
   kept?: boolean
 }
 
@@ -72,11 +81,12 @@ export async function uploadFile(
     expires_in: options.expiresIn,
     max_downloads: options.maxDownloads,
   })
-  // Before the content, so a file whose upload breaks off still shows up
-  // and can be deleted.
-  const kept = options.account
-    ? await keep(options.account, created, secret, key)
-    : undefined
+  const kept = await options.keep?.({
+    id: created.id,
+    ownerToken: created.owner_token,
+    secret,
+    linkKey: key,
+  })
 
   const counted = file
     .stream()
@@ -104,26 +114,6 @@ export async function uploadFile(
     expiresAt: new Date(created.expires_at * 1000),
     protected: Boolean(options.password),
     kept,
-  }
-}
-
-// A failure here costs the list entry, not the share.
-async function keep(
-  account: Account,
-  created: api.CreateResponse,
-  secret: Uint8Array<ArrayBuffer>,
-  linkKey: Uint8Array<ArrayBuffer>,
-): Promise<boolean> {
-  try {
-    const entry = await sealEntry(account.key, created.id, {
-      secret,
-      linkKey,
-      ownerToken: created.owner_token,
-    })
-    await keepFile(created.id, created.owner_token, toBase64Url(entry))
-    return true
-  } catch {
-    return false
   }
 }
 

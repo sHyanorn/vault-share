@@ -6,7 +6,7 @@ import {
   type KeptFile,
   type UnreadableFile,
 } from '../account/files.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
 import { deleteShareById } from '../share/share.ts'
 import { Button, Hero } from '../ui/controls.tsx'

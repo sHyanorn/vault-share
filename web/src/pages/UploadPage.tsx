@@ -6,9 +6,10 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from 'react'
+import { keepShare } from '../account/files.ts'
 import { useAccount } from '../account/session.ts'
 import { MIN_PASSWORD_LENGTH, passwordTooShort } from '../crypto/index.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
 import {
   deleteShareById,
@@ -56,7 +57,7 @@ export default function UploadPage() {
           expiresIn,
           maxDownloads,
           password: password || undefined,
-          account: account ?? undefined,
+          keep: account ? (created) => keepShare(account, created) : undefined,
         },
         (progress) => setPhase({ kind: 'working', progress }),
       )

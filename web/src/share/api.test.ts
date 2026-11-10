@@ -1,12 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { collect } from '../crypto/testutil.ts'
-import {
-  ApiError,
-  createFile,
-  deleteFile,
-  downloadContent,
-  getMeta,
-} from './api.ts'
+import { ApiError } from '../http.ts'
+import { createFile, deleteFile, downloadContent, getMeta } from './api.ts'
 
 function respond(status: number, body: unknown) {
   return new Response(body === undefined ? null : JSON.stringify(body), {

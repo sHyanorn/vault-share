@@ -1,4 +1,4 @@
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 
 /** What to tell the user when an account request fails. */
 export function describeAccountError(error: unknown): string {

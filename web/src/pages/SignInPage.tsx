@@ -7,7 +7,7 @@ import {
 } from '../account/account.ts'
 import { describeAccountError } from '../account/errors.ts'
 import { useSession } from '../account/session.ts'
-import { ApiError } from '../share/api.ts'
+import { ApiError } from '../http.ts'
 import { Button, Hero } from '../ui/controls.tsx'
 import { ShieldIcon, UserIcon } from '../ui/icons.tsx'
 import { useRouter } from '../ui/router.ts'
