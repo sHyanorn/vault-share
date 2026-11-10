@@ -158,8 +158,13 @@ func (a *accounts) wrongCode(ctx context.Context, userID int64, try *attempt) {
 func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth []byte, code string) (store.User, bool) {
 	ctx := r.Context()
 	u, result := a.authenticate(r, sessionFrom(ctx).user.Username, auth)
-	if result != authOK {
-		a.refuse(w, result, http.StatusForbidden, "wrong_password", "the password is wrong")
+	switch result {
+	case authOK:
+	case authFailed:
+		writeError(w, http.StatusForbidden, "wrong_password", "the password is wrong")
+		return store.User{}, false
+	default:
+		refuse(w, result)
 		return store.User{}, false
 	}
 	if u.TOTPSecret == nil {
@@ -174,11 +179,15 @@ func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth [
 	if err != nil {
 		a.log.Error("spend second factor", "err", err)
 	}
-	if result != authOK {
-		a.refuse(w, result, http.StatusForbidden, "wrong_code", "the code is wrong")
-		return store.User{}, false
+	switch result {
+	case authOK:
+		return u, true
+	case authFailed:
+		writeError(w, http.StatusForbidden, "wrong_code", "the code is wrong")
+	default:
+		refuse(w, result)
 	}
-	return u, true
+	return store.User{}, false
 }
 
 type secondStepRequest struct {
@@ -254,7 +263,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "wrong_code", "the code is wrong")
 		return
 	case result != authOK:
-		a.refuse(w, result, 0, "", "")
+		refuse(w, result)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.LoginSucceeded, u.ID, clientFrom(ctx))
@@ -345,7 +354,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	try, why := a.totpLocks.admit(strconv.FormatInt(u.ID, 10))
 	if try == nil {
-		a.refuse(w, why.result(), 0, "", "")
+		refuse(w, why.result())
 		return
 	}
 	defer try.end()

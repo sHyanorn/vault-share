@@ -164,8 +164,13 @@ func (a *accounts) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, result := a.authenticate(r, req.Username, auth)
-	if result != authOK {
-		a.refuse(w, result, http.StatusUnauthorized, "login_failed", "wrong username or password")
+	switch result {
+	case authOK:
+	case authFailed:
+		writeError(w, http.StatusUnauthorized, "login_failed", "wrong username or password")
+		return
+	default:
+		refuse(w, result)
 		return
 	}
 	ctx := r.Context()
@@ -249,19 +254,18 @@ func (r refusal) result() authResult {
 	return authLocked
 }
 
-// refuse answers a failed authenticate; status, code and message describe
-// a wrong secret.
-func (a *accounts) refuse(w http.ResponseWriter, result authResult, status int, code, message string) {
+// refuse answers an attempt that was not checked: a lockout is in force,
+// too many attempts are in flight, or an error stopped it, which is already
+// logged. A wrong secret is for the caller to answer.
+func refuse(w http.ResponseWriter, result authResult) {
 	switch result {
 	case authLocked:
 		w.Header().Set("Retry-After", strconv.Itoa(int(lockoutPeriod/time.Second)))
 		writeError(w, http.StatusTooManyRequests, "locked", "too many failed attempts, try again later")
 	case authBusy:
 		busy(w)
-	case authError:
-		writeInternalError(w)
 	default:
-		writeError(w, status, code, message)
+		writeInternalError(w)
 	}
 }
 
