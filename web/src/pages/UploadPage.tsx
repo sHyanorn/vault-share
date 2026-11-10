@@ -43,7 +43,8 @@ export default function UploadPage() {
   const [password, setPassword] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'pick' })
   const account = useAccount()
-  const shortPassword = password !== null && passwordTooShort(password)
+  // An opened field left empty means no password.
+  const shortPassword = Boolean(password) && passwordTooShort(password!)
 
   async function start() {
     if (!file) return
@@ -68,9 +69,16 @@ export default function UploadPage() {
     }
   }
 
-  function reset() {
+  /** Back to the form for another try, its options as they were. */
+  function chooseAgain() {
     setFile(null)
     setPhase({ kind: 'pick' })
+  }
+
+  /** A new share: it must not go out under the last one's password. */
+  function reset() {
+    setPassword(null)
+    chooseAgain()
   }
 
   switch (phase.kind) {
@@ -120,7 +128,7 @@ export default function UploadPage() {
             tone="muted"
           />
           <Button onClick={start}>Try again</Button>
-          <button type="button" className="link-btn" onClick={reset}>
+          <button type="button" className="link-btn" onClick={chooseAgain}>
             Choose another file
           </button>
         </section>

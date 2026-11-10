@@ -22,6 +22,16 @@ async function share(
   options: Options = {},
 ) {
   await page.goto('/')
+  return createLink(page, name, content, options)
+}
+
+/** Shares a file from the upload page as it stands. */
+async function createLink(
+  page: Page,
+  name: string,
+  content: Buffer,
+  options: Options = {},
+) {
   await page.setInputFiles('input[type=file]', {
     name,
     mimeType: 'application/octet-stream',
@@ -30,7 +40,7 @@ async function share(
   for (let n = 1; n < (options.downloads ?? 1); n++) {
     await page.getByRole('button', { name: 'More' }).click()
   }
-  if (options.password) {
+  if (options.password !== undefined) {
     await page.getByRole('button', { name: 'Add a password' }).click()
     await page.getByLabel('Password').fill(options.password)
   }
@@ -109,6 +119,39 @@ test('a password protects the link', async ({ page, context }) => {
   await recipient.getByLabel('Password').fill('correct horse battery')
   await recipient.getByRole('button', { name: 'Unlock' }).click()
   expect((await download(recipient)).equals(content)).toBe(true)
+})
+
+test('a password field left empty shares without a password', async ({
+  page,
+  context,
+}) => {
+  const content = randomBytes(1_000)
+  const { link } = await share(page, 'plain.txt', content, { password: '' })
+  expect(new URL(link).hash).toMatch(/^#[A-Za-z0-9_-]{22}$/)
+  const recipient = await context.newPage()
+  await recipient.goto(link)
+  expect((await download(recipient)).equals(content)).toBe(true)
+})
+
+test('the next file does not inherit the last password', async ({
+  page,
+  context,
+}) => {
+  const first = await share(page, 'sealed.txt', randomBytes(1_000), {
+    password: 'correct horse battery',
+  })
+  await page.getByRole('button', { name: 'Share another file' }).click()
+  const content = randomBytes(1_000)
+  const { link } = await createLink(page, 'open.txt', content)
+  expect(new URL(link).hash).toMatch(/^#[A-Za-z0-9_-]{22}$/)
+  const recipient = await context.newPage()
+  await recipient.goto(link)
+  expect((await download(recipient)).equals(content)).toBe(true)
+
+  const owner = await context.newPage()
+  await owner.goto(first.deleteLink)
+  await owner.getByRole('button', { name: 'Delete file' }).click()
+  await expect(owner.getByText('The share link no longer works.')).toBeVisible()
 })
 
 test('the delete link removes the file', async ({ page, context }) => {
