@@ -35,13 +35,9 @@ func sameOrigin() func(http.Handler) http.Handler {
 
 // onlyHost answers only requests addressed to host, compared without port
 // or case. A page that rebinds its own name to this server's address is
-// same-origin to the browser, but its requests still carry that name. An
-// empty host accepts any.
+// same-origin to the browser, but its requests still carry that name.
 func onlyHost(host string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if host == "" {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.EqualFold(hostname(r.Host), host) {
 				writeError(w, http.StatusMisdirectedRequest, "misdirected", "unknown host")

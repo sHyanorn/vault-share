@@ -13,11 +13,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestRouter(t *testing.T, webDir string) http.Handler {
 	t.Helper()
-	h, err := NewRouter(Options{Logger: slog.New(slog.DiscardHandler), WebDir: webDir})
+	return newTestRouterWith(t, func(o *Options) { o.WebDir = webDir })
+}
+
+func newTestRouterWith(t *testing.T, mutate func(*Options)) http.Handler {
+	t.Helper()
+	opts := testOptions(t, time.Now)
+	mutate(&opts)
+	h, err := NewRouter(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,8 +34,36 @@ func newTestRouter(t *testing.T, webDir string) http.Handler {
 
 func do(h http.Handler, method, target string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	req := httptest.NewRequest(method, target, nil)
+	req.Host = testHost
+	h.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestRouterRequiresItsOptions(t *testing.T) {
+	complete := testOptions(t, time.Now)
+	if _, err := NewRouter(complete); err != nil {
+		t.Fatalf("complete options: %v", err)
+	}
+	for name, unset := range map[string]func(*Options){
+		"Logger":        func(o *Options) { o.Logger = nil },
+		"Store":         func(o *Options) { o.Store = nil },
+		"Blobs":         func(o *Options) { o.Blobs = nil },
+		"Audit":         func(o *Options) { o.Audit = nil },
+		"Host":          func(o *Options) { o.Host = "" },
+		"MaxFileBytes":  func(o *Options) { o.MaxFileBytes = 0 },
+		"MaxTotalBytes": func(o *Options) { o.MaxTotalBytes = 0 },
+		"Now":           func(o *Options) { o.Now = nil },
+		"AccountKey":    func(o *Options) { o.AccountKey = nil },
+		"MaxAccounts":   func(o *Options) { o.MaxAccounts = 0 },
+		"Health":        func(o *Options) { o.Health = nil },
+	} {
+		opts := complete
+		unset(&opts)
+		if _, err := NewRouter(opts); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("without %s: %v, want an error naming it", name, err)
+		}
+	}
 }
 
 func TestHealthz(t *testing.T) {
@@ -46,10 +82,7 @@ func TestHealthz(t *testing.T) {
 
 func TestHealthzReportsAFailedCheck(t *testing.T) {
 	var failure error
-	h, err := NewRouter(Options{Logger: slog.New(slog.DiscardHandler), Health: func(context.Context) error { return failure }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newTestRouterWith(t, func(o *Options) { o.Health = func(context.Context) error { return failure } })
 	if rec := do(h, http.MethodGet, "/healthz"); rec.Code != http.StatusOK {
 		t.Fatalf("passing check: status %d", rec.Code)
 	}
@@ -87,10 +120,7 @@ func TestHealthzMethods(t *testing.T) {
 
 func TestRequestLogOmitsQueryString(t *testing.T) {
 	var buf bytes.Buffer
-	h, err := NewRouter(Options{Logger: slog.New(slog.NewJSONHandler(&buf, nil))})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newTestRouterWith(t, func(o *Options) { o.Logger = slog.New(slog.NewJSONHandler(&buf, nil)) })
 	do(h, http.MethodGet, "/healthz?token=secret")
 	line := buf.String()
 	if !strings.Contains(line, `"path":"/healthz"`) || !strings.Contains(line, `"status":200`) {
@@ -138,7 +168,9 @@ func TestNoWebDirMeans404ForPages(t *testing.T) {
 }
 
 func TestWebDirMustContainIndex(t *testing.T) {
-	if _, err := NewRouter(Options{Logger: slog.New(slog.DiscardHandler), WebDir: t.TempDir()}); err == nil {
+	opts := testOptions(t, time.Now)
+	opts.WebDir = t.TempDir()
+	if _, err := NewRouter(opts); err == nil {
 		t.Fatal("want error for web dir without index.html")
 	}
 }

@@ -67,7 +67,7 @@ func TestTOTPSetup(t *testing.T) {
 	var setup totpSetupResponse
 	b.send(http.MethodPost, "/api/v1/account/totp/setup", nil, &setup)
 	secret, err := totp.Encoding.DecodeString(setup.Secret)
-	if err != nil || len(secret) != totp.SecretBytes || !strings.HasPrefix(setup.URI, "otpauth://totp/vault-share:alice?") {
+	if err != nil || len(secret) != totp.SecretBytes || !strings.HasPrefix(setup.URI, "otpauth://totp/"+testHost+":alice?") {
 		t.Fatalf("setup %+v: %v", setup, err)
 	}
 	enable := func(auth []byte, code string) (int, []byte) {

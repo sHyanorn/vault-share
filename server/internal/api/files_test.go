@@ -48,27 +48,10 @@ func newEnvWith(t *testing.T, mutate func(*Options)) *env {
 // newEnvHashing is newEnvWith with the given cost of an auth hash.
 func newEnvHashing(t *testing.T, hashing argonParams, mutate func(*Options)) *env {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	blobs, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := &env{t: t, store: st, blobs: blobs, now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
-	logger := slog.New(slog.DiscardHandler)
-	auditor, err := audit.New(dir, st, logger, e.clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.job = cleanup.New(st, blobs, auditor, logger, e.clock)
-	// Rate limits are exercised by their own test; elsewhere they stay out of the way.
-	unlimited := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9}, Storage: Budget{1e12, 1 << 40},
-		Signup: Budget{1e9, 1e9}, Login: Budget{1e9, 1e9}}
-	opts := Options{Logger: logger, Store: st, Blobs: blobs, Audit: auditor, MaxFileBytes: maxTestFileBytes, Limits: &unlimited, Now: e.clock}
+	e := &env{t: t, now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
+	opts := testOptions(t, e.clock)
+	e.store, e.blobs = opts.Store, opts.Blobs.(*blob.Disk)
+	e.job = cleanup.New(opts.Store, opts.Blobs, opts.Audit, opts.Logger, e.clock)
 	if mutate != nil {
 		mutate(&opts)
 	}
@@ -81,6 +64,39 @@ func newEnvHashing(t *testing.T, hashing argonParams, mutate func(*Options)) *en
 	e.srv.Start()
 	t.Cleanup(e.srv.Close)
 	return e
+}
+
+// testHost is the name the test servers answer for: the address httptest
+// listens on.
+const testHost = "127.0.0.1"
+
+// testOptions are complete router options over a new database and disk
+// store, with limits far out of the way: each has its own test.
+func testOptions(t *testing.T, now func() time.Time) Options {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	blobs, err := blob.NewDisk(filepath.Join(dir, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.DiscardHandler)
+	auditor, err := audit.New(dir, st, logger, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlimited := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9}, Storage: Budget{1e12, 1 << 40},
+		Signup: Budget{1e9, 1e9}, Login: Budget{1e9, 1e9}}
+	return Options{
+		Logger: logger, Store: st, Blobs: blobs, Audit: auditor, Host: testHost,
+		MaxFileBytes: maxTestFileBytes, MaxTotalBytes: 1 << 50, Limits: &unlimited, Now: now,
+		AccountKey: randomBytes(32), MaxAccounts: 1 << 20,
+		Health: func(context.Context) error { return nil },
+	}
 }
 
 func (e *env) clock() time.Time {

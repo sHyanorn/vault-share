@@ -2,11 +2,9 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/netip"
 	"runtime/debug"
@@ -20,38 +18,63 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
-// Options configures NewRouter.
+// Options configures NewRouter. Every field is required unless it says
+// otherwise: none has a fallback that would let vaultd run unprotected.
 type Options struct {
 	Logger *slog.Logger
 	Store  *store.Store
 	Blobs  blob.Store
 	Audit  *audit.Recorder
 	// TrustedProxies are the sources whose X-Forwarded-For names the client.
+	// Optional.
 	TrustedProxies []netip.Prefix
-	// Host is the name the API answers for; empty accepts any.
+	// Host is the name the API answers for.
 	Host string
 	// MaxFileBytes caps the declared ciphertext size of an upload.
 	MaxFileBytes int64
 	// MaxTotalBytes caps what all records together may be charged
-	// (store.Charge); zero disables the quota.
+	// (store.Charge).
 	MaxTotalBytes int64
-	// Limits default to DefaultLimits.
+	// Limits default to DefaultLimits. Optional.
 	Limits *Limits
-	// Now defaults to time.Now; tests move it.
-	Now func() time.Time
+	Now    func() time.Time
 	// WebDir is the built frontend served for every path outside /api and
 	// /healthz. Empty disables static serving.
 	WebDir string
-	// AccountKey is the 32-byte key the server keys for accounts derive
-	// from; nil draws one that lasts until the process ends.
+	// AccountKey is the 32-byte key the server keys for accounts derive from.
 	AccountKey []byte
 	// SignupClosed refuses new accounts; existing ones still sign in.
 	SignupClosed bool
-	// MaxAccounts caps the number of accounts; zero disables the cap.
+	// MaxAccounts caps the number of accounts.
 	MaxAccounts int
 	// Health reports why vaultd cannot serve, or nil; /healthz answers 503
-	// while it fails. A nil Health always passes.
+	// while it fails.
 	Health func(context.Context) error
+}
+
+// missing names the first required option that is not set.
+func (o Options) missing() string {
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"Logger", o.Logger != nil},
+		{"Store", o.Store != nil},
+		{"Blobs", o.Blobs != nil},
+		{"Audit", o.Audit != nil},
+		{"Host", o.Host != ""},
+		{"MaxFileBytes", o.MaxFileBytes > 0},
+		{"MaxTotalBytes", o.MaxTotalBytes > 0},
+		{"Now", o.Now != nil},
+		{"AccountKey", len(o.AccountKey) > 0},
+		{"MaxAccounts", o.MaxAccounts > 0},
+		{"Health", o.Health != nil},
+	} {
+		if !f.set {
+			return f.name
+		}
+	}
+	return ""
 }
 
 // NewRouter returns the root handler of vaultd.
@@ -61,10 +84,10 @@ func NewRouter(opts Options) (http.Handler, error) {
 
 // newRouter hashes auth secrets with hashing, which tests lower.
 func newRouter(opts Options, hashing argonParams) (http.Handler, error) {
-	now := opts.Now
-	if now == nil {
-		now = time.Now
+	if name := opts.missing(); name != "" {
+		return nil, fmt.Errorf("api: option %s is not set", name)
 	}
+	now := opts.Now
 	limits := DefaultLimits
 	if opts.Limits != nil {
 		limits = *opts.Limits
@@ -72,10 +95,6 @@ func newRouter(opts Options, hashing argonParams) (http.Handler, error) {
 	// One file of the maximum size must always fit a client's storage budget.
 	if need := store.Charge(opts.MaxFileBytes, maxMetaBytes); int64(limits.Storage.Burst) < need {
 		limits.Storage.Burst = int(need) // #nosec G115 -- bounded by the configured file size
-	}
-	quota := opts.MaxTotalBytes
-	if quota <= 0 {
-		quota = math.MaxInt64 / 2
 	}
 	h := &files{
 		store:        opts.Store,
@@ -85,31 +104,23 @@ func newRouter(opts Options, hashing argonParams) (http.Handler, error) {
 		locks:        newLockouts(lockoutFailures, now),
 		storage:      newLimiterSet(limits.Storage, now),
 		maxFileBytes: opts.MaxFileBytes,
-		quota:        quota,
+		quota:        opts.MaxTotalBytes,
 		now:          now,
 		log:          opts.Logger,
 	}
 
-	accountKey := opts.AccountKey
-	if accountKey == nil {
-		accountKey = randomBytes(32)
-	}
-	maxAccounts := opts.MaxAccounts
-	if maxAccounts <= 0 {
-		maxAccounts = math.MaxInt32
-	}
 	a := &accounts{
 		store:        opts.Store,
 		audit:        opts.Audit,
 		hasher:       newHasher(hashing),
-		keys:         deriveServerKeys(accountKey),
+		keys:         deriveServerKeys(opts.AccountKey),
 		clientLocks:  newLockouts(lockoutFailures, now),
 		accountLocks: newLockouts(accountFailures, now),
 		deviceLocks:  newLockouts(lockoutFailures, now),
 		totpLocks:    newLockouts(lockoutFailures, now),
-		issuer:       cmp.Or(opts.Host, "vault-share"),
+		issuer:       opts.Host,
 		signup:       !opts.SignupClosed,
-		maxAccounts:  maxAccounts,
+		maxAccounts:  opts.MaxAccounts,
 		now:          now,
 		log:          opts.Logger,
 	}
@@ -169,7 +180,7 @@ func newRouter(opts Options, hashing argonParams) (http.Handler, error) {
 func healthz(check func(context.Context) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if check != nil && check(r.Context()) != nil {
+		if check(r.Context()) != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 			return
 		}

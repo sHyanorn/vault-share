@@ -97,7 +97,6 @@ func New(dir string, st *store.Store, log *slog.Logger, now func() time.Time) (*
 
 // Record stores the event. A failure is logged, never surfaced to the
 // request: the audit trail must not become a way to break the service.
-// A nil Recorder records nothing.
 func (r *Recorder) Record(ctx context.Context, event, fileID string, client Client) {
 	r.record(ctx, store.AuditEntry{Event: event, FileID: fileID}, client)
 }
@@ -109,9 +108,6 @@ func (r *Recorder) RecordAccount(ctx context.Context, event string, userID int64
 }
 
 func (r *Recorder) record(ctx context.Context, entry store.AuditEntry, client Client) {
-	if r == nil {
-		return
-	}
 	event := entry.Event
 	now := r.now()
 	if isFailure(event) && !r.failures.AllowN(now, 1) {
@@ -130,9 +126,6 @@ func (r *Recorder) record(ctx context.Context, entry store.AuditEntry, client Cl
 // Purge drops entries older than Retention and trims the table to its cap.
 // What was skipped or dropped since the last run is logged as counts.
 func (r *Recorder) Purge(ctx context.Context) error {
-	if r == nil {
-		return nil
-	}
 	if n := r.skipped.Swap(0); n > 0 {
 		r.log.Warn("audit failure events over budget were not recorded", "count", n)
 	}

@@ -86,6 +86,7 @@ func run() error {
 		Host:           cfg.Host,
 		MaxFileBytes:   cfg.MaxFileBytes,
 		MaxTotalBytes:  cfg.MaxTotalBytes,
+		Now:            time.Now,
 		WebDir:         cfg.WebDir,
 		AccountKey:     accountKey,
 		SignupClosed:   cfg.SignupClosed,
