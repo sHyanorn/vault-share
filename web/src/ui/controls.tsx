@@ -2,6 +2,7 @@ import {
   useEffect,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type ReactNode,
 } from 'react'
 
@@ -144,6 +145,9 @@ export function Hero({ icon, title, text, tone = 'accent' }: HeroProps) {
   )
 }
 
+/** How long a Collapse takes to close; index.css reads it as --collapse. */
+const collapseMs = 240
+
 /**
  * Opens and closes its content by its height. Closed content stays a
  * moment for the animation, then leaves, so a form opened again is fresh.
@@ -175,13 +179,17 @@ export function Collapse({
 
   useEffect(() => {
     if (!closing) return
-    const timer = setTimeout(() => setClosing(false), 260)
+    const timer = setTimeout(() => setClosing(false), collapseMs + 20)
     return () => clearTimeout(timer)
   }, [closing])
 
   if (!open && !closing) return null
   return (
-    <div className={`collapse ${open && raised ? 'shown' : ''}`} inert={!open}>
+    <div
+      className={`collapse ${open && raised ? 'shown' : ''}`}
+      style={{ '--collapse': `${collapseMs}ms` } as CSSProperties}
+      inert={!open}
+    >
       <div className="collapse-inner">{children}</div>
     </div>
   )

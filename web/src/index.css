@@ -740,8 +740,8 @@ p.error {
   animation-fill-mode: both;
   transition:
     background-color 160ms var(--ease),
-    opacity 200ms var(--ease),
-    transform 200ms var(--ease);
+    opacity var(--leave, 0s) var(--ease),
+    transform var(--leave, 0s) var(--ease);
 }
 
 .kept:hover {
@@ -911,7 +911,7 @@ p.error {
   grid-template-rows: 0fr;
   opacity: 0;
   transition:
-    grid-template-rows 240ms var(--ease),
+    grid-template-rows var(--collapse) var(--ease),
     opacity 200ms var(--ease);
 }
 

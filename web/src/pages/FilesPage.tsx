@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type { Account } from '../account/account.ts'
 import {
   listKept,
@@ -109,6 +109,9 @@ export default function FilesPage({ account }: { account: Account }) {
   )
 }
 
+/** How long a deleted row takes to leave; index.css reads it as --leave. */
+const leaveMs = 200
+
 interface RowProps {
   file: KeptFile | UnreadableFile
   index: number
@@ -143,7 +146,7 @@ function Row({ file, index, onRemoved }: RowProps) {
       return
     }
     setLeaving(true)
-    setTimeout(onRemoved, 220)
+    setTimeout(onRemoved, leaveMs + 20)
   }
 
   const name = safeFileName(file.name)
@@ -152,7 +155,10 @@ function Row({ file, index, onRemoved }: RowProps) {
       ? '1 download left'
       : `${file.downloadsLeft} downloads left`
   return (
-    <li className={`kept enter ${leaving ? 'leaving' : ''}`} style={delay}>
+    <li
+      className={`kept enter ${leaving ? 'leaving' : ''}`}
+      style={{ ...delay, '--leave': `${leaveMs}ms` } as CSSProperties}
+    >
       <FileIcon />
       <div className="info">
         <div className="name" title={name}>
