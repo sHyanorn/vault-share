@@ -28,7 +28,7 @@
 - [x] Upload page: drag and drop, progress bar, expiry and download-count options, copy link
 - [x] Download page: read the key from the fragment, decryption progress, save file
 - [x] Error states: invalid link, expired, wrong password
-- [x] Clean, Apple-style UI
+- [x] Clean, minimal UI
 
 ## M4 Security Hardening
 - [x] Security response headers and strict CSP

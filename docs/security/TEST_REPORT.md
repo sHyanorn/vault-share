@@ -1,6 +1,6 @@
 # Security Test Report
 
-Self-assessment of vault-share against the [OWASP Top 10:2025](https://top10.owasp.org/2025/), carried out in milestone M5 on 2026-11-06 and 2026-11-07. Section 7 adds the accounts of M7. All tests ran against instances of this project that the tester operated.
+Self-assessment of vault-share against the [OWASP Top 10:2025](https://top10.owasp.org/2025/), carried out in milestone M5 on 2026-11-06 and 2026-11-07. Section 7 adds the accounts of M7, section 8 the hardening of 2026-11-10. All tests ran against instances of this project that the tester operated.
 
 ## Summary
 
@@ -292,7 +292,8 @@ The scope:
 - bursts of 403 `cross_origin`, 421 `misdirected`, 429 `rate_limited` and 503 `capacity`;
 - the warnings "audit failure events over budget were not recorded" and "audit log over capacity, oldest entries dropped";
 - the warning about a trusted proxy that names no client;
-- any `panic` line.
+- any `panic` line;
+- since F50, a 503 from `/healthz`, which an outside probe can watch: the database, the storage or the free space failed, with the reason in a warning.
 
 **Status**: partial. Logging passes; alerting is left to the operator.
 
@@ -396,6 +397,32 @@ Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose
 | | Every request during sign-up, a shared file and My files, in Chromium | None carries the password, the master, wrapping or account key, the share secret or the file name; local storage holds only the sealed account key | [`browser-checks-m7.txt`](evidence/browser-checks-m7.txt), [`my-files.png`](evidence/my-files.png) |
 | | What the database keeps for an account | The browser's salt and sealed key, an Argon2id hash in PHC form, the SHA-256 of the session token; no auth secret, no token | [`database-m7.txt`](evidence/database-m7.txt) |
 | | The vaultd log after all of the above | Paths only: no secret, cookie, username or hash | [`logs-m7.txt`](evidence/logs-m7.txt) |
+
+## 8. Hardening, 2026-11-10
+
+A production readiness review found F47 to F50: what happens when the database, the account key or the storage is lost or mismatched, a race on the last download, and a health check that could not fail ([FINDINGS.md](FINDINGS.md)). Each fix came with a test that failed before it. The tables above are kept as they were at the end of M5 and M7; the runs below are on the code with F47 to F50 fixed.
+
+| Run after the hardening | Result |
+|---|---|
+| Go tests with `-race`, S3 tests included | 160 passed, none skipped |
+| Vitest | 107 passed |
+| `scripts/blackbox.py` | 170 passed |
+| `scripts/browser_checks.cjs` | 30 passed |
+| End-to-end tests, disk and S3 | 6 passed on each; the bucket empty afterwards, no orphan deleted |
+| gosec, govulncheck on the source, npm audit | 0 issues |
+
+How the numbers are counted: Go counts top-level test functions (224 with subtests), with the four `VAULT_TEST_S3_*` variables set so that no S3 test is skipped; the scripts count checks; Vitest and Playwright count tests. The scripts and the end-to-end tests ran against vaultd behind Caddy as local processes, with Versity S3 Gateway for S3; CI runs the same on the Compose stack on every push.
+
+| Finding | Before | After |
+|---|---|---|
+| F47 | A start without `vault.db` emptied the storage: 300 blobs on disk, 30 objects in a bucket | The start is refused and every object stays; no database is created |
+| F48 | `TestLastDownloadGrantedDuringAnEarlierOneDelivers` failed on every run, losing 1 to 12 files in 640 | Passed 40 runs in a row |
+| F49 | A start without `account.key` beside accounts made a new key; authenticator codes then got a 500 | The start is refused and no key is created; with the key restored, codes work again |
+| F50 | 200 with the blob directory deleted, with 680 KB free and with the data directory gone | 503 in all three |
+
+A backup and a restore by [OPERATIONS.md](../OPERATIONS.md) were run against a local instance, once stopped (`tar`) and once running (`VACUUM INTO`, then keys and content): both restored instances answered `/healthz` with 200, served the files of their backup with matching content and accepted authenticator codes. The `docker compose` commands of the manual were not run.
+
+**Not covered**: database page damage, which neither the health check nor the startup looks for; a restore across versions.
 
 ## Evidence
 

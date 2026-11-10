@@ -25,7 +25,7 @@ sequenceDiagram
     R->>V: signature
     V-->>R: one-time download token, one download spent
     R->>V: fetch the ciphertext
-    R->>R: decrypt while streaming to disk
+    R->>R: decrypt while downloading
 ```
 
 - **Passwords.** With a password, the link carries the secret wrapped under a key that Argon2id derives from the password (64 MiB, 2 passes). The server never learns whether a password exists.
@@ -58,12 +58,14 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Known limitations
 
-- **A compromised server** can send JavaScript that steals keys. Every web-based encryption tool shares this weakness.
+- **A compromised server** can send JavaScript that steals keys. Most web-based encryption tools share this weakness.
 - **A leaked link is a leaked file.** A password slows offline guessing down, but cannot stop it.
 - **What the server sees.** It knows each file's size and when it was uploaded and downloaded.
 - **Limits are per address.** They count one IPv4 address or one IPv6 /64 as one client. An attacker with many addresses can fill the quota or load the CPU, which needs protection in front of the server.
 - **Accounts link files.** The server knows which files an account keeps and when they were shared, though not what they are. A captured account password opens all of them.
 - **Single instance.** It runs as one process; its rate limits and lockouts live in memory.
+- **Large files outside Chromium.** Chromium-based browsers write the decrypted file straight to disk. Other browsers hold it in browser storage until the download is complete.
+- **Monitoring and backups are the operator's.** `/healthz` checks the database, the storage and the free disk space, but not the integrity of the database, and there are no metrics or alerts. Nothing is backed up automatically; the [operations manual](docs/OPERATIONS.md) describes how.
 
 ## Quick start
 

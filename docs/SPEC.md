@@ -64,8 +64,18 @@ Based on the public Firefox Send design. When implementing it, work through each
 
 1. The browser reads `secret` from the URL fragment and derives the three keys
 2. It signs a random challenge from the server with `authKey` to prove possession of the link
-3. Once verification succeeds, the server streams the ciphertext and atomically decrements the download count
-4. The browser decrypts while downloading and saves directly via the Streams API, without accumulating data in memory
+3. Once verification succeeds, the server takes one download from the count and issues a one-time download token, in one transaction (D014); the token then fetches the ciphertext
+4. The browser decrypts while downloading. Chromium-based browsers write straight to the file the user picks (File System Access API); other browsers collect the decrypted file in a Blob, which the browser holds until it is saved
+
+### Parameters
+
+The exact formats are in D012 and D019.
+
+- Keys: `HKDF-SHA256(secret, salt = "", info, 32 bytes)` with info `vault-share/file`, `vault-share/meta` and `vault-share/auth`
+- Content: the record format of RFC 8188 with a 256-bit key. Header `salt(16) | rs(4, always 65536) | idlen(1, always 0)`; each record is AES-256-GCM over `data | delimiter | padding`, the delimiter `0x01`, or `0x02` in the last record
+- Nonces: per file, a content key and a 12-byte nonce base come from HKDF over `fileKey` and the random header salt; record `i` uses the nonce base XOR `i`, so no nonce repeats under a key
+- Metadata: `iv(12) | AES-256-GCM(JSON {name, type, size})` under `metaKey`, with a random IV
+- Password: the link carries `salt(16) | iv(12) | AES-256-GCM(secret)`, 60 bytes, in place of `secret`; the key is `Argon2id(password, salt, 64 MiB, 2 passes, 1 lane, 32 bytes)`, the IV is random, and there is no associated data
 
 ### Accounts (optional, D026)
 
@@ -77,7 +87,7 @@ Based on the public Firefox Send design. When implementing it, work through each
 
 ### Known limitations (to be documented in the threat model and README)
 
-- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: strict CSP, reproducible builds, and candid documentation of the risk. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
+- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: a strict CSP and candid documentation of the risk. Dependencies and images are pinned, but builds are not verified to be reproducible and no hashes of the client are published, so a user cannot check the code a server sent. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
 - A leaked link means a leaked file; this is inherent to link-based sharing
 - There is no password reset: the server cannot open an account key, so a forgotten password loses the account; shared links keep working
 
@@ -87,12 +97,12 @@ Based on the public Firefox Send design. When implementing it, work through each
 Browser (React)                  Server (Go)                                                 Storage
 ┌──────────────┐      HTTPS      ┌──────────────────────────────────────────────────────┐
 │ crypto/      │────────────────▶│ Middleware: rate limiting, security headers, logging │
-│  Web Crypto  │ ciphertext only │ Handlers: upload, download, delete, accounts         │──▶ SQLite or PostgreSQL (metadata)
+│  Web Crypto  │ ciphertext only │ Handlers: upload, download, delete, accounts         │──▶ SQLite (metadata)
 │  Streams API │◀────────────────│ Cleanup job (scheduled)                              │──▶ Local disk or S3-compatible storage (ciphertext)
 └──────────────┘                 └──────────────────────────────────────────────────────┘
 ```
 
-Server stack: Go standard library `net/http` with the `chi` router, `sqlc` or hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented for local disk and for S3-compatible storage (tested with Versity S3 Gateway, D025). The bucket must belong to vaultd alone, keep no old versions and honour conditional writes; vaultd checks the last two at startup, and files on S3 are capped at 5 GiB.
+Server stack: Go standard library `net/http` with the `chi` router, hand-written parameterized SQL, and `slog` structured logging. The storage layer is defined as an interface, implemented for local disk and for S3-compatible storage (tested with Versity S3 Gateway, D025). The bucket must belong to vaultd alone, keep no old versions and honour conditional writes; vaultd checks the last two at startup, and files on S3 are capped at 5 GiB.
 
 ## 6. Data Model
 
