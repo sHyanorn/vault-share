@@ -243,8 +243,9 @@ type downloadResponse struct {
 }
 
 // download verifies the signed challenge, takes one download from the count
-// and issues a one-time token for the content. The count is taken here, not
-// when the stream finishes, so an interrupted download cannot be repeated.
+// and issues a one-time token for the content, both in one transaction. The
+// count is taken here, not when the stream finishes, so an interrupted
+// download cannot be repeated.
 func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	var req downloadRequest
 	if !decodeJSON(w, r, &req) {
@@ -281,18 +282,14 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	try.pass(false)
-	left, granted, err := h.store.ConsumeDownload(ctx, f.ID, now)
+	token := randomBytes(tokenBytes)
+	left, granted, err := h.store.GrantDownload(ctx, f.ID, hashToken(token), now, now.Add(downloadTokenTTL))
 	if err != nil {
-		h.internalError(w, "consume download", err)
+		h.internalError(w, "grant download", err)
 		return
 	}
 	if !granted {
 		notFound(w, r)
-		return
-	}
-	token := randomBytes(tokenBytes)
-	if err := h.store.CreateDownloadToken(ctx, f.ID, hashToken(token), now.Add(downloadTokenTTL)); err != nil {
-		h.internalError(w, "create download token", err)
 		return
 	}
 	h.audit.Record(ctx, audit.DownloadGranted, f.ID, client)

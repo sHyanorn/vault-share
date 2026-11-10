@@ -54,6 +54,24 @@ func mustCreate(t *testing.T, s *Store, f File, uploaded bool) {
 	}
 }
 
+// grant takes one download at t0 and stores its token.
+func grant(t *testing.T, s *Store, id, token string, tokenExpires time.Time) {
+	t.Helper()
+	if _, ok, err := s.GrantDownload(context.Background(), id, []byte(token), t0, tokenExpires); err != nil || !ok {
+		t.Fatalf("%s: download not granted: %v", id, err)
+	}
+}
+
+// tokens counts the download tokens stored for a file.
+func tokens(t *testing.T, s *Store, id string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM download_tokens WHERE file_id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func TestOpenIsIdempotentAndPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	for i := 0; i < 2; i++ {
@@ -145,14 +163,9 @@ func TestDeleteIfBurned(t *testing.T) {
 	if ok, _ := s.DeleteIfBurned(ctx, "file-a", t0); ok {
 		t.Error("deleted with downloads left")
 	}
-	for i := 0; i < 2; i++ {
-		if _, ok, _ := s.ConsumeDownload(ctx, "file-a", t0); !ok {
-			t.Fatal("download not granted")
-		}
-	}
-	if err := s.CreateDownloadToken(ctx, "file-a", []byte("pending"), t0.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	grant(t, s, "file-a", "used", t0.Add(-time.Minute))
+	// The last download: from its grant on, its token keeps the file.
+	grant(t, s, "file-a", "pending", t0.Add(5*time.Minute))
 	if ok, _ := s.DeleteIfBurned(ctx, "file-a", t0); ok {
 		t.Error("deleted while a token was pending")
 	}
@@ -166,9 +179,7 @@ func TestDeleteCascadesToTokens(t *testing.T) {
 	ctx := context.Background()
 	mustCreate(t, s, sample("file-a"), true)
 	hash := []byte("token-hash")
-	if err := s.CreateDownloadToken(ctx, "file-a", hash, t0.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	grant(t, s, "file-a", string(hash), t0.Add(5*time.Minute))
 	if err := s.DeleteFile(ctx, "file-a"); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +188,7 @@ func TestDeleteCascadesToTokens(t *testing.T) {
 	}
 }
 
-func TestConsumeDownloadIsAtomic(t *testing.T) {
+func TestGrantDownloadIsAtomic(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	mustCreate(t, s, sample("file-a"), true)
@@ -185,9 +196,9 @@ func TestConsumeDownloadIsAtomic(t *testing.T) {
 	const workers = 64
 	var wg sync.WaitGroup
 	var granted atomic.Int64
-	for range workers {
+	for i := range workers {
 		wg.Go(func() {
-			_, ok, err := s.ConsumeDownload(ctx, "file-a", t0)
+			_, ok, err := s.GrantDownload(ctx, "file-a", []byte{byte(i)}, t0, t0.Add(5*time.Minute))
 			if err != nil {
 				t.Error(err)
 				return
@@ -205,20 +216,45 @@ func TestConsumeDownloadIsAtomic(t *testing.T) {
 	if f.DownloadsLeft != 0 {
 		t.Errorf("downloads_left = %d", f.DownloadsLeft)
 	}
+	if n := tokens(t, s, "file-a"); n != 3 {
+		t.Errorf("%d tokens stored, want 3", n)
+	}
 }
 
-func TestConsumeDownloadRequiresLiveFile(t *testing.T) {
+// The count and the token are one transaction: when the token cannot be
+// stored, the download is not taken.
+func TestGrantDownloadKeepsTheCountWhenTheTokenFails(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	mustCreate(t, s, sample("file-a"), true)
+	grant(t, s, "file-a", "token", t0.Add(5*time.Minute))
+	if _, ok, err := s.GrantDownload(ctx, "file-a", []byte("token"), t0, t0.Add(5*time.Minute)); err == nil || ok {
+		t.Fatalf("a token hash was stored twice: ok=%v err=%v", ok, err)
+	}
+	if f, _ := s.GetFile(ctx, "file-a"); f.DownloadsLeft != 2 {
+		t.Errorf("downloads_left = %d after a failed grant, want 2", f.DownloadsLeft)
+	}
+	if n := tokens(t, s, "file-a"); n != 1 {
+		t.Errorf("%d tokens stored, want 1", n)
+	}
+}
+
+func TestGrantDownloadRequiresLiveFile(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	mustCreate(t, s, sample("pending"), false)
 	mustCreate(t, s, sample("live"), true)
-	if _, ok, _ := s.ConsumeDownload(ctx, "pending", t0); ok {
+	expires := t0.Add(5 * time.Minute)
+	if _, ok, _ := s.GrantDownload(ctx, "pending", []byte("a"), t0, expires); ok {
 		t.Error("download granted before upload")
 	}
-	if _, ok, _ := s.ConsumeDownload(ctx, "live", t0.Add(48*time.Hour)); ok {
+	if _, ok, _ := s.GrantDownload(ctx, "live", []byte("b"), t0.Add(48*time.Hour), expires); ok {
 		t.Error("download granted after expiry")
 	}
-	if left, ok, _ := s.ConsumeDownload(ctx, "live", t0); !ok || left != 2 {
+	if n := tokens(t, s, "pending") + tokens(t, s, "live"); n != 0 {
+		t.Errorf("%d tokens stored for refused downloads", n)
+	}
+	if left, ok, _ := s.GrantDownload(ctx, "live", []byte("c"), t0, expires); !ok || left != 2 {
 		t.Errorf("live download: ok=%v left=%d", ok, left)
 	}
 }
@@ -228,9 +264,7 @@ func TestDownloadTokensAreOneTime(t *testing.T) {
 	ctx := context.Background()
 	mustCreate(t, s, sample("file-a"), true)
 	hash := []byte("token-hash")
-	if err := s.CreateDownloadToken(ctx, "file-a", hash, t0.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	grant(t, s, "file-a", string(hash), t0.Add(5*time.Minute))
 	if ok, _ := s.ConsumeDownloadToken(ctx, "other", hash, t0); ok {
 		t.Error("token accepted for another file")
 	}
@@ -272,20 +306,16 @@ func TestPurgeable(t *testing.T) {
 	fresh.CreatedAt = t0.Add(-30 * time.Minute)
 	mustCreate(t, s, fresh, false)
 
-	for _, id := range []string{"burned", "burned-pending-token"} {
-		for i := 0; i < 3; i++ {
-			if _, ok, _ := s.ConsumeDownload(ctx, id, t0); !ok {
-				t.Fatalf("%s: download %d not granted", id, i)
-			}
-		}
+	// Three downloads use each burned file up; only a token that has not
+	// expired is pending.
+	for i := range 3 {
+		grant(t, s, "burned", fmt.Sprint("burned-", i), t0.Add(-time.Minute))
+	}
+	for i := range 2 {
+		grant(t, s, "burned-pending-token", fmt.Sprint("old-", i), t0.Add(-time.Minute))
 	}
 	for _, id := range []string{"expired-pending-token", "burned-pending-token"} {
-		if err := s.CreateDownloadToken(ctx, id, []byte(id), t0.Add(5*time.Minute)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.CreateDownloadToken(ctx, "burned", []byte("old"), t0.Add(-time.Minute)); err != nil {
-		t.Fatal(err)
+		grant(t, s, id, id, t0.Add(5*time.Minute))
 	}
 	for _, id := range []string{"expired", "expired-pending-token"} {
 		if _, err := s.db.Exec(`UPDATE files SET expires_at = ? WHERE id = ?`, t0.Add(-time.Second).Unix(), id); err != nil {
@@ -433,9 +463,7 @@ func TestUsageFollowsEveryDeletePath(t *testing.T) {
 	if ok, _ := s.DeleteIfPending(ctx, "pending"); !ok {
 		t.Fatal("pending not deleted")
 	}
-	if _, ok, _ := s.ConsumeDownload(ctx, "burned", t0); !ok {
-		t.Fatal("download not granted")
-	}
+	grant(t, s, "burned", "used", t0.Add(-time.Minute))
 	if ok, _ := s.DeleteIfBurned(ctx, "burned", t0); !ok {
 		t.Fatal("burned not deleted")
 	}

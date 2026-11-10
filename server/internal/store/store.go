@@ -260,12 +260,20 @@ func (s *Store) DeleteIfBurned(ctx context.Context, id string, now time.Time) (b
 		id, now.Unix()))
 }
 
-// ConsumeDownload decrements the download count of a live file in one
-// statement, so concurrent callers can never take more downloads than allowed.
-// It returns the remaining count and whether a download was granted.
-func (s *Store) ConsumeDownload(ctx context.Context, fileID string, now time.Time) (int64, bool, error) {
+// GrantDownload takes one download from a live file and stores the token
+// that redeems it, in one transaction. A file whose count reaches zero
+// therefore always has its token pending, so DeleteIfBurned and Purgeable
+// leave it until that download is done; and concurrent callers can never
+// take more downloads than allowed. It returns the remaining count and
+// whether a download was granted.
+func (s *Store) GrantDownload(ctx context.Context, fileID string, tokenHash []byte, now, tokenExpires time.Time) (int64, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	var left int64
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		UPDATE files SET downloads_left = downloads_left - 1
 		WHERE id = ? AND downloads_left > 0 AND uploaded_at IS NOT NULL AND expires_at > ?
 		RETURNING downloads_left`, fileID, now.Unix()).Scan(&left)
@@ -275,14 +283,15 @@ func (s *Store) ConsumeDownload(ctx context.Context, fileID string, now time.Tim
 	if err != nil {
 		return 0, false, err
 	}
-	return left, true, nil
-}
-
-func (s *Store) CreateDownloadToken(ctx context.Context, fileID string, tokenHash []byte, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO download_tokens (token_hash, file_id, expires_at) VALUES (?, ?, ?)`,
-		tokenHash, fileID, expiresAt.Unix())
-	return err
+		tokenHash, fileID, tokenExpires.Unix()); err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return left, true, nil
 }
 
 // DownloadTokenValid reports whether the token is valid for the file at now,
