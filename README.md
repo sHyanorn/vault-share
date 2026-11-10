@@ -89,6 +89,13 @@ For a real bucket, set the `VAULT_S3_*` settings in `.env`. The bucket must:
 
 vaultd checks the last two at startup and refuses to start otherwise. Its credentials need `s3:ListBucket`, `s3:GetBucketVersioning`, `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the bucket. Files on S3 are capped at 5 GiB, the most S3 takes in one request. Switching storage moves no files, so switch once the existing shares have expired, at most seven days after the last upload.
 
+## Upgrading
+
+A deployment built before 10 November 2026 (commit `96159bb` or earlier) meets these changes:
+
+- **A missing database stops the start.** vaultd used to create `vault.db` whenever it was missing, and cleanup then deleted the stored files it had no record of. It now refuses to start when the database is missing and the storage is not empty. Restore `vault.db`, or empty the `blobs` directory or the bucket to start over. An upgrade in place keeps its database and is not affected.
+- **Leftover content goes later.** Stored content without a record is deleted from an hour after the start, at most 100 objects an hour, instead of at startup.
+
 ## Development
 
 ```bash

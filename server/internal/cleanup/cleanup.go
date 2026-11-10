@@ -28,7 +28,13 @@ type Job struct {
 
 // orphanInterval spaces the orphan sweeps, which list the whole store: they
 // catch rare leftovers, and on S3 every listed thousand objects is a request.
+// The first sweep also waits an interval, so a vaultd started on the wrong
+// database or the wrong storage deletes nothing before it can be stopped.
 const orphanInterval = time.Hour
+
+// maxOrphanDeletes bounds what one orphan sweep deletes. Leftovers are rare;
+// many at once mean the database and the storage do not belong together.
+const maxOrphanDeletes = 100
 
 // Run performs one sweep. For files with content the blob goes first, so a
 // failed deletion is retried on the next run instead of leaving an orphan.
@@ -77,6 +83,9 @@ func (j *Job) Run(ctx context.Context) error {
 	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
 		errs = append(errs, err)
 	}
+	if j.orphansSwept.IsZero() {
+		j.orphansSwept = now
+	}
 	if now.Sub(j.orphansSwept) >= orphanInterval {
 		if err := j.deleteOrphans(ctx); err != nil {
 			errs = append(errs, err)
@@ -109,11 +118,12 @@ func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
 // deletions, a content deletion that failed after its record was gone, or a
 // lost answer from the store leaves such content behind. Each id is listed
 // before its record is looked up, and a record always exists before its
-// content, so content still being uploaded is never taken. A failed sweep
-// is retried on the next run, a finished one after orphanInterval.
+// content, so content still being uploaded is never taken. A sweep deletes
+// at most maxOrphanDeletes and leaves the rest to later sweeps. A failed
+// sweep is retried on the next run, a finished one after orphanInterval.
 func (j *Job) deleteOrphans(ctx context.Context) error {
 	var errs []error
-	deleted := 0
+	found, deleted := 0, 0
 	for id, err := range j.Blobs.IDs(ctx) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("list blobs: %w", err))
@@ -127,19 +137,27 @@ func (j *Job) deleteOrphans(ctx context.Context) error {
 		if exists {
 			continue
 		}
+		found++
+		if found > maxOrphanDeletes {
+			continue // counted for the warning below
+		}
 		if err := j.Blobs.Delete(ctx, id); err != nil {
 			errs = append(errs, fmt.Errorf("orphaned blob %s: %w", id, err))
 			continue
 		}
 		deleted++
 	}
-	if deleted > 0 {
+	if found > maxOrphanDeletes {
+		j.Log.Warn("more content without a record than one sweep deletes; check that the database and the storage belong together",
+			"found", found, "deleted", deleted, "limit", maxOrphanDeletes)
+	} else if deleted > 0 {
 		j.Log.Info("deleted orphaned content", "count", deleted)
 	}
 	return errors.Join(errs...)
 }
 
-// Loop runs a sweep immediately and then every interval until ctx is done.
+// Loop runs a sweep immediately and then every interval until ctx is done;
+// the first orphan sweep comes one orphanInterval after the first run.
 // A run gets five intervals at most, so a stalled storage service delays
 // cleanup instead of stopping it.
 func (j *Job) Loop(ctx context.Context, interval time.Duration) {

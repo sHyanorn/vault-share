@@ -3,7 +3,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,15 +45,20 @@ func run() error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("data dir: %w", err)
 	}
-	st, err := store.Open(ctx, filepath.Join(cfg.DataDir, "vault.db"))
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer st.Close()
 	blobs, err := openBlobs(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("blob store: %w", err)
 	}
+	dbPath := filepath.Join(cfg.DataDir, "vault.db")
+	// Before the database is opened, so a refusal leaves no new one behind.
+	if err := refuseNewDatabaseOverContent(ctx, dbPath, blobs); err != nil {
+		return err
+	}
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer st.Close()
 	storage := []any{"kind", cfg.Storage}
 	if cfg.Storage == "s3" {
 		// Where the files go, never the credentials.
@@ -117,6 +124,30 @@ func run() error {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("shutdown incomplete, closing active connections", "err", err)
+	}
+	return nil
+}
+
+// refuseNewDatabaseOverContent fails when the database at dbPath does not
+// exist yet while the storage already holds content. A new database has no
+// record of that content, so cleanup would delete all of it as orphaned:
+// the database was lost, or the storage belongs to another instance.
+func refuseNewDatabaseOverContent(ctx context.Context, dbPath string, blobs blob.Store) error {
+	info, err := os.Stat(dbPath)
+	switch {
+	case err == nil && info.Size() > 0:
+		return nil
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("database: %w", err)
+	}
+	for id, err := range blobs.IDs(ctx) {
+		if err != nil {
+			return fmt.Errorf("list stored content: %w", err)
+		}
+		return fmt.Errorf("%s does not exist, but the storage already holds content (for example %s). "+
+			"A new database has no record of it, and cleanup would delete it. "+
+			"Restore the database from a backup, or empty the storage (the blobs directory or the bucket) to start over; "+
+			"see docs/OPERATIONS.md", dbPath, id)
 	}
 	return nil
 }

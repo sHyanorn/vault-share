@@ -507,15 +507,28 @@ func TestExpiryAndCleanup(t *testing.T) {
 
 func TestCleanupDeletesOrphanedContent(t *testing.T) {
 	e := newEnv(t)
+	ctx := context.Background()
+	// The sweep lists the whole store, so it runs once an hour, and for the
+	// first time an hour after the first run (F47).
+	if err := e.job.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.advance(30 * time.Minute)
 	sh := e.shared(100, 5, 86400)
 	pending := e.create(100, 5, 86400)
 	orphan := encoding.EncodeToString(randomBytes(idBytes))
-	ctx := context.Background()
 	for _, id := range []string{orphan, pending.id} {
 		if err := e.blobs.Put(ctx, id, 3, strings.NewReader("abc")); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := e.job.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !e.blobExists(orphan) {
+		t.Error("a sweep ran within the first hour")
+	}
+	e.advance(31 * time.Minute)
 	if err := e.job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +539,6 @@ func TestCleanupDeletesOrphanedContent(t *testing.T) {
 	if !e.blobExists(sh.id) || !e.blobExists(pending.id) {
 		t.Error("cleanup deleted content that has a record")
 	}
-	// The sweep lists the whole store, so it runs once an hour.
 	late := encoding.EncodeToString(randomBytes(idBytes))
 	if err := e.blobs.Put(ctx, late, 3, strings.NewReader("abc")); err != nil {
 		t.Fatal(err)
