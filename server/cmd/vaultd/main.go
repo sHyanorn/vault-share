@@ -65,7 +65,7 @@ func run() error {
 		storage = append(storage, "bucket", cfg.S3.Bucket, "endpoint", cfg.S3.Endpoint, "region", cfg.S3.Region)
 	}
 	logger.Info("storage", storage...)
-	auditor, err := audit.New(cfg.DataDir, st, logger)
+	auditor, err := audit.New(cfg.DataDir, st, logger, time.Now)
 	if err != nil {
 		return fmt.Errorf("audit key: %w", err)
 	}
@@ -73,10 +73,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	job := &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
+	job := cleanup.New(st, blobs, auditor, logger, time.Now)
 	go job.Loop(ctx, cleanupInterval)
 
-	checker := &health.Checker{Store: st, Blobs: blobs, Dir: cfg.DataDir, MinFree: health.MinFreeBytes, Log: logger}
+	checker := health.New(st, blobs, cfg.DataDir, health.MinFreeBytes, logger, time.Now)
 	handler, err := api.NewRouter(api.Options{
 		Logger:         logger,
 		Store:          st,

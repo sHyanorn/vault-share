@@ -26,17 +26,22 @@ const (
 )
 
 type Checker struct {
-	Store *store.Store
-	Blobs blob.Store
-	// Dir is the data directory.
-	Dir string
-	// MinFree is the free space Dir's filesystem must have, in bytes.
-	MinFree uint64
-	Log     *slog.Logger
+	store   *store.Store
+	blobs   blob.Store
+	dir     string
+	minFree uint64
+	log     *slog.Logger
+	now     func() time.Time
 
 	mu      sync.Mutex
 	checked time.Time
 	err     error
+}
+
+// New returns a checker for the data directory dir, whose filesystem must
+// have minFree bytes free. Results age by now.
+func New(st *store.Store, blobs blob.Store, dir string, minFree uint64, log *slog.Logger, now func() time.Time) *Checker {
+	return &Checker{store: st, blobs: blobs, dir: dir, minFree: minFree, log: log, now: now}
 }
 
 // Check reports the first failing check, or nil. Callers within maxAge of
@@ -45,7 +50,7 @@ type Checker struct {
 func (c *Checker) Check(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.checked.IsZero() && time.Since(c.checked) < maxAge {
+	if !c.checked.IsZero() && c.now().Sub(c.checked) < maxAge {
 		return c.err
 	}
 	// Without the request's cancellation: a client that hangs up must not
@@ -53,26 +58,26 @@ func (c *Checker) Check(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	c.err = c.check(ctx)
-	c.checked = time.Now()
+	c.checked = c.now()
 	if c.err != nil {
-		c.Log.Warn("health check failed", "err", c.err)
+		c.log.Warn("health check failed", "err", c.err)
 	}
 	return c.err
 }
 
 func (c *Checker) check(ctx context.Context) error {
-	if _, err := c.Store.Usage(ctx); err != nil {
+	if _, err := c.store.Usage(ctx); err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
-	if err := c.Blobs.Check(ctx); err != nil {
+	if err := c.blobs.Check(ctx); err != nil {
 		return fmt.Errorf("blob store: %w", err)
 	}
-	free, err := freeBytes(c.Dir)
+	free, err := freeBytes(c.dir)
 	if err != nil {
 		return fmt.Errorf("data directory: %w", err)
 	}
-	if free < c.MinFree {
-		return fmt.Errorf("data directory: %d bytes free, below the minimum of %d", free, c.MinFree)
+	if free < c.minFree {
+		return fmt.Errorf("data directory: %d bytes free, below the minimum of %d", free, c.minFree)
 	}
 	return nil
 }

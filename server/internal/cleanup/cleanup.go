@@ -16,15 +16,19 @@ import (
 )
 
 type Job struct {
-	Store *store.Store
-	Blobs blob.Store
-	Audit *audit.Recorder
-	Log   *slog.Logger
-	// Now defaults to time.Now; tests move it.
-	Now func() time.Time
+	store *store.Store
+	blobs blob.Store
+	audit *audit.Recorder
+	log   *slog.Logger
+	now   func() time.Time
 
 	// orphanIntervalStart is the first run or the last orphan sweep.
 	orphanIntervalStart time.Time
+}
+
+// New returns a job that judges expiry by now.
+func New(st *store.Store, blobs blob.Store, auditor *audit.Recorder, log *slog.Logger, now func() time.Time) *Job {
+	return &Job{store: st, blobs: blobs, audit: auditor, log: log, now: now}
 }
 
 // orphanInterval spaces the orphan sweeps, which list the whole store: they
@@ -42,11 +46,8 @@ const maxOrphanDeletes = 100
 // A record whose content never arrived is deleted conditionally, so an upload
 // completing at the same moment keeps both its record and its bytes.
 func (j *Job) Run(ctx context.Context) error {
-	now := time.Now()
-	if j.Now != nil {
-		now = j.Now()
-	}
-	purges, err := j.Store.Purgeable(ctx, now)
+	now := j.now()
+	purges, err := j.store.Purgeable(ctx, now)
 	if err != nil {
 		return err
 	}
@@ -54,11 +55,11 @@ func (j *Job) Run(ctx context.Context) error {
 	purged := 0
 	for _, p := range purges {
 		// A file whose upload is running waits for a later run.
-		if !j.Store.Claim(p.ID) {
+		if !j.store.Claim(p.ID) {
 			continue
 		}
 		done, err := j.purge(ctx, p)
-		j.Store.Release(p.ID)
+		j.store.Release(p.ID)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -67,21 +68,21 @@ func (j *Job) Run(ctx context.Context) error {
 		}
 	}
 	if purged > 0 {
-		j.Log.Info("purged files", "count", purged)
+		j.log.Info("purged files", "count", purged)
 	}
-	if err := j.Store.ExpireTokens(ctx, now); err != nil {
+	if err := j.store.ExpireTokens(ctx, now); err != nil {
 		errs = append(errs, err)
 	}
-	if err := j.Store.ExpireSessions(ctx, now); err != nil {
+	if err := j.store.ExpireSessions(ctx, now); err != nil {
 		errs = append(errs, err)
 	}
-	if err := j.Store.ExpireTickets(ctx, now); err != nil {
+	if err := j.store.ExpireTickets(ctx, now); err != nil {
 		errs = append(errs, err)
 	}
-	if err := j.Audit.Purge(ctx); err != nil {
+	if err := j.audit.Purge(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
+	if err := j.blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
 		errs = append(errs, err)
 	}
 	if j.orphanSweepDue(now) {
@@ -109,19 +110,19 @@ func (j *Job) orphanSweepDue(now time.Time) bool {
 
 func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
 	if p.Pending {
-		deleted, err := j.Store.DeleteIfPending(ctx, p.ID)
+		deleted, err := j.store.DeleteIfPending(ctx, p.ID)
 		if err != nil {
 			return false, fmt.Errorf("record %s: %w", p.ID, err)
 		}
 		return deleted, nil
 	}
-	if err := j.Blobs.Delete(ctx, p.ID); err != nil {
+	if err := j.blobs.Delete(ctx, p.ID); err != nil {
 		return false, fmt.Errorf("blob %s: %w", p.ID, err)
 	}
-	if err := j.Store.DeleteFile(ctx, p.ID); err != nil {
+	if err := j.store.DeleteFile(ctx, p.ID); err != nil {
 		return false, fmt.Errorf("record %s: %w", p.ID, err)
 	}
-	j.Audit.Record(ctx, audit.FilePurged, p.ID, audit.Client{})
+	j.audit.Record(ctx, audit.FilePurged, p.ID, audit.Client{})
 	return true, nil
 }
 
@@ -135,12 +136,12 @@ func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
 func (j *Job) deleteOrphans(ctx context.Context) error {
 	var errs []error
 	found, deleted := 0, 0
-	for id, err := range j.Blobs.IDs(ctx) {
+	for id, err := range j.blobs.IDs(ctx) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("list blobs: %w", err))
 			break
 		}
-		exists, err := j.Store.FileExists(ctx, id)
+		exists, err := j.store.FileExists(ctx, id)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("record %s: %w", id, err))
 			break
@@ -152,17 +153,17 @@ func (j *Job) deleteOrphans(ctx context.Context) error {
 		if found > maxOrphanDeletes {
 			continue // counted for the warning below
 		}
-		if err := j.Blobs.Delete(ctx, id); err != nil {
+		if err := j.blobs.Delete(ctx, id); err != nil {
 			errs = append(errs, fmt.Errorf("orphaned blob %s: %w", id, err))
 			continue
 		}
 		deleted++
 	}
 	if found > maxOrphanDeletes {
-		j.Log.Warn("more content without a record than one sweep deletes; check that the database and the storage belong together",
+		j.log.Warn("more content without a record than one sweep deletes; check that the database and the storage belong together",
 			"found", found, "deleted", deleted, "limit", maxOrphanDeletes)
 	} else if deleted > 0 {
-		j.Log.Info("deleted orphaned content", "count", deleted)
+		j.log.Info("deleted orphaned content", "count", deleted)
 	}
 	return errors.Join(errs...)
 }
@@ -179,7 +180,7 @@ func (j *Job) Loop(ctx context.Context, interval time.Duration) {
 		err := j.Run(run)
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			j.Log.Error("cleanup failed", "err", err)
+			j.log.Error("cleanup failed", "err", err)
 		}
 		select {
 		case <-ctx.Done():

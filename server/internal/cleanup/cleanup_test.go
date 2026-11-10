@@ -33,7 +33,7 @@ func (s *stalledBlobs) Sweep(ctx context.Context, _ time.Time) error {
 func TestLoopOutlivesAStalledStore(t *testing.T) {
 	job, disk, _ := newJob(t, slog.New(slog.DiscardHandler))
 	blobs := &stalledBlobs{Store: disk}
-	job.Blobs = blobs
+	job.blobs = blobs
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -56,12 +56,13 @@ func TestRunEndsUnusableSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.DiscardHandler)
-	auditor, err := audit.New(dir, st, logger)
+	t0 := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	idle := func() time.Time { return t0.Add(store.SessionIdle) }
+	auditor, err := audit.New(dir, st, logger, idle)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	t0 := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	id, err := st.CreateUser(ctx, store.User{Username: "alice", Salt: []byte("s"), AuthHash: "h", SealedKey: []byte("k"), CreatedAt: t0}, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestRunEndsUnusableSessions(t *testing.T) {
 	if err := st.CreateSession(ctx, []byte("token"), id, t0, 10); err != nil {
 		t.Fatal(err)
 	}
-	job := &Job{Store: st, Blobs: disk, Audit: auditor, Log: logger, Now: func() time.Time { return t0.Add(store.SessionIdle) }}
+	job := New(st, disk, auditor, logger, idle)
 	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +99,13 @@ func newJob(t *testing.T, logger *slog.Logger) (*Job, *blob.Disk, func(time.Dura
 	if err != nil {
 		t.Fatal(err)
 	}
-	auditor, err := audit.New(dir, st, logger)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	auditor, err := audit.New(dir, st, logger, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	job := &Job{Store: st, Blobs: disk, Audit: auditor, Log: logger, Now: func() time.Time { return now }}
-	return job, disk, func(d time.Duration) { now = now.Add(d) }
+	return New(st, disk, auditor, logger, clock), disk, func(d time.Duration) { now = now.Add(d) }
 }
 
 // putOrphans stores n blobs that have no record.
@@ -210,7 +211,7 @@ func (s *stuckBlobs) Delete(ctx context.Context, id string) error {
 // that would delete the limit per run instead of per interval.
 func TestFailedOrphanSweepWaitsItsIntervalToo(t *testing.T) {
 	job, disk, advance := newJob(t, slog.New(slog.DiscardHandler))
-	job.Blobs = &stuckBlobs{Store: disk}
+	job.blobs = &stuckBlobs{Store: disk}
 	const extra = 150
 	putOrphans(t, disk, maxOrphanDeletes+extra)
 	ctx := context.Background()

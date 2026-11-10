@@ -60,12 +60,11 @@ func newEnvHashing(t *testing.T, hashing argonParams, mutate func(*Options)) *en
 	}
 	e := &env{t: t, store: st, blobs: blobs, now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
 	logger := slog.New(slog.DiscardHandler)
-	auditor, err := audit.New(dir, st, logger)
+	auditor, err := audit.New(dir, st, logger, e.clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auditor.Now = e.clock
-	e.job = &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger, Now: e.clock}
+	e.job = cleanup.New(st, blobs, auditor, logger, e.clock)
 	// Rate limits are exercised by their own test; elsewhere they stay out of the way.
 	unlimited := Limits{General: Budget{1e9, 1e9}, Create: Budget{1e9, 1e9}, Download: Budget{1e9, 1e9}, Storage: Budget{1e12, 1 << 40},
 		Signup: Budget{1e9, 1e9}, Login: Budget{1e9, 1e9}}

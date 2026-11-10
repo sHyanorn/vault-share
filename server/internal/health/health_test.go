@@ -38,7 +38,7 @@ func newChecker(t *testing.T) (*Checker, *countingBlobs, string) {
 		t.Fatal(err)
 	}
 	blobs := &countingBlobs{Store: disk}
-	return &Checker{Store: st, Blobs: blobs, Dir: dir, MinFree: 1, Log: slog.New(slog.DiscardHandler)}, blobs, dir
+	return New(st, blobs, dir, 1, slog.New(slog.DiscardHandler), time.Now), blobs, dir
 }
 
 func TestEachFailureIsReported(t *testing.T) {
@@ -47,10 +47,10 @@ func TestEachFailureIsReported(t *testing.T) {
 		breakIt func(c *Checker, dir string)
 		want    string
 	}{
-		{"database closed", func(c *Checker, _ string) { c.Store.Close() }, "database"},
+		{"database closed", func(c *Checker, _ string) { c.store.Close() }, "database"},
 		{"blob directory removed", func(_ *Checker, dir string) { os.RemoveAll(filepath.Join(dir, "blobs")) }, "blob store"},
-		{"too little space", func(c *Checker, _ string) { c.MinFree = 1 << 62 }, "bytes free"},
-		{"data directory removed", func(c *Checker, _ string) { c.Dir = filepath.Join(c.Dir, "missing") }, "data directory"},
+		{"too little space", func(c *Checker, _ string) { c.minFree = 1 << 62 }, "bytes free"},
+		{"data directory removed", func(c *Checker, _ string) { c.dir = filepath.Join(c.dir, "missing") }, "data directory"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,11 +77,11 @@ func TestResultIsSharedForAWhile(t *testing.T) {
 	if n := blobs.checks.Load(); n != 1 {
 		t.Errorf("20 probes made %d checks, want 1", n)
 	}
-	c.MinFree = 1 << 62
+	c.minFree = 1 << 62
 	if err := c.Check(ctx); err != nil {
 		t.Errorf("a fresh result was not reused: %v", err)
 	}
-	c.checked = time.Now().Add(-maxAge)
+	c.now = func() time.Time { return time.Now().Add(maxAge) }
 	if err := c.Check(ctx); err == nil {
 		t.Error("an aged result hid a failure")
 	}

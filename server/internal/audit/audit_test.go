@@ -20,7 +20,7 @@ func newRecorder(t *testing.T, dir string) (*Recorder, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	r, err := New(dir, st, slog.New(slog.DiscardHandler))
+	r, err := New(dir, st, slog.New(slog.DiscardHandler), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,9 +78,9 @@ func TestPurgeKeepsRecentEntries(t *testing.T) {
 	r, st := newRecorder(t, t.TempDir())
 	ctx := context.Background()
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	r.Now = func() time.Time { return now.Add(-Retention - time.Hour) }
+	r.now = func() time.Time { return now.Add(-Retention - time.Hour) }
 	r.Record(ctx, FileCreated, "old", Client{})
-	r.Now = func() time.Time { return now }
+	r.now = func() time.Time { return now }
 	r.Record(ctx, FileCreated, "new", Client{})
 	if err := r.Purge(ctx); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestFailureEventsShareABudget(t *testing.T) {
 	r.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	ctx := context.Background()
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	r.Now = func() time.Time { return now }
+	r.now = func() time.Time { return now }
 
 	for i := 0; i < failureBurst+40; i++ {
 		r.Record(ctx, DownloadDenied, "file", Client{IP: "203.0.113.1"})

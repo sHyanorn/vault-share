@@ -75,12 +75,12 @@ type Recorder struct {
 	failures *rate.Limiter
 	skipped  atomic.Int64
 	max      int
-	// Now defaults to time.Now; tests move it.
-	Now func() time.Time
+	now      func() time.Time
 }
 
-// New loads the hashing key from dir, creating it on first use.
-func New(dir string, st *store.Store, log *slog.Logger) (*Recorder, error) {
+// New loads the hashing key from dir, creating it on first use. Entries are
+// stamped with now.
+func New(dir string, st *store.Store, log *slog.Logger, now func() time.Time) (*Recorder, error) {
 	key, err := keyfile.Load(dir, keyFile)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func New(dir string, st *store.Store, log *slog.Logger) (*Recorder, error) {
 		log:      log,
 		failures: rate.NewLimiter(failuresPerSecond, failureBurst),
 		max:      MaxEntries,
-		Now:      time.Now,
+		now:      now,
 	}, nil
 }
 
@@ -113,7 +113,7 @@ func (r *Recorder) record(ctx context.Context, entry store.AuditEntry, client Cl
 		return
 	}
 	event := entry.Event
-	now := r.Now()
+	now := r.now()
 	if isFailure(event) && !r.failures.AllowN(now, 1) {
 		r.skipped.Add(1)
 		return
@@ -136,7 +136,7 @@ func (r *Recorder) Purge(ctx context.Context) error {
 	if n := r.skipped.Swap(0); n > 0 {
 		r.log.Warn("audit failure events over budget were not recorded", "count", n)
 	}
-	if err := r.store.PurgeAudit(ctx, r.Now().Add(-Retention)); err != nil {
+	if err := r.store.PurgeAudit(ctx, r.now().Add(-Retention)); err != nil {
 		return err
 	}
 	dropped, err := r.store.TrimAudit(ctx, r.max)

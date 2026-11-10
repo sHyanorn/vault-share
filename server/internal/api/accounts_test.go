@@ -120,13 +120,16 @@ func newHangUpEnv(t *testing.T) (*env, func() context.Context) {
 	var hangUp atomic.Pointer[context.CancelFunc]
 	e := newEnvWith(t, func(o *Options) {
 		o.TrustedProxies = loopbackProxies
-		clock := o.Audit.Now
-		o.Audit.Now = func() time.Time {
+		auditor, err := audit.New(t.TempDir(), o.Store, o.Logger, func() time.Time {
 			if cancel := hangUp.Swap(nil); cancel != nil {
 				(*cancel)()
 			}
-			return clock()
+			return o.Now()
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
+		o.Audit = auditor
 	})
 	return e, func() context.Context {
 		ctx, cancel := context.WithCancel(context.Background())
