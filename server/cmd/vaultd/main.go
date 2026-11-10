@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,7 +75,14 @@ func run() error {
 		return err
 	}
 	job := cleanup.New(st, blobs, auditor, logger, time.Now)
-	go job.Loop(ctx, cleanupInterval)
+	var background sync.WaitGroup
+	background.Go(func() { job.Loop(ctx, cleanupInterval) })
+	// Deferred after the database's Close, so it runs first: a sweep in
+	// progress ends before the database goes away.
+	defer func() {
+		stop()
+		background.Wait()
+	}()
 
 	checker := health.New(st, blobs, cfg.DataDir, health.MinFreeBytes, logger, time.Now)
 	handler, err := api.NewRouter(api.Options{
