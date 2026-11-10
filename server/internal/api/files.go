@@ -126,7 +126,7 @@ func (h *files) create(w http.ResponseWriter, r *http.Request) {
 	created, err := h.store.CreateFile(ctx, f, h.quota)
 	if err != nil {
 		refund()
-		h.internalError(w, "create file", err)
+		internalError(w, h.log, "create file", err)
 		return
 	}
 	if !created {
@@ -184,7 +184,7 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "body size differs from the declared size")
 		return
 	case err != nil:
-		h.internalError(w, "store content", err)
+		internalError(w, h.log, "store content", err)
 		return
 	}
 	// The content is stored; a client hanging up now must not leave the
@@ -192,7 +192,7 @@ func (h *files) upload(w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithoutCancel(ctx)
 	marked, err := h.store.MarkUploaded(ctx, f.ID, h.now())
 	if err != nil {
-		h.internalError(w, "mark uploaded", err)
+		internalError(w, h.log, "mark uploaded", err)
 		return
 	}
 	if !marked {
@@ -285,7 +285,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 	token := randomBytes(tokenBytes)
 	left, granted, err := h.store.GrantDownload(ctx, f.ID, hashToken(token), now, now.Add(downloadTokenTTL))
 	if err != nil {
-		h.internalError(w, "grant download", err)
+		internalError(w, h.log, "grant download", err)
 		return
 	}
 	if !granted {
@@ -322,7 +322,7 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hashToken(token)
 	valid, err := h.store.DownloadTokenValid(ctx, id, tokenHash, now)
 	if err != nil {
-		h.internalError(w, "check download token", err)
+		internalError(w, h.log, "check download token", err)
 		return
 	}
 	if !valid {
@@ -335,13 +335,13 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internalError(w, "open content", err)
+		internalError(w, h.log, "open content", err)
 		return
 	}
 	defer rc.Close()
 	valid, err = h.store.ConsumeDownloadToken(ctx, id, tokenHash, now)
 	if err != nil {
-		h.internalError(w, "consume download token", err)
+		internalError(w, h.log, "consume download token", err)
 		return
 	}
 	if !valid {
@@ -397,11 +397,11 @@ func (h *files) remove(w http.ResponseWriter, r *http.Request) {
 	defer h.store.Release(f.ID)
 	ctx := r.Context()
 	if err := h.blobs.Delete(ctx, f.ID); err != nil {
-		h.internalError(w, "delete content", err)
+		internalError(w, h.log, "delete content", err)
 		return
 	}
 	if err := h.store.DeleteFile(ctx, f.ID); err != nil {
-		h.internalError(w, "delete file", err)
+		internalError(w, h.log, "delete file", err)
 		return
 	}
 	h.audit.Record(ctx, audit.FileDeleted, f.ID, clientFrom(ctx))
@@ -464,12 +464,7 @@ func (h *files) lookupError(w http.ResponseWriter, r *http.Request, what string,
 		notFound(w, r)
 		return
 	}
-	h.internalError(w, what, err)
-}
-
-func (h *files) internalError(w http.ResponseWriter, what string, err error) {
-	h.log.Error(what, "err", err)
-	writeError(w, http.StatusInternalServerError, "internal", "internal error")
+	internalError(w, h.log, what, err)
 }
 
 // extendDeadlines gives a transfer of size bytes time to complete on both

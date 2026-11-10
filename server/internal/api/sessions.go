@@ -144,7 +144,7 @@ func (a *accounts) withSession(next http.HandlerFunc) http.HandlerFunc {
 		ctx := r.Context()
 		u, ok, err := a.store.SessionUser(ctx, hashToken(token), a.now())
 		if err != nil {
-			a.internalError(w, "load session", err)
+			internalError(w, a.log, "load session", err)
 			return
 		}
 		if !ok {

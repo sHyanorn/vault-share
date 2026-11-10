@@ -210,7 +210,7 @@ func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 					"value", fmt.Sprint(rec),
 					"stack", string(debug.Stack()),
 				)
-				writeError(w, http.StatusInternalServerError, "internal", "internal error")
+				writeInternalError(w)
 			}()
 			next.ServeHTTP(w, r)
 		})

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -27,6 +28,18 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	body.Error.Code = code
 	body.Error.Message = message
 	writeJSON(w, status, body)
+}
+
+// internalError logs err, the one place it is logged, and answers without
+// detail.
+func internalError(w http.ResponseWriter, log *slog.Logger, what string, err error) {
+	log.Error(what, "err", err)
+	writeInternalError(w)
+}
+
+// writeInternalError answers for a failure that is already logged.
+func writeInternalError(w http.ResponseWriter) {
+	writeError(w, http.StatusInternalServerError, "internal", "internal error")
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {

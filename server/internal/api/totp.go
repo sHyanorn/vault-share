@@ -204,7 +204,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	ticketHash := hashToken(ticket)
 	userID, valid, err := a.store.TicketAttempt(ctx, ticketHash, now, maxTicketAttempts)
 	if err != nil {
-		a.internalError(w, "take ticket attempt", err)
+		internalError(w, a.log, "take ticket attempt", err)
 		return
 	}
 	var u store.User
@@ -217,7 +217,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		expiredTicket(w)
 		return
 	case err != nil:
-		a.internalError(w, "load account", err)
+		internalError(w, a.log, "load account", err)
 		return
 	}
 	if !a.endPresentedSession(w, r) {
@@ -243,12 +243,12 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		expiredTicket(w)
 		return
 	case err != nil:
-		a.internalError(w, "complete second step", err)
+		internalError(w, a.log, "complete second step", err)
 		return
 	case result == authFailed:
 		// Counted even if the client has hung up, so the owner hears of it (F45).
 		if err := a.store.SecondStepFailed(context.WithoutCancel(ctx), u.ID); err != nil {
-			a.internalError(w, "count failed second step", err)
+			internalError(w, a.log, "count failed second step", err)
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "wrong_code", "the code is wrong")
@@ -292,7 +292,7 @@ func (a *accounts) totpSetupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := randomBytes(totp.SecretBytes)
 	if err := a.store.SetPendingTOTP(ctx, u.ID, a.sealTOTP(u.ID, secret)); err != nil {
-		a.internalError(w, "keep TOTP secret", err)
+		internalError(w, a.log, "keep TOTP secret", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -335,12 +335,12 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		a.internalError(w, "load TOTP secret", err)
+		internalError(w, a.log, "load TOTP secret", err)
 		return
 	}
 	secret, err := a.openTOTP(u.ID, sealed)
 	if err != nil {
-		a.internalError(w, "open TOTP secret", err)
+		internalError(w, a.log, "open TOTP secret", err)
 		return
 	}
 	try, why := a.totpLocks.admit(strconv.FormatInt(u.ID, 10))
@@ -360,7 +360,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 	token := randomBytes(tokenBytes)
 	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, step, hashes, a.renewal(token))
 	if err != nil {
-		a.internalError(w, "enable TOTP", err)
+		internalError(w, a.log, "enable TOTP", err)
 		return
 	}
 	if !enabled {
@@ -398,7 +398,7 @@ func (a *accounts) totpDisableHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token := randomBytes(tokenBytes)
 	if err := a.store.DisableTOTP(ctx, u.ID, a.renewal(token)); err != nil {
-		a.internalError(w, "disable TOTP", err)
+		internalError(w, a.log, "disable TOTP", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.TOTPDisabled, u.ID, clientFrom(ctx))

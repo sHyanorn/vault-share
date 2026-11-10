@@ -109,7 +109,7 @@ func (a *accounts) signupHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "capacity", "no new accounts can be opened now")
 		return
 	case err != nil:
-		a.internalError(w, "create account", err)
+		internalError(w, a.log, "create account", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.AccountCreated, u.ID, clientFrom(ctx))
@@ -141,7 +141,7 @@ func (a *accounts) saltHandler(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		salt = u.Salt
 	case !errors.Is(err, store.ErrNotFound):
-		a.internalError(w, "load account", err)
+		internalError(w, a.log, "load account", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -172,7 +172,7 @@ func (a *accounts) loginHandler(w http.ResponseWriter, r *http.Request) {
 	if u.TOTPSecret != nil {
 		ticket := randomBytes(tokenBytes)
 		if err := a.store.CreateTicket(ctx, hashToken(ticket), u.ID, a.now().Add(ticketTTL)); err != nil {
-			a.internalError(w, "create ticket", err)
+			internalError(w, a.log, "create ticket", err)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -259,7 +259,7 @@ func (a *accounts) refuse(w http.ResponseWriter, result authResult, status int, 
 	case authBusy:
 		busy(w)
 	case authError:
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		writeInternalError(w)
 	default:
 		writeError(w, status, code, message)
 	}
@@ -273,7 +273,7 @@ func (a *accounts) startSession(w http.ResponseWriter, r *http.Request, u store.
 	}
 	token := randomBytes(tokenBytes)
 	if err := a.store.CreateSession(r.Context(), hashToken(token), u.ID, a.now(), maxSessionsPerUser); err != nil {
-		a.internalError(w, "create session", err)
+		internalError(w, a.log, "create session", err)
 		return
 	}
 	a.setSessionCookies(w, u, token)
@@ -289,7 +289,7 @@ func (a *accounts) endPresentedSession(w http.ResponseWriter, r *http.Request) b
 		return true
 	}
 	if err := a.store.DeleteSession(r.Context(), hashToken(old)); err != nil {
-		a.internalError(w, "end session", err)
+		internalError(w, a.log, "end session", err)
 		return false
 	}
 	return true
@@ -336,7 +336,7 @@ func (a *accounts) logoutHandler(w http.ResponseWriter, r *http.Request) {
 			err = a.store.DeleteSession(ctx, hash)
 		}
 		if err != nil {
-			a.internalError(w, "end session", err)
+			internalError(w, a.log, "end session", err)
 			return
 		}
 		if valid {
@@ -384,7 +384,7 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token := randomBytes(tokenBytes)
 	if err := a.store.SetPassword(ctx, u.ID, salt, encoded, sealed, a.renewal(token)); err != nil {
-		a.internalError(w, "set password", err)
+		internalError(w, a.log, "set password", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.PasswordChanged, u.ID, clientFrom(ctx))
@@ -424,7 +424,7 @@ func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.DeleteUser(ctx, u.ID, a.now()); err != nil {
-		a.internalError(w, "delete account", err)
+		internalError(w, a.log, "delete account", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.AccountDeleted, u.ID, clientFrom(ctx))
@@ -441,9 +441,4 @@ func invalidUsername(w http.ResponseWriter) {
 func busy(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "5")
 	writeError(w, http.StatusServiceUnavailable, "busy", "too many sign-ins at once, try again shortly")
-}
-
-func (a *accounts) internalError(w http.ResponseWriter, what string, err error) {
-	a.log.Error(what, "err", err)
-	writeError(w, http.StatusInternalServerError, "internal", "internal error")
 }

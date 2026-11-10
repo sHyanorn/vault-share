@@ -38,7 +38,7 @@ func (h *files) keepFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	kept, err := h.store.KeepFile(ctx, f.ID, sessionFrom(ctx).user.ID, entry, h.now())
 	if err != nil {
-		h.internalError(w, "keep file", err)
+		internalError(w, h.log, "keep file", err)
 		return
 	}
 	if !kept {
@@ -70,7 +70,7 @@ func (h *files) keptFiles(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	kept, err := h.store.KeptFiles(ctx, sessionFrom(ctx).user.ID, h.now(), maxKeptFiles+1)
 	if err != nil {
-		h.internalError(w, "list files", err)
+		internalError(w, h.log, "list files", err)
 		return
 	}
 	resp := keptFilesResponse{Files: []keptFile{}, More: len(kept) > maxKeptFiles}
