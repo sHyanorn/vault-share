@@ -140,17 +140,25 @@ func migrate(ctx context.Context, db *sql.DB, dir fs.FS) error {
 }
 
 func apply(ctx context.Context, db *sql.DB, version int, script string) error {
+	return inTx(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, script); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+			version, time.Now().Unix())
+		return err
+	})
+}
+
+// inTx runs fn in one transaction, committed when fn returns nil and rolled
+// back otherwise.
+func inTx(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if _, err := tx.ExecContext(ctx, script); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
-		version, time.Now().Unix())
-	if err != nil {
+	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -269,28 +277,23 @@ func (s *Store) DeleteIfBurned(ctx context.Context, id string, now time.Time) (b
 // take more downloads than allowed. It returns the remaining count and
 // whether a download was granted.
 func (s *Store) GrantDownload(ctx context.Context, fileID string, tokenHash []byte, now, tokenExpires time.Time) (int64, bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, false, err
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	var left int64
-	err = tx.QueryRowContext(ctx, `
-		UPDATE files SET downloads_left = downloads_left - 1
-		WHERE id = ? AND downloads_left > 0 AND uploaded_at IS NOT NULL AND expires_at > ?
-		RETURNING downloads_left`, fileID, now.Unix()).Scan(&left)
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE files SET downloads_left = downloads_left - 1
+			WHERE id = ? AND downloads_left > 0 AND uploaded_at IS NOT NULL AND expires_at > ?
+			RETURNING downloads_left`, fileID, now.Unix()).Scan(&left); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO download_tokens (token_hash, file_id, expires_at) VALUES (?, ?, ?)`,
+			tokenHash, fileID, tokenExpires.Unix())
+		return err
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	if err != nil {
-		return 0, false, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO download_tokens (token_hash, file_id, expires_at) VALUES (?, ?, ?)`,
-		tokenHash, fileID, tokenExpires.Unix()); err != nil {
-		return 0, false, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, false, err
 	}
 	return left, true, nil

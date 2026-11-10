@@ -29,45 +29,36 @@ func (s *Store) PendingTOTP(ctx context.Context, userID int64) ([]byte, error) {
 // The account's sign-ins restart with r. It reports false when no secret
 // was pending.
 func (s *Store) EnableTOTP(ctx context.Context, userID int64, sealed []byte, step int64, codeHashes [][]byte, r Renewal) (bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	enabled, err := s.changed(tx.ExecContext(ctx, `
-		UPDATE users SET totp_secret = ?, totp_pending = NULL, totp_step = ?
-		WHERE id = ? AND totp_pending IS NOT NULL`, sealed, step, userID))
-	if err != nil || !enabled {
-		return false, err
-	}
-	if err := replaceCodes(ctx, tx, userID, codeHashes); err != nil {
-		return false, err
-	}
-	if err := restartSignIns(ctx, tx, userID, r); err != nil {
-		return false, err
-	}
-	return true, tx.Commit()
+	var enabled bool
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		var err error
+		enabled, err = s.changed(tx.ExecContext(ctx, `
+			UPDATE users SET totp_secret = ?, totp_pending = NULL, totp_step = ?
+			WHERE id = ? AND totp_pending IS NOT NULL`, sealed, step, userID))
+		if err != nil || !enabled {
+			return err
+		}
+		if err := replaceCodes(ctx, tx, userID, codeHashes); err != nil {
+			return err
+		}
+		return restartSignIns(ctx, tx, userID, r)
+	})
+	return enabled && err == nil, err
 }
 
 // DisableTOTP turns two-factor sign-in off and drops the recovery codes.
 // The account's sign-ins restart with r.
 func (s *Store) DisableTOTP(ctx context.Context, userID int64, r Renewal) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET totp_secret = NULL, totp_pending = NULL WHERE id = ?`, userID); err != nil {
-		return err
-	}
-	if err := replaceCodes(ctx, tx, userID, nil); err != nil {
-		return err
-	}
-	if err := restartSignIns(ctx, tx, userID, r); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET totp_secret = NULL, totp_pending = NULL WHERE id = ?`, userID); err != nil {
+			return err
+		}
+		if err := replaceCodes(ctx, tx, userID, nil); err != nil {
+			return err
+		}
+		return restartSignIns(ctx, tx, userID, r)
+	})
 }
 
 func replaceCodes(ctx context.Context, tx *sql.Tx, userID int64, codeHashes [][]byte) error {
@@ -161,42 +152,40 @@ type SecondStep struct {
 // starts that count again. A ticket already gone gives ErrNotFound, a code
 // already used ErrFactorUsed, and then nothing changes.
 func (s *Store) CompleteSecondStep(ctx context.Context, st SecondStep, now time.Time) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	ticket, err := s.changed(tx.ExecContext(ctx,
-		`DELETE FROM login_tickets WHERE token_hash = ? AND user_id = ? AND expires_at > ?`, st.TicketHash, st.UserID, now.Unix()))
-	if err != nil {
-		return 0, err
-	}
-	if !ticket {
-		return 0, ErrNotFound
-	}
-	var spent bool
-	if st.RecoveryHash != nil {
-		spent, err = s.changed(tx.ExecContext(ctx, useRecoveryCode, st.UserID, st.RecoveryHash))
-	} else {
-		spent, err = s.changed(tx.ExecContext(ctx, useTOTPStep, st.Step, st.UserID))
-	}
-	if err != nil {
-		return 0, err
-	}
-	if !spent {
-		return 0, ErrFactorUsed
-	}
 	var failures int
-	if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, st.UserID).Scan(&failures); err != nil {
+	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
+		ticket, err := s.changed(tx.ExecContext(ctx,
+			`DELETE FROM login_tickets WHERE token_hash = ? AND user_id = ? AND expires_at > ?`, st.TicketHash, st.UserID, now.Unix()))
+		if err != nil {
+			return err
+		}
+		if !ticket {
+			return ErrNotFound
+		}
+		var spent bool
+		if st.RecoveryHash != nil {
+			spent, err = s.changed(tx.ExecContext(ctx, useRecoveryCode, st.UserID, st.RecoveryHash))
+		} else {
+			spent, err = s.changed(tx.ExecContext(ctx, useTOTPStep, st.Step, st.UserID))
+		}
+		if err != nil {
+			return err
+		}
+		if !spent {
+			return ErrFactorUsed
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, st.UserID).Scan(&failures); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, st.UserID); err != nil {
+			return err
+		}
+		return insertSession(ctx, tx, st.SessionHash, st.UserID, now, st.KeepSessions)
+	})
+	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_failures = 0 WHERE id = ?`, st.UserID); err != nil {
-		return 0, err
-	}
-	if err := insertSession(ctx, tx, st.SessionHash, st.UserID, now, st.KeepSessions); err != nil {
-		return 0, err
-	}
-	return failures, tx.Commit()
+	return failures, nil
 }
 
 // ExpireTickets drops tickets past their expiry.
