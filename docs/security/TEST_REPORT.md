@@ -424,6 +424,23 @@ A backup and a restore by [OPERATIONS.md](../OPERATIONS.md) were run against a l
 
 **Not covered**: database page damage, which neither the health check nor the startup looks for; a restore across versions.
 
+## 9. Refactoring, 2026-11-10
+
+A code review led to a refactoring of the server and the web client, three fixes in the web client and one in the configuration (F51), and four findings recorded as open, F52 to F55 ([FINDINGS.md](FINDINGS.md)). The table of section 8 is kept as it was; the runs below are on commit `c470447`.
+
+| Run after the refactoring | Result | Where it ran |
+|---|---|---|
+| Go tests with `-race` | 161 test functions, every package passed | CI run 42785859107, with the S3 test service running |
+| Go tests with `-race`, without an S3 service | 159 passed, 212 with subtests; the 2 S3 tests skipped | Locally |
+| Vitest | 108 passed | CI and locally |
+| `scripts/blackbox.py`, Compose stack | 170 passed, none skipped | CI |
+| `scripts/blackbox.py`, vaultd direct | 164 passed; 2 skipped, the TLS and redirect checks | Locally |
+| `scripts/browser_checks.cjs` | 30 passed | CI on the Compose stack, and locally against vaultd |
+| End-to-end tests, disk and S3 | 8 passed on each; the bucket empty afterwards, no orphan deleted | CI |
+| gosec, govulncheck on the source, npm audit | 0 issues | CI |
+
+How the numbers are counted: as in section 8. CI runs `go test` without `-v`, so its log shows the packages, not the count; the count is the number of top-level test functions in the source, and the local run confirms it apart from the two S3 tests.
+
 ## Evidence
 
 | File | Content |
