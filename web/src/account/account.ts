@@ -270,7 +270,8 @@ function load(): Uint8Array<ArrayBuffer> | null {
   }
 }
 
-function forget(): void {
+/** Drops the account key this browser keeps. */
+export function forget(): void {
   try {
     localStorage.removeItem(storageKey)
   } catch {

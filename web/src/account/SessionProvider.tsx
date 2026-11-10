@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { restore, type Account } from './account.ts'
+import { onSessionEnded } from '../http.ts'
+import { describeError } from '../ui/errors.ts'
+import { forget, restore, type Account } from './account.ts'
 import { SessionContext, type AccountState } from './session.ts'
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -17,6 +19,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [])
+
+  // The server ends a session that sat idle. Whichever request finds out,
+  // the browser is signed out, so no page goes on as if it were signed in.
+  const signedIn = state.status === 'signed-in'
+  useEffect(() => {
+    if (!signedIn) return
+    return onSessionEnded((error) => {
+      forget()
+      setState({ status: 'signed-out' })
+      setNotice(describeError(error, 'account'))
+    })
+  }, [signedIn])
 
   return (
     <SessionContext.Provider

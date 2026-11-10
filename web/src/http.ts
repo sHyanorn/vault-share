@@ -14,6 +14,19 @@ export class ApiError extends Error {
   }
 }
 
+let sessionEnded: ((error: ApiError) => void) | null = null
+
+/**
+ * Calls handler when the server says this browser's session is gone,
+ * whichever request finds out. Returns a function that stops the calls.
+ */
+export function onSessionEnded(handler: (error: ApiError) => void): () => void {
+  sessionEnded = handler
+  return () => {
+    if (sessionEnded === handler) sessionEnded = null
+  }
+}
+
 export async function request<T>(
   method: string,
   path: string,
@@ -34,7 +47,11 @@ export async function request<T>(
   } catch {
     throw new ApiError(0, 'network')
   }
-  if (!res.ok) throw new ApiError(res.status, errorCode(await res.text()))
+  if (!res.ok) {
+    const error = new ApiError(res.status, errorCode(await res.text()))
+    if (error.code === 'unauthenticated') sessionEnded?.(error)
+    throw error
+  }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
 }

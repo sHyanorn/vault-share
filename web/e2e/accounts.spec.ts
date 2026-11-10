@@ -106,9 +106,16 @@ test('an account keeps its files and signs in with a second factor', async ({
   expect((await readFile(await download.path())).equals(content)).toBe(true)
   await recipient.close()
 
-  // A recovery code signs in once.
+  // A session the server has ended signs the browser out at the next request.
+  await context.clearCookies()
   await page.getByRole('link', { name: username }).click()
-  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.getByRole('link', { name: 'My files', exact: true }).click()
+  await expect(
+    page.getByText('Your session ended. Sign in again.'),
+  ).toBeVisible()
+  await expect(page.getByRole('link', { name: username })).toBeHidden()
+
+  // A recovery code signs in once.
   await page.getByRole('link', { name: 'Sign in' }).click()
   await page.getByLabel('Username').fill(username)
   await page.getByLabel('Password').fill(password)
