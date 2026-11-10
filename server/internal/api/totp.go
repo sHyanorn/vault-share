@@ -49,41 +49,36 @@ func (a *accounts) matchFactor(u store.User, code string) (factor, bool, error) 
 	return factor{recovery: hash}, ok, nil
 }
 
-// secondFactor checks code for u under the second-step lockout of the
-// account, and spend uses the factor up, reporting false if it already was.
-// An error from spend ends the attempt uncounted and is returned.
-func (a *accounts) secondFactor(ctx context.Context, u store.User, code string, spend func(factor) (bool, error)) (authResult, factor, error) {
-	try, why := a.totpLocks.admit(strconv.FormatInt(u.ID, 10))
+// secondFactor checks a code for the account under its second-step lockout:
+// match reads the code as a factor, and spend uses the factor up, reporting
+// false if it already was. An error from either ends the attempt uncounted
+// and is returned.
+func (a *accounts) secondFactor(ctx context.Context, userID int64, match func() (factor, bool, error), spend func(factor) (bool, error)) (authResult, factor, error) {
+	try, why := a.totpLocks.admit(strconv.FormatInt(userID, 10))
 	if try == nil {
 		return why.result(), factor{}, nil
 	}
 	defer try.end()
-	f, ok, err := a.matchFactor(u, code)
+	f, ok, err := match()
 	if err == nil && ok {
 		ok, err = spend(f)
 	}
 	if err != nil {
 		return authError, f, err
 	}
+	client := clientFrom(ctx)
 	if ok {
 		try.pass(true)
 		if f.recovery != nil {
-			a.audit.RecordAccount(ctx, audit.RecoveryCodeUsed, u.ID, clientFrom(ctx))
+			a.audit.RecordAccount(ctx, audit.RecoveryCodeUsed, userID, client)
 		}
 		return authOK, f, nil
 	}
-	a.wrongCode(ctx, u.ID, try)
-	return authFailed, f, nil
-}
-
-// wrongCode ends try as a failure and records it, and the lockout it
-// starts, if any.
-func (a *accounts) wrongCode(ctx context.Context, userID int64, try *attempt) {
-	client := clientFrom(ctx)
 	a.audit.RecordAccount(ctx, audit.TOTPFailed, userID, client)
 	if try.fail() {
 		a.audit.RecordAccount(ctx, audit.ClientLocked, userID, client)
 	}
+	return authFailed, f, nil
 }
 
 // reauthenticate asks the signed-in owner for the password again, and for
@@ -104,7 +99,8 @@ func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth [
 	if u.TOTPSecret == nil {
 		return u, true
 	}
-	result, _, err := a.secondFactor(ctx, u, code, func(f factor) (bool, error) {
+	match := func() (factor, bool, error) { return a.matchFactor(u, code) }
+	result, _, err := a.secondFactor(ctx, u.ID, match, func(f factor) (bool, error) {
 		if f.recovery != nil {
 			return a.store.UseRecoveryCode(ctx, u.ID, f.recovery)
 		}
@@ -170,7 +166,8 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	// code, so neither is spent without it (F41).
 	token := randomBytes(tokenBytes)
 	var failures int
-	result, f, err := a.secondFactor(ctx, u, req.Code, func(f factor) (bool, error) {
+	match := func() (factor, bool, error) { return a.matchFactor(u, req.Code) }
+	result, f, err := a.secondFactor(ctx, u.ID, match, func(f factor) (bool, error) {
 		var err error
 		failures, err = a.store.CompleteSecondStep(ctx, store.SecondStep{
 			TicketHash: ticketHash, UserID: u.ID, Step: f.step, RecoveryHash: f.recovery,
@@ -286,22 +283,25 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		internalError(w, a.log, "open TOTP secret", err)
 		return
 	}
-	try, why := a.totpLocks.admit(strconv.FormatInt(u.ID, 10))
-	if try == nil {
-		refuse(w, why.result())
-		return
+	// Only a code from the app confirms the pending secret; EnableTOTP
+	// records its step as used.
+	match := func() (factor, bool, error) {
+		step, ok := totp.Match(secret, strings.ReplaceAll(req.Code, " ", ""), a.now())
+		return factor{step: step}, ok, nil
 	}
-	defer try.end()
-	step, ok := totp.Match(secret, strings.ReplaceAll(req.Code, " ", ""), a.now())
-	if !ok {
-		a.wrongCode(ctx, u.ID, try)
+	result, f, _ := a.secondFactor(ctx, u.ID, match, func(factor) (bool, error) { return true, nil })
+	switch result {
+	case authOK:
+	case authFailed:
 		writeError(w, http.StatusForbidden, "wrong_code", "the code is wrong")
 		return
+	default:
+		refuse(w, result)
+		return
 	}
-	try.pass(true)
 	codes, hashes := newRecoveryCodes()
 	token := randomBytes(tokenBytes)
-	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, step, hashes, a.renewal(token))
+	enabled, err := a.store.EnableTOTP(ctx, u.ID, sealed, f.step, hashes, a.renewal(token))
 	if err != nil {
 		internalError(w, a.log, "enable TOTP", err)
 		return
