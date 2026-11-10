@@ -14,12 +14,14 @@ import {
   signOut,
   type Account,
 } from '../account/account.ts'
-import { describeAccountError } from '../account/errors.ts'
 import { useSession } from '../account/session.ts'
 import {
   MIN_ACCOUNT_PASSWORD_LENGTH,
   accountPasswordTooShort,
 } from '../crypto/index.ts'
+import { describeError } from '../ui/errors.ts'
+import { useAction } from '../ui/action.ts'
+import { CodeField, FormError, PasswordField } from '../ui/form.tsx'
 import { Button, Collapse, Hero } from '../ui/controls.tsx'
 import { useCopy } from '../ui/copy.ts'
 import { ChevronIcon, ShieldIcon, UserIcon } from '../ui/icons.tsx'
@@ -162,81 +164,6 @@ function UsernameField({ account }: { account: Account }) {
   )
 }
 
-function PasswordField({
-  name,
-  label,
-  autoComplete,
-  hint,
-}: {
-  name: string
-  label: string
-  autoComplete: string
-  hint?: string
-}) {
-  return (
-    <label className="field">
-      <span id={`${name}-label`}>{label}</span>
-      <input
-        className="text"
-        type="password"
-        name={name}
-        required
-        autoComplete={autoComplete}
-        aria-labelledby={`${name}-label`}
-        aria-describedby={hint ? `${name}-hint` : undefined}
-      />
-      {hint && (
-        <span id={`${name}-hint`} className="hint">
-          {hint}
-        </span>
-      )}
-    </label>
-  )
-}
-
-function CodeField({ label = 'Code' }: { label?: string }) {
-  return (
-    <label className="field">
-      <span id="totp-code-label">{label}</span>
-      <input
-        className="text code"
-        name="code"
-        required
-        autoComplete="one-time-code"
-        autoCapitalize="none"
-        spellCheck={false}
-        aria-labelledby="totp-code-label"
-      />
-    </label>
-  )
-}
-
-/** Runs a form's action and keeps its busy state and error. */
-function useAction() {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  async function run(action: () => Promise<void>) {
-    setBusy(true)
-    setError(null)
-    try {
-      await action()
-    } catch (failure) {
-      setError(describeAccountError(failure))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return { busy, error, run }
-}
-
-function FormError({ error }: { error: string | null }) {
-  return error ? (
-    <p className="error" role="alert">
-      {error}
-    </p>
-  ) : null
-}
-
 function TotpOn({
   account,
   onDone,
@@ -249,7 +176,7 @@ function TotpOn({
   )
   const [loadError, setLoadError] = useState<string | null>(null)
   const { copied, copy } = useCopy()
-  const { busy, error, run } = useAction()
+  const { busy, error, run } = useAction('account')
   const started = useRef(false)
 
   // One setup per opening: each call draws a new secret, and the page
@@ -258,7 +185,7 @@ function TotpOn({
     if (started.current) return
     started.current = true
     setupTotp().then(setSetup, (failure: unknown) =>
-      setLoadError(describeAccountError(failure)),
+      setLoadError(describeError(failure, 'account')),
     )
   }, [])
 
@@ -309,7 +236,7 @@ function TotpOff({
   account: Account
   onDone: (account: Account) => void
 }) {
-  const { busy, error, run } = useAction()
+  const { busy, error, run } = useAction('account')
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
@@ -348,7 +275,7 @@ function PasswordChange({
   onDone: (account: Account) => void
 }) {
   const [next, setNext] = useState('')
-  const { busy, error, run } = useAction()
+  const { busy, error, run } = useAction('account')
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
@@ -371,23 +298,14 @@ function PasswordChange({
         label="Current password"
         autoComplete="current-password"
       />
-      <label className="field">
-        <span id="next-label">New password</span>
-        <input
-          className="text"
-          type="password"
-          name="next"
-          required
-          autoComplete="new-password"
-          aria-labelledby="next-label"
-          aria-describedby="next-hint"
-          value={next}
-          onChange={(event) => setNext(event.target.value)}
-        />
-        <span id="next-hint" className="hint">
-          At least {MIN_ACCOUNT_PASSWORD_LENGTH} characters
-        </span>
-      </label>
+      <PasswordField
+        name="next"
+        label="New password"
+        autoComplete="new-password"
+        hint={<>At least {MIN_ACCOUNT_PASSWORD_LENGTH} characters</>}
+        value={next}
+        onChange={(event) => setNext(event.target.value)}
+      />
       {account.totp && <CodeField />}
       <FormError error={error} />
       <Button type="submit" disabled={busy || accountPasswordTooShort(next)}>
@@ -406,7 +324,7 @@ function DeleteAccount({
   onCancel: () => void
   onDone: () => void
 }) {
-  const { busy, error, run } = useAction()
+  const { busy, error, run } = useAction('account')
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)

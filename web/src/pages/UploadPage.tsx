@@ -9,16 +9,17 @@ import {
 import { keepShare } from '../account/files.ts'
 import { useAccount } from '../account/session.ts'
 import { MIN_PASSWORD_LENGTH, passwordTooShort } from '../crypto/index.ts'
-import { ApiError } from '../http.ts'
 import { formatBytes, formatExpiry } from '../share/format.ts'
 import {
-  deleteShareById,
+  deleteShare,
   uploadFile,
   type ExpiresIn,
   type Progress as ShareProgress,
   type Share,
 } from '../share/share.ts'
 import { Button, Hero, Progress, Segmented, Stepper } from '../ui/controls.tsx'
+import { copyText, useCopy } from '../ui/copy.ts'
+import { describeError } from '../ui/errors.ts'
 import { CheckIcon, FileIcon, LinkOffIcon, UploadIcon } from '../ui/icons.tsx'
 import { Link } from '../ui/RouterProvider.tsx'
 
@@ -63,7 +64,7 @@ export default function UploadPage() {
       )
       setPhase({ kind: 'done', share })
     } catch (error) {
-      setPhase({ kind: 'error', message: describe(error) })
+      setPhase({ kind: 'error', message: describeError(error, 'upload') })
     }
   }
 
@@ -239,7 +240,7 @@ interface ResultProps {
 }
 
 function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const [confirming, setConfirming] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
   const linkRef = useRef<HTMLElement>(null)
@@ -253,17 +254,10 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
     }
   }, [confirming])
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(share.link)
-    } catch {
-      // No clipboard access: leave the link selected for a manual copy.
-      if (linkRef.current)
-        window.getSelection()?.selectAllChildren(linkRef.current)
-      return
-    }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1800)
+  async function copyLink() {
+    // No clipboard access: leave the link selected for a manual copy.
+    if (!(await copy(share.link)) && linkRef.current)
+      window.getSelection()?.selectAllChildren(linkRef.current)
   }
 
   function openConfirm() {
@@ -278,12 +272,10 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
 
   async function remove() {
     try {
-      await deleteShareById(share.id, share.ownerToken)
+      await deleteShare(share.id, share.ownerToken)
       onDeleted()
-    } catch (error) {
-      // Already gone counts as deleted.
-      if (error instanceof ApiError && error.status === 404) onDeleted()
-      else setDeleteError(true)
+    } catch {
+      setDeleteError(true)
     }
   }
 
@@ -298,7 +290,7 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
       <Hero icon={<CheckIcon />} title="Your link is ready" tone="ok" />
       <div className="share-link">
         <code ref={linkRef}>{share.link}</code>
-        <Button variant="quiet" onClick={copy}>
+        <Button variant="quiet" onClick={copyLink}>
           {copied ? 'Copied' : 'Copy'}
         </Button>
       </div>
@@ -364,20 +356,4 @@ function Result({ share, maxDownloads, onDeleted, onReset }: ResultProps) {
       )}
     </section>
   )
-}
-
-function copyText(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-}
-
-function describe(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.code === 'too_large') return 'This file is larger than the limit.'
-    if (error.code === 'capacity')
-      return 'The service is full right now. Try again later.'
-    if (error.code === 'rate_limited')
-      return 'Too many uploads from your network. Try again later.'
-    if (error.code === 'network') return 'The server could not be reached.'
-  }
-  return 'Something went wrong. Nothing was shared.'
 }

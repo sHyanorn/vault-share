@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { Account } from '../account/account.ts'
-import { describeAccountError } from '../account/errors.ts'
 import {
   listKept,
   type KeptFile,
   type UnreadableFile,
 } from '../account/files.ts'
-import { ApiError } from '../http.ts'
 import { formatBytes, formatExpiry, safeFileName } from '../share/format.ts'
-import { deleteShareById } from '../share/share.ts'
+import { deleteShare } from '../share/share.ts'
 import { Button, Hero } from '../ui/controls.tsx'
 import { useCopy } from '../ui/copy.ts'
+import { describeError } from '../ui/errors.ts'
 import { FileIcon, LockIcon, TrashIcon } from '../ui/icons.tsx'
 import { useRouter } from '../ui/router.ts'
 
@@ -32,7 +31,10 @@ export default function FilesPage({ account }: { account: Account }) {
       })
       .catch((error: unknown) => {
         if (!cancelled)
-          setListing({ kind: 'failed', message: describeAccountError(error) })
+          setListing({
+            kind: 'failed',
+            message: describeError(error, 'account'),
+          })
       })
     return () => {
       cancelled = true
@@ -135,13 +137,10 @@ function Row({ file, index, onRemoved }: RowProps) {
     if (file.unreadable) return
     setFailed(false)
     try {
-      await deleteShareById(file.id, file.ownerToken)
-    } catch (error) {
-      // Already gone counts as deleted.
-      if (!(error instanceof ApiError && error.status === 404)) {
-        setFailed(true)
-        return
-      }
+      await deleteShare(file.id, file.ownerToken)
+    } catch {
+      setFailed(true)
+      return
     }
     setLeaving(true)
     setTimeout(onRemoved, 220)

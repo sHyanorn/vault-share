@@ -5,10 +5,11 @@ import {
   type PendingSignIn,
   type SignIn,
 } from '../account/account.ts'
-import { describeAccountError } from '../account/errors.ts'
 import { useSession } from '../account/session.ts'
 import { ApiError } from '../http.ts'
+import { useAction } from '../ui/action.ts'
 import { Button, Hero } from '../ui/controls.tsx'
+import { CodeField, PasswordField } from '../ui/form.tsx'
 import { ShieldIcon, UserIcon } from '../ui/icons.tsx'
 import { useRouter } from '../ui/router.ts'
 
@@ -21,8 +22,7 @@ export default function SignInPage({ then }: { then?: string }) {
   const { navigate } = useRouter()
   const [pending, setPending] = useState<PendingSignIn | null>(null)
   const [recovery, setRecovery] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { busy, error, setError, run } = useAction('account')
 
   function finish(result: SignIn) {
     if (result.kind === 'second-step') {
@@ -44,31 +44,29 @@ export default function SignInPage({ then }: { then?: string }) {
     if (then) navigate(then)
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    setBusy(true)
-    setError(null)
-    try {
-      if (pending) {
-        finish(await completeSignIn(pending, String(form.get('code'))))
-      } else {
-        finish(
-          await signIn(
-            String(form.get('username')),
-            String(form.get('password')),
-          ),
-        )
+    void run(async () => {
+      try {
+        if (pending) {
+          finish(await completeSignIn(pending, String(form.get('code'))))
+        } else {
+          finish(
+            await signIn(
+              String(form.get('username')),
+              String(form.get('password')),
+            ),
+          )
+        }
+      } catch (failure) {
+        if (failure instanceof ApiError && failure.code === 'ticket_expired') {
+          setPending(null)
+          setRecovery(false)
+        }
+        throw failure
       }
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.code === 'ticket_expired') {
-        setPending(null)
-        setRecovery(false)
-      }
-      setError(describeAccountError(failure))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   if (pending)
@@ -76,28 +74,14 @@ export default function SignInPage({ then }: { then?: string }) {
       <section key="second" className="card stack enter">
         <Hero icon={<ShieldIcon />} title="Two-factor sign-in" />
         <form className="stack" onSubmit={submit}>
-          <label className="field">
-            <span id="code-label">{recovery ? 'Recovery code' : 'Code'}</span>
-            <input
-              key={recovery ? 'recovery' : 'code'}
-              className="text code"
-              name="code"
-              required
-              autoFocus
-              autoComplete={recovery ? 'off' : 'one-time-code'}
-              inputMode={recovery ? 'text' : 'numeric'}
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-labelledby="code-label"
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'code-error' : undefined}
-            />
-            {error && (
-              <span id="code-error" className="error" role="alert">
-                {error}
-              </span>
-            )}
-          </label>
+          <CodeField
+            key={recovery ? 'recovery' : 'code'}
+            label={recovery ? 'Recovery code' : 'Code'}
+            error={error}
+            autoFocus
+            autoComplete={recovery ? 'off' : 'one-time-code'}
+            inputMode={recovery ? 'text' : 'numeric'}
+          />
           <Button type="submit" disabled={busy}>
             {busy ? 'Checking…' : 'Sign in'}
           </Button>
@@ -132,24 +116,12 @@ export default function SignInPage({ then }: { then?: string }) {
             aria-labelledby="username-label"
           />
         </label>
-        <label className="field">
-          <span id="password-label">Password</span>
-          <input
-            className="text"
-            type="password"
-            name="password"
-            required
-            autoComplete="current-password"
-            aria-labelledby="password-label"
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? 'sign-in-error' : undefined}
-          />
-          {error && (
-            <span id="sign-in-error" className="error" role="alert">
-              {error}
-            </span>
-          )}
-        </label>
+        <PasswordField
+          name="password"
+          label="Password"
+          autoComplete="current-password"
+          error={error}
+        />
         <Button type="submit" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>

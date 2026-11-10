@@ -15,6 +15,7 @@ import {
   wrapSecret,
   type DerivedKeys,
 } from '../crypto/index.ts'
+import { ApiError } from '../http.ts'
 import * as api from './api.ts'
 import { buildDeleteLink, buildLink } from './link.ts'
 import type { Sink } from './save.ts'
@@ -117,8 +118,21 @@ export async function uploadFile(
   }
 }
 
-export function deleteShareById(id: string, ownerToken: string): Promise<void> {
-  return api.deleteFile(id, ownerToken)
+/**
+ * Deletes the file. One that is already gone counts as deleted, and the
+ * promise then resolves to false.
+ */
+export async function deleteShare(
+  id: string,
+  ownerToken: string,
+): Promise<boolean> {
+  try {
+    await api.deleteFile(id, ownerToken)
+    return true
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return false
+    throw error
+  }
 }
 
 export interface ShareInfo {

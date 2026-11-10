@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { normalizeUsername, signUp, validUsername } from '../account/account.ts'
-import { describeAccountError } from '../account/errors.ts'
 import { useSession } from '../account/session.ts'
 import {
   MIN_ACCOUNT_PASSWORD_LENGTH,
   accountPasswordTooShort,
 } from '../crypto/index.ts'
+import { useAction } from '../ui/action.ts'
 import { Button, Hero } from '../ui/controls.tsx'
+import { FormError, PasswordField } from '../ui/form.tsx'
 import { UserIcon } from '../ui/icons.tsx'
 import { useRouter } from '../ui/router.ts'
 
@@ -15,8 +16,7 @@ export default function SignUpPage() {
   const { navigate } = useRouter()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { busy, error, run } = useAction('account')
   const name = normalizeUsername(username)
   const nameOk = validUsername(name)
   // Only a name that cannot become valid by typing on is flagged.
@@ -24,19 +24,13 @@ export default function SignUpPage() {
     username !== '' && !nameOk && (name.length > 2 || !/^[a-z0-9]/.test(name))
   const passwordOk = !accountPasswordTooShort(password)
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!nameOk || !passwordOk) return
-    setBusy(true)
-    setError(null)
-    try {
+    void run(async () => {
       setAccount(await signUp(username, password))
       navigate('/')
-    } catch (failure) {
-      setError(describeAccountError(failure))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   return (
@@ -66,28 +60,15 @@ export default function SignUpPage() {
             </span>
           )}
         </label>
-        <label className="field">
-          <span id="new-password-label">Password</span>
-          <input
-            className="text"
-            type="password"
-            name="password"
-            required
-            autoComplete="new-password"
-            aria-labelledby="new-password-label"
-            aria-describedby="new-password-hint"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <span id="new-password-hint" className="hint">
-            At least {MIN_ACCOUNT_PASSWORD_LENGTH} characters
-          </span>
-        </label>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
+        <PasswordField
+          name="password"
+          label="Password"
+          autoComplete="new-password"
+          hint={<>At least {MIN_ACCOUNT_PASSWORD_LENGTH} characters</>}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <FormError error={error} />
         <Button type="submit" disabled={busy || !nameOk || !passwordOk}>
           {busy ? 'Creating account…' : 'Create account'}
         </Button>

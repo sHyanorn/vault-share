@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { ApiError } from '../http.ts'
 import { parseDeleteLocation } from '../share/link.ts'
-import { deleteShareById } from '../share/share.ts'
+import { deleteShare } from '../share/share.ts'
 import { Button, Hero } from '../ui/controls.tsx'
+import { describeError } from '../ui/errors.ts'
 import { CheckIcon, LinkOffIcon, FileIcon } from '../ui/icons.tsx'
 
 type Phase = 'confirm' | 'working' | 'deleted' | 'gone' | 'invalid' | 'failed'
@@ -12,17 +12,17 @@ export default function DeletePage() {
     parseDeleteLocation(window.location.pathname, window.location.hash),
   )
   const [phase, setPhase] = useState<Phase>(location ? 'confirm' : 'invalid')
+  const [failure, setFailure] = useState('')
 
   async function remove() {
     if (!location) return
     setPhase('working')
     try {
-      await deleteShareById(location.id, location.ownerToken)
-      setPhase('deleted')
+      const deleted = await deleteShare(location.id, location.ownerToken)
+      setPhase(deleted ? 'deleted' : 'gone')
     } catch (error) {
-      setPhase(
-        error instanceof ApiError && error.status === 404 ? 'gone' : 'failed',
-      )
+      setFailure(describeError(error, 'delete'))
+      setPhase('failed')
     }
   }
 
@@ -66,7 +66,7 @@ export default function DeletePage() {
           <Hero
             icon={<LinkOffIcon />}
             title="Could not delete"
-            text="The server could not be reached."
+            text={failure}
             tone="muted"
           />
           <Button onClick={remove}>Try again</Button>

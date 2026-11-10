@@ -11,6 +11,7 @@ import {
   type ShareInfo,
 } from '../share/share.ts'
 import { Button, Hero, Progress } from '../ui/controls.tsx'
+import { describeError } from '../ui/errors.ts'
 import { CheckIcon, DownloadIcon, FileIcon, LinkOffIcon } from '../ui/icons.tsx'
 
 type Phase =
@@ -122,7 +123,11 @@ export default function DownloadPage() {
       ) {
         setPhase({ kind: 'unavailable' })
       } else {
-        setPhase({ kind: 'failed', info, message: describe(error) })
+        setPhase({
+          kind: 'failed',
+          info,
+          message: describeError(error, 'download'),
+        })
       }
     } finally {
       busy.current = false
@@ -274,11 +279,4 @@ function openFailure(error: unknown): Phase {
   if (error instanceof ApiError)
     return error.status === 404 ? { kind: 'unavailable' } : { kind: 'offline' }
   return { kind: 'invalid' }
-}
-
-function describe(error: unknown): string {
-  if (error instanceof ApiError) return 'The server could not be reached.'
-  if (error instanceof TypeError)
-    return 'The connection was interrupted. The download was discarded.'
-  return 'The file could not be decrypted. The download was discarded.'
 }
