@@ -217,7 +217,7 @@ The scope is whether the design bounds abuse: download counts, expiry, burn afte
 
 | WSTG | Test | Result | Evidence |
 |---|---|---|---|
-| BUSL-05 | Concurrent downloads against the count; concurrent uploads | `TestGrantDownloadIsAtomic` and `TestOneUploadAtATimePerFile` pass with `-race` | [`go-test.txt`](evidence/go-test.txt) |
+| BUSL-05 | Concurrent downloads against the count; concurrent uploads | `TestConcurrentDownloadsRespectTheLimit` and `TestOneUploadAtATimePerFile` pass with `-race` | [`go-test.txt`](evidence/go-test.txt) |
 | BUSL-07 | Creates that name a new forged client address in four forwarding headers each time | 429 with `Retry-After` once the client's bucket is empty. Five more forged creates also get 429 | `rate-limit` |
 | BUSL-07 | Storage quota and per-client budget | `TestQuotaIsAtomic`, `TestStorageQuota`, `TestStorageBudgetPerClient` and `TestStorageRefundWithARealClock` pass | [`go-test.txt`](evidence/go-test.txt) |
 | BUSL-07 | Cross-site requests against a small request budget | Refused before the limiter, so the client's own requests still pass (`TestCrossSiteRequestsSpendNoBudget`) | [`go-test.txt`](evidence/go-test.txt) |
@@ -404,7 +404,7 @@ A production readiness review found F47 to F50: what happens when the database, 
 
 | Run after the hardening | Result |
 |---|---|
-| Go tests with `-race`, S3 tests included | 160 passed, none skipped |
+| Go tests with `-race`, S3 tests included | 161 passed, none skipped |
 | Vitest | 107 passed |
 | `scripts/blackbox.py` | 170 passed |
 | `scripts/browser_checks.cjs` | 30 passed |

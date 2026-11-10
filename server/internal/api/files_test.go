@@ -586,6 +586,38 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestConcurrentDownloadsRespectTheLimit(t *testing.T) {
+	e := newEnv(t)
+	sh := e.shared(100, 3, 3600)
+
+	const attempts = 40
+	var wg sync.WaitGroup
+	results := make(chan int, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, status := e.token(sh)
+			results <- status
+		}()
+	}
+	wg.Wait()
+	close(results)
+	granted := 0
+	for status := range results {
+		switch status {
+		case http.StatusOK:
+			granted++
+		case http.StatusNotFound:
+		default:
+			t.Errorf("unexpected status %d", status)
+		}
+	}
+	if granted != 3 {
+		t.Errorf("%d downloads granted, want 3", granted)
+	}
+}
+
 func TestInvalidIDs(t *testing.T) {
 	e := newEnv(t)
 	for _, id := range []string{"not-an-id", "AAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAA"} {
