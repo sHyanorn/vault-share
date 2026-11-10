@@ -1,6 +1,6 @@
 # Security Findings
 
-Issues found during development, how they were found and how they were fixed. Severity follows the impact on the threat model.
+Issues found during development, how they were found and how they were fixed. Those not fixed are marked Accepted or Open. Severity follows the impact on the threat model.
 
 | ID | Date | Severity | Found by | Summary | Status |
 |---|---|---|---|---|---|
@@ -55,6 +55,10 @@ Issues found during development, how they were found and how they were fixed. Se
 | F49 | 2026-11-10 | Medium | Production readiness review | A missing `account.key` was replaced without notice, breaking two-factor sign-in for existing accounts | Fixed |
 | F50 | 2026-11-10 | Info | Production readiness review | The health check answered ok with the database, the storage or the disk unusable | Fixed |
 | F51 | 2026-11-10 | Low | Code review | A base URL without a host name turned the Host check off | Fixed |
+| F52 | 2026-11-10 | Low | Code review | Valid downloads arriving together from one address can be told the file is gone | Open |
+| F53 | 2026-11-10 | Info | Code review | An opened password field left empty shares without a password under a hint that asks for one | Open |
+| F54 | 2026-11-10 | Info | Code review | A late answer from an ended session can sign a new session out in the browser | Open |
+| F55 | 2026-11-10 | Info | Code review | A session that ends during an upload leaves the file shared but out of My files | Open |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -264,3 +268,19 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F51 A base URL without a host name turned the Host check off (Low)
 - Impact: `VAULT_BASE_URL` set to a port alone, as in `http://:8080`, passed validation with an empty host name, and the API then answered for any `Host` (D022): the check against a page that rebinds its own name to the server's address was off, with nothing in the log. It takes that operator mistake, and Caddy in front still routes by name, hence Low.
 - Fix: the configuration refuses a base URL without a host name, and the router no longer treats an empty host as "any": it fails to start without one. A configuration test covers the two forms; it failed before the fix.
+
+## F52 Valid downloads refused as not found while others are in flight (Low)
+- Impact: a download request is admitted against the lockout of its client address and file before its signature is checked, and one refused only because others are in flight is answered 404 like a locked one (F39, F42). With no earlier failures that takes six valid requests for one file from one address within the moment a signature check lasts, as recipients behind one NAT opening a link together could send; after wrong signatures from that address in the last 15 minutes it takes fewer. The recipient sees "This file is no longer available" for a file that is still there. No download is taken from the count, and a reload works, but nothing on the page says so.
+- Status: open. The 404 is deliberate, so a refusal says nothing about the file; the page cannot tell it from a file that is gone.
+
+## F53 An empty password field under a hint that asks for a password (Info)
+- Impact: on the upload page an opened password field left empty now shares the file without a password; before, it disabled the button with no way back. The hint under the field still reads "At least N characters", and nothing says that empty means none. A user who opens the field and creates the link without typing gets an unprotected link; the only sign is that the result does not say "Password".
+- Status: open. The wording or a way to close the field is a design decision.
+
+## F54 A late 401 that signs out a new session (Info)
+- Impact: the browser signs out when any request is answered 401 `unauthenticated`, through one handler for the page. A request sent under a session that has ended, answered only after the user has signed in again, signs that new session out in the browser: the stored account key is dropped and the sign-in page shows, while the server's session stays valid. It takes a request slower than a sign-in; the user signs in once more and nothing is exposed.
+- Status: open.
+
+## F55 A session that ends during an upload (Info)
+- Impact: a file shared while signed in is added to My files before its content is sent. When the session has ended by then, that request is answered 401: the browser signs out while the upload goes on, and the result shows the link with "Could not save it to My files." The file is shared and can be deleted with its delete link, but the account's list never shows it.
+- Status: open.
