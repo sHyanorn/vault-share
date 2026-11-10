@@ -54,6 +54,7 @@ Issues found during development, how they were found and how they were fixed. Se
 | F48 | 2026-11-10 | Medium | Production readiness review | A download granted while an earlier one was redeemed could get a 500 and lose the file | Fixed |
 | F49 | 2026-11-10 | Medium | Production readiness review | A missing `account.key` was replaced without notice, breaking two-factor sign-in for existing accounts | Fixed |
 | F50 | 2026-11-10 | Info | Production readiness review | The health check answered ok with the database, the storage or the disk unusable | Fixed |
+| F51 | 2026-11-10 | Low | Code review | A base URL without a host name turned the Host check off | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -259,3 +260,7 @@ Issues found during development, how they were found and how they were fixed. Se
 - Impact: `/healthz` answered 200 `ok` without looking at anything. With the blob directory deleted, with 680 KB left on the data volume and uploads failing with 500, and with the data directory gone, a monitor still saw a healthy instance; the operator learned of it from users. No data is exposed, hence Info.
 - Fix: the probe queries the database, writes and removes a file where uploads go (on S3 it asks for the bucket) and requires 128 MiB free on the data directory's filesystem; any failure answers 503 `unavailable` (D033). The reason goes to the log only, and a result is shared for 5 seconds, since the probe is public and not rate limited. Tests break each part in turn; the three cases above now answer 503.
 - Remaining: the probe reads one row, so it does not find damaged database pages it never touches; an overwritten database header under a running vaultd still answered 200.
+
+## F51 A base URL without a host name turned the Host check off (Low)
+- Impact: `VAULT_BASE_URL` set to a port alone, as in `http://:8080`, passed validation with an empty host name, and the API then answered for any `Host` (D022): the check against a page that rebinds its own name to the server's address was off, with nothing in the log. It takes that operator mistake, and Caddy in front still routes by name, hence Low.
+- Fix: the configuration refuses a base URL without a host name, and the router no longer treats an empty host as "any": it fails to start without one. A configuration test covers the two forms; it failed before the fix.

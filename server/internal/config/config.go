@@ -213,10 +213,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 }
 
 // bareHTTPURL reports whether u, parsed from raw, is an http(s) URL with a
-// host and no credentials, query or fragment. raw is searched for ? and # so
-// that an empty query or fragment, as in "https://h?", is refused too.
+// host name and no credentials, query or fragment. A port alone, as in
+// "http://:8080", names no host for the API to answer for. raw is searched
+// for ? and # so that an empty query or fragment, as in "https://h?", is
+// refused too.
 func bareHTTPURL(u *url.URL, raw string) bool {
-	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil &&
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil &&
 		!strings.ContainsAny(raw, "?#")
 }
 
