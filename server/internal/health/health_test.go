@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/sHyanorn/vault-share/server/internal/blob"
-	"github.com/sHyanorn/vault-share/server/internal/store"
+	"github.com/sHyanorn/vault-share/server/internal/testenv"
 )
 
 // countingBlobs counts the checks that reach the store.
@@ -27,16 +27,7 @@ func (c *countingBlobs) Check(ctx context.Context) error {
 
 func newChecker(t *testing.T) (*Checker, *countingBlobs, string) {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	disk, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir, st, disk := testenv.Open(t)
 	blobs := &countingBlobs{Store: disk}
 	return New(st, blobs, dir, 1, slog.New(slog.DiscardHandler), time.Now), blobs, dir
 }

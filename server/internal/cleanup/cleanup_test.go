@@ -15,6 +15,7 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/audit"
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/store"
+	"github.com/sHyanorn/vault-share/server/internal/testenv"
 )
 
 // stalledBlobs never finishes a sweep, as a storage service that stopped
@@ -44,17 +45,7 @@ func TestLoopOutlivesAStalledStore(t *testing.T) {
 }
 
 func TestRunEndsUnusableSessions(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "vault.db")
-	st, err := store.Open(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	disk, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir, st, disk := testenv.Open(t)
 	logger := slog.New(slog.DiscardHandler)
 	t0 := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	idle := func() time.Time { return t0.Add(store.SessionIdle) }
@@ -74,7 +65,7 @@ func TestRunEndsUnusableSessions(t *testing.T) {
 	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "vault.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,16 +80,7 @@ func TestRunEndsUnusableSessions(t *testing.T) {
 // returned function moves.
 func newJob(t *testing.T, logger *slog.Logger) (*Job, *blob.Disk, func(time.Duration)) {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	disk, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir, st, disk := testenv.Open(t)
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	auditor, err := audit.New(dir, st, logger, clock)

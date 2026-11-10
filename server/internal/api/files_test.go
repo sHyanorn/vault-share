@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +21,7 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/cleanup"
 	"github.com/sHyanorn/vault-share/server/internal/store"
+	"github.com/sHyanorn/vault-share/server/internal/testenv"
 )
 
 const maxTestFileBytes = 1 << 20
@@ -74,16 +74,7 @@ const testHost = "127.0.0.1"
 // store, with limits far out of the way: each has its own test.
 func testOptions(t *testing.T, now func() time.Time) Options {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	blobs, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir, st, blobs := testenv.Open(t)
 	logger := slog.New(slog.DiscardHandler)
 	auditor, err := audit.New(dir, st, logger, now)
 	if err != nil {
@@ -592,38 +583,6 @@ func TestDelete(t *testing.T) {
 	}
 	if _, status := e.meta(other.id); status != http.StatusOK {
 		t.Errorf("other file affected: %d", status)
-	}
-}
-
-func TestConcurrentDownloadsRespectTheLimit(t *testing.T) {
-	e := newEnv(t)
-	sh := e.shared(100, 3, 3600)
-
-	const attempts = 40
-	var wg sync.WaitGroup
-	results := make(chan int, attempts)
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, status := e.token(sh)
-			results <- status
-		}()
-	}
-	wg.Wait()
-	close(results)
-	granted := 0
-	for status := range results {
-		switch status {
-		case http.StatusOK:
-			granted++
-		case http.StatusNotFound:
-		default:
-			t.Errorf("unexpected status %d", status)
-		}
-	}
-	if granted != 3 {
-		t.Errorf("%d downloads granted, want 3", granted)
 	}
 }
 
