@@ -1,6 +1,8 @@
-// Package store persists file records in SQLite. The server never holds a
-// decryption key: a record carries encrypted metadata, the HMAC key that
-// verifies download challenges, and hashes of the tokens it issues.
+// Package store persists files, accounts, sessions, second-factor state and
+// the audit log in SQLite, and tracks in memory which files have an upload or
+// a deletion in flight (Claim, Release). The server never holds a decryption
+// key: a file record carries encrypted metadata, the HMAC key that verifies
+// download challenges, and hashes of the tokens it issues.
 package store
 
 import (

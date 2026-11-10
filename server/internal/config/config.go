@@ -20,8 +20,8 @@ const prefix = "VAULT_"
 type Config struct {
 	// ListenAddr is the host:port the HTTP server binds to (VAULT_LISTEN_ADDR).
 	ListenAddr string
-	// BaseURL is the public origin used to build share links, without a
-	// trailing slash (VAULT_BASE_URL).
+	// BaseURL is the public origin the service is opened at, without a
+	// trailing slash (VAULT_BASE_URL). The server uses only its host name.
 	BaseURL string
 	// Host is the host name of BaseURL, the only name the API answers for.
 	Host string

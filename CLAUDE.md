@@ -38,7 +38,7 @@ docker compose up --build
 
 - Do not invent cryptographic algorithms. Use only the Web Crypto API (AES-256-GCM, HKDF) and mature libraries (Argon2id)
 - The encryption key may appear only in the URL fragment (after `#`); it must never be sent to the server in any request and never written to logs
-- Every AES-GCM encrypted chunk uses a unique random nonce; nonces must never be reused
+- Every AES-GCM encrypted chunk uses a unique nonce: a per-file nonce base, derived from a random salt, XOR the chunk index. Nonces must never be reused under a key
 - Server-side password hashing uses Argon2id, and comparisons use constant-time functions
 - Validate the length and format of all input; all SQL uses parameterized queries
 - Logs must never contain keys, tokens, passwords or file contents

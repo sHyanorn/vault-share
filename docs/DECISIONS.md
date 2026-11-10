@@ -33,7 +33,7 @@
 ## D007 Configuration through the standard library
 - Date: 2026-11-05
 - Decision: `internal/config` reads `VAULT_*` variables with `os.LookupEnv`; no configuration library
-- Rationale: fewer than ten settings; every invalid value is reported at startup; no extra dependency to justify
+- Rationale: seventeen flat settings, six of them for S3; every invalid value is reported at startup; no extra dependency to justify
 
 ## D008 Supported Go toolchain
 - Date: 2026-11-05

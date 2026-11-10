@@ -114,12 +114,15 @@ files
   auth_key         BLOB              -- HMAC key that verifies download signatures
   owner_token_hash BLOB              -- SHA-256 of the delete token
   downloads_left   INTEGER
-  expires_at       TIMESTAMP
-  created_at       TIMESTAMP
-  uploaded_at      TIMESTAMP NULL    -- set once the ciphertext is stored
+  expires_at       INTEGER           -- Unix seconds, like every time column
+  created_at       INTEGER
+  uploaded_at      INTEGER NULL      -- set once the ciphertext is stored
   charge           INTEGER           -- bytes counted against the storage quota
   user_id          INTEGER NULL      -- the account that keeps the file (D030)
   entry            BLOB NULL         -- sealed by the browser under the account key
+
+usage                                -- one row, kept by triggers on files
+  id, charged                        -- the sum of files.charge, checked against the quota
 
 download_tokens
   token_hash, file_id, expires_at

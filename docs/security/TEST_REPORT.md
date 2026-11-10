@@ -217,7 +217,7 @@ The scope is whether the design bounds abuse: download counts, expiry, burn afte
 
 | WSTG | Test | Result | Evidence |
 |---|---|---|---|
-| BUSL-05 | Concurrent downloads against the count; concurrent uploads | `TestConcurrentDownloadsRespectTheLimit` and `TestConcurrentUploadsStoreOneCopy` pass with `-race` | [`go-test.txt`](evidence/go-test.txt) |
+| BUSL-05 | Concurrent downloads against the count; concurrent uploads | `TestConcurrentDownloadsRespectTheLimit` and `TestOneUploadAtATimePerFile` pass with `-race` | [`go-test.txt`](evidence/go-test.txt) |
 | BUSL-07 | Creates that name a new forged client address in four forwarding headers each time | 429 with `Retry-After` once the client's bucket is empty. Five more forged creates also get 429 | `rate-limit` |
 | BUSL-07 | Storage quota and per-client budget | `TestQuotaIsAtomic`, `TestStorageQuota`, `TestStorageBudgetPerClient` and `TestStorageRefundWithARealClock` pass | [`go-test.txt`](evidence/go-test.txt) |
 | BUSL-07 | Cross-site requests against a small request budget | Refused before the limiter, so the client's own requests still pass (`TestCrossSiteRequestsSpendNoBudget`) | [`go-test.txt`](evidence/go-test.txt) |
@@ -313,7 +313,7 @@ The scope is behaviour under bad input, storage failures, races, timeouts and pa
 |---|---|---|---|
 | ERRH-01, ERRH-02 | Error responses in the `errors`, `traversal` and `input` checks, matched against a pattern for stack traces, SQL errors and file contents | No match. API errors are generic JSON; errors from Go's HTTP server and file server are plain status text | `errors`, `traversal`, `input` |
 | INPV-15 | Conflicting `Content-Length` values, an obfuscated `Transfer-Encoding` and an unsupported one, sent to an endpoint whose handler answers 405 | Refused with 400 or 501 before any handler runs, while a well-framed request reaches the handler | `framing`, [`probes.txt`](evidence/probes.txt) |
-| | Failure paths: `TestStorageFailureIsNotTheClientsFault`, `TestGrantedDownloadSurvivesCleanup`, `TestDeleteDuringUploadLeavesNothing`, `TestSlowUploadStillGetsItsResponse` and `TestStorageRefundWithARealClock` | Pass | [`go-test.txt`](evidence/go-test.txt) |
+| | Failure paths: `TestStorageFailureIsNotTheClientsFault`, `TestGrantedDownloadSurvivesCleanup`, `TestNoDeleteDuringUpload`, `TestSlowUploadStillGetsItsResponse` and `TestStorageRefundWithARealClock` | Pass | [`go-test.txt`](evidence/go-test.txt) |
 | | A download whose ciphertext fails to decrypt | No partial file is handed over (`share.test.ts`) | [`web-test.txt`](evidence/web-test.txt) |
 
 On the INPV-15 row: when a request carries both `Content-Length` and chunked encoding, Go uses the chunked framing. A request hidden after the body is then answered on the sender's own connection. Caddy frames every request it forwards anew, so Caddy and vaultd cannot disagree about where a request ends.
@@ -404,7 +404,7 @@ A production readiness review found F47 to F50: what happens when the database, 
 
 | Run after the hardening | Result |
 |---|---|
-| Go tests with `-race`, S3 tests included | 161 passed, none skipped |
+| Go tests with `-race`, S3 tests included | 160 passed, none skipped |
 | Vitest | 107 passed |
 | `scripts/blackbox.py` | 170 passed |
 | `scripts/browser_checks.cjs` | 30 passed |
