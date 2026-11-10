@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from 'react'
+import { Suspense, use, useState, type FormEvent, type ReactNode } from 'react'
 import {
   changePassword,
   deleteAccount,
@@ -35,9 +29,22 @@ export default function AccountPage({ account }: { account: Account }) {
   const { navigate } = useRouter()
   const [panel, setPanel] = useState<Panel>(null)
   const [codes, setCodes] = useState<string[] | null>(null)
+  const [totpSetup, setTotpSetup] = useState<Promise<TotpSetup> | null>(null)
 
   function toggle(next: Panel) {
     setPanel(panel === next ? null : next)
+  }
+
+  function toggleTotp() {
+    // One setup per opening: each call draws a new secret, and the panel
+    // must show the one the server keeps.
+    if (panel !== 'totp' && !account.totp)
+      setTotpSetup(
+        setupTotp().catch((failure: unknown) => ({
+          error: describeError(failure, 'account'),
+        })),
+      )
+    toggle('totp')
   }
 
   async function leave() {
@@ -57,7 +64,7 @@ export default function AccountPage({ account }: { account: Account }) {
           title="Two-factor sign-in"
           value={account.totp ? 'On' : 'Off'}
           open={panel === 'totp'}
-          onToggle={() => toggle('totp')}
+          onToggle={toggleTotp}
         >
           {account.totp ? (
             <TotpOff
@@ -69,14 +76,20 @@ export default function AccountPage({ account }: { account: Account }) {
               }}
             />
           ) : (
-            <TotpOn
-              account={account}
-              onDone={(next, recoveryCodes) => {
-                setAccount(next)
-                setPanel(null)
-                setCodes(recoveryCodes)
-              }}
-            />
+            totpSetup && (
+              <Suspense>
+                <TotpOn
+                  account={account}
+                  setup={totpSetup}
+                  onDone={(next, recoveryCodes) => {
+                    setAccount(next)
+                    setPanel(null)
+                    setTotpSetup(null)
+                    setCodes(recoveryCodes)
+                  }}
+                />
+              </Suspense>
+            )
           )}
         </Setting>
         <Setting
@@ -164,30 +177,21 @@ function UsernameField({ account }: { account: Account }) {
   )
 }
 
+/** The secret a setup drew, or why there is none. */
+type TotpSetup = { secret: string; uri: string } | { error: string }
+
 function TotpOn({
   account,
+  setup: pending,
   onDone,
 }: {
   account: Account
+  setup: Promise<TotpSetup>
   onDone: (account: Account, codes: string[]) => void
 }) {
-  const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(
-    null,
-  )
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const setup = use(pending)
   const { copied, copy } = useCopy()
   const { busy, error, run } = useAction('account')
-  const started = useRef(false)
-
-  // One setup per opening: each call draws a new secret, and the page
-  // must show the one the server keeps.
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    setupTotp().then(setSetup, (failure: unknown) =>
-      setLoadError(describeError(failure, 'account')),
-    )
-  }, [])
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -202,7 +206,7 @@ function TotpOn({
     })
   }
 
-  if (!setup) return <FormError error={loadError} />
+  if ('error' in setup) return <FormError error={setup.error} />
   return (
     <form className="stack" onSubmit={submit}>
       <div className="totp-setup">
