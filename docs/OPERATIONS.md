@@ -23,6 +23,7 @@ The simplest backup that is certain to be consistent.
 
 ```bash
 # stop vaultd, then:
+umask 077    # the archive holds the keys
 tar -czf vault-backup.tar.gz -C "$DATA" .
 # start vaultd
 ```
@@ -32,7 +33,7 @@ Under Compose, where the vaultd image has no shell:
 ```bash
 docker compose stop vaultd
 docker run --rm --volumes-from "$(docker compose ps -aq vaultd)" -v "$PWD:/backup" \
-  busybox tar -czf /backup/vault-backup.tar.gz -C /data .
+  busybox:1.36 sh -c 'umask 077 && tar -czf /backup/vault-backup.tar.gz -C /data .'
 docker compose start vaultd
 ```
 
@@ -68,7 +69,7 @@ Under Compose:
 ```bash
 docker compose stop vaultd    # on a new host: docker compose create vaultd
 docker run --rm --volumes-from "$(docker compose ps -aq vaultd)" -v "$PWD:/backup:ro" \
-  busybox sh -c 'find /data -mindepth 1 -delete && tar -xzf /backup/vault-backup.tar.gz -C /data'
+  busybox:1.36 sh -c 'find /data -mindepth 1 -delete && tar -xzf /backup/vault-backup.tar.gz -C /data'
 docker compose start vaultd
 ```
 
@@ -77,7 +78,7 @@ The files must stay readable only by the user vaultd runs as (uid 65532 in the i
 A restore takes the instance back to the moment of the backup:
 
 - A file that was burned or deleted since, and has not expired, is served again if its content is still in the storage. Download counts go back to their old values. If this matters, restore the content from the same backup as the database instead of keeping the newer storage.
-- A file uploaded since the backup has no record. Its content is deleted as leftover from an hour after the start, at most 100 objects an hour, and each run that finds more logs a warning.
+- A file uploaded since the backup has no record. Its content is deleted as leftover from an hour after the start, at most 100 objects an hour, and each sweep that finds more logs a warning.
 - A record whose content is missing fails on download and goes when it expires.
 - Sessions and accounts are those of the backup.
 
@@ -85,19 +86,27 @@ A restore takes the instance back to the moment of the backup:
 
 vaultd checks two things before it serves anything and exits with a message when one fails. Neither has an override setting.
 
-**`vault.db does not exist, but the storage already holds content`.** A new database would have no record of the stored files, and cleanup would delete them. Either the database was lost or left out of a restore: restore it. Or the storage belongs to another instance, or the old content is not wanted: point vaultd at the right place, or empty `blobs/` or the bucket and start over.
+**`vault.db is missing or empty, but the storage already holds content`.** A new database would have no record of the stored files, and cleanup would delete them. Either the database was lost or left out of a restore: restore it. Or the storage belongs to another instance, or the old content is not wanted: point vaultd at the right place, or empty `blobs/` or the bucket and start over.
 
 **`account.key does not exist, but the database already holds accounts`.** The key was lost or left out of a restore: restore it from the same backup as the database. If it is gone for good, create a new one on purpose:
 
 ```bash
-head -c 32 /dev/urandom > "$DATA/account.key"
-chmod 600 "$DATA/account.key"    # owned by the user vaultd runs as
+# as the user vaultd runs as
+(umask 077 && head -c 32 /dev/urandom > "$DATA/account.key")
+```
+
+Under Compose, where that user is uid 65532:
+
+```bash
+docker run --rm --volumes-from "$(docker compose ps -aq vaultd)" busybox:1.36 \
+  sh -c 'umask 077 && head -c 32 /dev/urandom > /data/account.key && chown 65532:65532 /data/account.key'
 ```
 
 With a new key:
 
 - An account with two-factor sign-in can no longer use its authenticator: a code from the app gets a server error. A recovery code still signs in; the user then turns two-factor sign-in off and on again.
 - Every browser must sign in again, and is treated as one the account has not seen before.
+- The made-up salts that hide which usernames exist change, while those of real accounts stay. Someone who asked for salts before the change can ask again and tell the two apart.
 - Passwords, files and "My files" are not affected.
 
 Without accounts in the database, a missing `account.key` is created as on a first start.

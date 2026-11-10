@@ -32,7 +32,7 @@ func TestNewDatabaseOverStoredContentIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = refuseNewDatabaseOverContent(ctx, dbPath, blobs)
+	_, err = openDatabase(ctx, dbPath, blobs)
 	if err == nil || !strings.Contains(err.Error(), storedID) || !strings.Contains(err.Error(), "Restore the database") {
 		t.Errorf("no database, stored content: %v, want a refusal that names the content and the remedy", err)
 	}
@@ -53,9 +53,11 @@ func TestNewDatabaseOverStoredContentIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Close()
-	if err := refuseNewDatabaseOverContent(ctx, dbPath, blobs); err != nil {
-		t.Errorf("an existing database was refused: %v", err)
+	st, err = openDatabase(ctx, dbPath, blobs)
+	if err != nil {
+		t.Fatalf("an existing database was refused: %v", err)
 	}
+	st.Close()
 }
 
 func TestMissingAccountKeyBesideAccountsIsRefused(t *testing.T) {

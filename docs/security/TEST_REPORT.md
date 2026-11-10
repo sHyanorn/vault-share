@@ -404,14 +404,14 @@ A production readiness review found F47 to F50: what happens when the database, 
 
 | Run after the hardening | Result |
 |---|---|
-| Go tests with `-race`, S3 tests included | 160 passed, none skipped |
+| Go tests with `-race`, S3 tests included | 161 passed, none skipped |
 | Vitest | 107 passed |
 | `scripts/blackbox.py` | 170 passed |
 | `scripts/browser_checks.cjs` | 30 passed |
 | End-to-end tests, disk and S3 | 6 passed on each; the bucket empty afterwards, no orphan deleted |
 | gosec, govulncheck on the source, npm audit | 0 issues |
 
-How the numbers are counted: Go counts top-level test functions (224 with subtests), with the four `VAULT_TEST_S3_*` variables set so that no S3 test is skipped; the scripts count checks; Vitest and Playwright count tests. The scripts and the end-to-end tests ran against vaultd behind Caddy as local processes, with Versity S3 Gateway for S3; CI runs the same on the Compose stack on every push.
+How the numbers are counted: Go counts top-level test functions (225 with subtests), with the four `VAULT_TEST_S3_*` variables set so that no S3 test is skipped; the scripts count checks; Vitest and Playwright count tests. The scripts and the end-to-end tests ran against vaultd behind Caddy as local processes, with Versity S3 Gateway for S3; CI runs the same on the Compose stack on every push.
 
 | Finding | Before | After |
 |---|---|---|

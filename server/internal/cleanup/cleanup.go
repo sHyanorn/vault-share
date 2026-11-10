@@ -87,10 +87,11 @@ func (j *Job) Run(ctx context.Context) error {
 		j.orphansSwept = now
 	}
 	if now.Sub(j.orphansSwept) >= orphanInterval {
+		// Also after a failed sweep: a retry on the next run would bring
+		// a new limit with it, every minute.
+		j.orphansSwept = now
 		if err := j.deleteOrphans(ctx); err != nil {
 			errs = append(errs, err)
-		} else {
-			j.orphansSwept = now
 		}
 	}
 	return errors.Join(errs...)
@@ -119,8 +120,8 @@ func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {
 // lost answer from the store leaves such content behind. Each id is listed
 // before its record is looked up, and a record always exists before its
 // content, so content still being uploaded is never taken. A sweep deletes
-// at most maxOrphanDeletes and leaves the rest to later sweeps. A failed
-// sweep is retried on the next run, a finished one after orphanInterval.
+// at most maxOrphanDeletes, failed deletions included, and leaves the rest
+// to the next sweep, one orphanInterval later whether this one failed or not.
 func (j *Job) deleteOrphans(ctx context.Context) error {
 	var errs []error
 	found, deleted := 0, 0

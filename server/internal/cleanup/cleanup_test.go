@@ -203,3 +203,44 @@ func TestOrphanSweepDeletesAtMostItsLimit(t *testing.T) {
 		t.Errorf("%d blobs left after the second sweep", n)
 	}
 }
+
+// stuckBlobs cannot delete the first content it is asked to, ever.
+type stuckBlobs struct {
+	blob.Store
+	stuck string
+}
+
+func (s *stuckBlobs) Delete(ctx context.Context, id string) error {
+	if s.stuck == "" {
+		s.stuck = id
+	}
+	if id == s.stuck {
+		return fmt.Errorf("delete %s: refused", id)
+	}
+	return s.Store.Delete(ctx, id)
+}
+
+// A sweep that fails must not come back a minute later with a new limit:
+// that would delete the limit per run instead of per interval.
+func TestFailedOrphanSweepWaitsItsIntervalToo(t *testing.T) {
+	job, disk, advance := orphanJob(t, slog.New(slog.DiscardHandler))
+	job.Blobs = &stuckBlobs{Store: disk}
+	const extra = 150
+	putOrphans(t, disk, maxOrphanDeletes+extra)
+	ctx := context.Background()
+	if err := job.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	advance(orphanInterval)
+	if err := job.Run(ctx); err == nil {
+		t.Fatal("a sweep with a failed delete reported no error")
+	}
+	left := extra + 1 // the one that cannot be deleted took a place in the limit
+	for range 3 {
+		advance(time.Minute)
+		_ = job.Run(ctx)
+		if n := stored(t, disk); n != left {
+			t.Fatalf("%d blobs left a few runs after a failed sweep, want %d", n, left)
+		}
+	}
+}

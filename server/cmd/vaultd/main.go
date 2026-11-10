@@ -54,13 +54,9 @@ func run() error {
 		return fmt.Errorf("blob store: %w", err)
 	}
 	dbPath := filepath.Join(cfg.DataDir, "vault.db")
-	// Before the database is opened, so a refusal leaves no new one behind.
-	if err := refuseNewDatabaseOverContent(ctx, dbPath, blobs); err != nil {
-		return err
-	}
-	st, err := store.Open(ctx, dbPath)
+	st, err := openDatabase(ctx, dbPath, blobs)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
 	defer st.Close()
 	storage := []any{"kind", cfg.Storage}
@@ -134,6 +130,20 @@ func run() error {
 	return nil
 }
 
+// openDatabase opens the database at dbPath, creating it on a first start.
+// The guard comes before the open, so a refusal leaves no new database
+// behind that would let the next start pass.
+func openDatabase(ctx context.Context, dbPath string, blobs blob.Store) (*store.Store, error) {
+	if err := refuseNewDatabaseOverContent(ctx, dbPath, blobs); err != nil {
+		return nil, err
+	}
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	return st, nil
+}
+
 // refuseNewDatabaseOverContent fails when the database at dbPath does not
 // exist yet while the storage already holds content. A new database has no
 // record of that content, so cleanup would delete all of it as orphaned:
@@ -150,7 +160,7 @@ func refuseNewDatabaseOverContent(ctx context.Context, dbPath string, blobs blob
 		if err != nil {
 			return fmt.Errorf("list stored content: %w", err)
 		}
-		return fmt.Errorf("%s does not exist, but the storage already holds content (for example %s). "+
+		return fmt.Errorf("%s is missing or empty, but the storage already holds content (for example %s). "+
 			"A new database has no record of it, and cleanup would delete it. "+
 			"Restore the database from a backup, or empty the storage (the blobs directory or the bucket) to start over; "+
 			"see docs/OPERATIONS.md", dbPath, id)
