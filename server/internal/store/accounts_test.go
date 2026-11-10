@@ -22,9 +22,15 @@ func user(name string) User {
 func TestCreateUser(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
+	if any, err := s.HasUsers(ctx); err != nil || any {
+		t.Fatalf("new database has users: %t %v", any, err)
+	}
 	id, err := s.CreateUser(ctx, user("alice"), 2)
 	if err != nil || id == 0 {
 		t.Fatalf("create: %d %v", id, err)
+	}
+	if any, err := s.HasUsers(ctx); err != nil || !any {
+		t.Errorf("after a sign-up, has users: %t %v", any, err)
 	}
 	if _, err := s.CreateUser(ctx, user("alice"), 2); !errors.Is(err, ErrUsernameTaken) {
 		t.Errorf("taken: %v", err)

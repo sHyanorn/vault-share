@@ -52,6 +52,7 @@ Issues found during development, how they were found and how they were fixed. Se
 | F46 | 2026-11-07 | Low | Fixing F43 | A password or TOTP change could leave the account's other sessions alive, and a sign-out its own session | Fixed |
 | F47 | 2026-11-10 | High | Production readiness review | A new database over existing storage made cleanup delete all stored content | Fixed |
 | F48 | 2026-11-10 | Medium | Production readiness review | A download granted while an earlier one was redeemed could get a 500 and lose the file | Fixed |
+| F49 | 2026-11-10 | Medium | Production readiness review | A missing `account.key` was replaced without notice, breaking two-factor sign-in for existing accounts | Fixed |
 | F50 | 2026-11-10 | Info | Production readiness review | The health check answered ok with the database, the storage or the disk unusable | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
@@ -248,6 +249,11 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F48 Last download lost between its count and its token (Medium)
 - Impact: a grant took the download count in one statement and stored the download token in the next. When the grant took the last count while an earlier token was being redeemed, the redeeming request saw no downloads left and no token pending and removed the file; the token insert then failed on its foreign key. The recipient with a valid link got a 500, and the file and its last download were gone. It needs two recipients within the same moment; under load it happened to 1 to 12 files in 640.
 - Fix: `GrantDownload` takes the count and stores the token in one transaction (D014), so a file with no downloads left always has its last token pending until that download is done. A test redeems one token while the last is granted, on many files at once, and failed on every run before the fix; store tests check that a grant whose token cannot be stored takes no download and that a file is kept from its last grant on.
+
+## F49 A lost account key replaced without notice (Medium)
+- Impact: vaultd created `account.key` whenever it was missing. Started on a data directory with accounts but without the key, after a restore that left it out or a copy of the database alone, it made a new one and ran: every authenticator code then got a 500, since the stored two-factor secrets are sealed under the old key, every browser was signed out, and nothing in the log said why. The old key still fixes it, but an operator who is not told to look for it keeps the new one. A key file cut short by a crash during its first write stopped every later start. No request can trigger it; it takes an operator mistake and locks out the accounts with two-factor sign-in until they use a recovery code, hence Medium.
+- Fix: vaultd creates `account.key` only while the database holds no account; otherwise a missing key stops the start with the remedy (D034). The key is written to a temporary file, synced and renamed, so a crash leaves no key or a whole one. `docs/OPERATIONS.md` describes backup, restore and replacing the key on purpose. Tests cover the refusal, that it leaves no key behind, the first start, an operator-made key and wrong lengths; the start test failed before the fix. A backup and restore by the manual was run against a local instance, both stopped and running.
+- Remaining: `audit.key` is still created when missing; losing it only stops address hashes from comparing across the loss.
 
 ## F50 A health check that could not fail (Info)
 - Impact: `/healthz` answered 200 `ok` without looking at anything. With the blob directory deleted, with 680 KB left on the data volume and uploads failing with 500, and with the data directory gone, a monitor still saw a healthy instance; the operator learned of it from users. No data is exposed, hence Info.

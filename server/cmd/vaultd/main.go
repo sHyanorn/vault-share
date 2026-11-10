@@ -24,7 +24,10 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
 
-const cleanupInterval = time.Minute
+const (
+	cleanupInterval = time.Minute
+	accountKeyFile  = "account.key"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -70,9 +73,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("audit key: %w", err)
 	}
-	accountKey, err := keyfile.Load(cfg.DataDir, "account.key")
+	accountKey, err := loadAccountKey(ctx, cfg.DataDir, st)
 	if err != nil {
-		return fmt.Errorf("account key: %w", err)
+		return err
 	}
 	job := &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
 	go job.Loop(ctx, cleanupInterval)
@@ -153,6 +156,35 @@ func refuseNewDatabaseOverContent(ctx context.Context, dbPath string, blobs blob
 			"see docs/OPERATIONS.md", dbPath, id)
 	}
 	return nil
+}
+
+// loadAccountKey returns the key in account.key and creates it only while
+// no account exists. Every account's sessions and two-factor secret depend
+// on it, so a missing key beside existing accounts means it was lost or left
+// out of a restore, and a new one would silently break them.
+func loadAccountKey(ctx context.Context, dir string, st *store.Store) ([]byte, error) {
+	key, err := keyfile.Read(dir, accountKeyFile)
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+	accounts, err := st.HasUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+	if accounts {
+		return nil, fmt.Errorf("%s does not exist, but the database already holds accounts. "+
+			"A new key would sign every browser out and leave two-factor accounts with their recovery codes only. "+
+			"Restore %s from the same backup as the database, or create a new one on purpose; "+
+			"see docs/OPERATIONS.md", filepath.Join(dir, accountKeyFile), accountKeyFile)
+	}
+	key, err = keyfile.Load(dir, accountKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("account key: %w", err)
+	}
+	return key, nil
 }
 
 func openBlobs(ctx context.Context, cfg config.Config) (blob.Store, error) {

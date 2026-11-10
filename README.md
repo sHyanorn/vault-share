@@ -95,6 +95,7 @@ A deployment built before 10 November 2026 (commit `96159bb` or earlier) meets t
 
 - **A missing database stops the start.** vaultd used to create `vault.db` whenever it was missing, and cleanup then deleted the stored files it had no record of. It now refuses to start when the database is missing and the storage is not empty. Restore `vault.db`, or empty the `blobs` directory or the bucket to start over. An upgrade in place keeps its database and is not affected.
 - **`/healthz` can answer 503.** It now checks the database, the storage and the free space on the data volume, 128 MiB at least, where it used to answer 200 always. A monitor or load balancer that probes it will report an instance that is short of disk or has lost its storage.
+- **A missing `account.key` stops the start.** vaultd used to create a new one whenever it was missing. It now refuses to start when the key is missing and the database holds accounts, because a new key breaks their authenticator codes and signs every browser out. Restore the key, or see the [operations manual](docs/OPERATIONS.md#startup-refusals) to replace it on purpose.
 - **Leftover content goes later.** Stored content without a record is deleted from an hour after the start, at most 100 objects an hour, instead of at startup.
 
 ## Development
@@ -113,6 +114,7 @@ Running vaultd outside Docker needs `VAULT_BASE_URL` set to the address you open
 
 - [Specification](docs/SPEC.md)
 - [Design decisions](docs/DECISIONS.md)
+- [Operations: backup, restore, startup refusals](docs/OPERATIONS.md)
 - [Threat model](docs/security/THREAT_MODEL.md)
 - [Security test report](docs/security/TEST_REPORT.md)
 

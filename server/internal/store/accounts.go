@@ -48,6 +48,11 @@ func scanUser(scan func(...any) error, extra ...any) (User, error) {
 	return u, err
 }
 
+// HasUsers reports whether any account exists.
+func (s *Store) HasUsers(ctx context.Context) (bool, error) {
+	return s.exists(ctx, `SELECT 1 FROM users LIMIT 1`)
+}
+
 // CreateUser inserts the account while fewer than max exist and returns its
 // id, ErrUsernameTaken or ErrCapacity.
 func (s *Store) CreateUser(ctx context.Context, u User, max int) (int64, error) {
