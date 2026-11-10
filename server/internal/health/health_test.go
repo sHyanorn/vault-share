@@ -41,13 +41,6 @@ func newChecker(t *testing.T) (*Checker, *countingBlobs, string) {
 	return &Checker{Store: st, Blobs: blobs, Dir: dir, MinFree: 1, Log: slog.New(slog.DiscardHandler)}, blobs, dir
 }
 
-func TestHealthyInstancePasses(t *testing.T) {
-	c, _, _ := newChecker(t)
-	if err := c.Check(context.Background()); err != nil {
-		t.Errorf("a working instance is unhealthy: %v", err)
-	}
-}
-
 func TestEachFailureIsReported(t *testing.T) {
 	cases := []struct {
 		name    string

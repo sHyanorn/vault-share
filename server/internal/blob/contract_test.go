@@ -42,6 +42,17 @@ func testStore(t *testing.T, s Store) {
 			t.Errorf("Open: want ErrNotFound, got %v", err)
 		}
 	}
+	ids := func(t *testing.T) map[string]bool {
+		t.Helper()
+		listed := map[string]bool{}
+		for id, err := range s.IDs(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			listed[id] = true
+		}
+		return listed
+	}
 
 	t.Run("stores and returns the exact bytes", func(t *testing.T) {
 		for _, size := range []int64{0, 1, 1000, large} {
@@ -175,33 +186,18 @@ func testStore(t *testing.T, s Store) {
 		if err := s.Delete(ctx, deleted); err != nil {
 			t.Fatal(err)
 		}
-		listed := map[string]bool{}
-		for id, err := range s.IDs(ctx) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			listed[id] = true
-		}
+		listed := ids(t)
 		if !listed[kept] || listed[deleted] {
 			t.Errorf("listed %v: kept %v, deleted %v", len(listed), listed[kept], listed[deleted])
 		}
 	})
 
 	t.Run("passes its check and leaves nothing behind", func(t *testing.T) {
-		before := map[string]bool{}
-		for id, err := range s.IDs(ctx) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			before[id] = true
-		}
+		before := ids(t)
 		if err := s.Check(ctx); err != nil {
 			t.Fatalf("Check on a working store: %v", err)
 		}
-		for id, err := range s.IDs(ctx) {
-			if err != nil {
-				t.Fatal(err)
-			}
+		for id := range ids(t) {
 			if !before[id] {
 				t.Errorf("Check left %s behind", id)
 			}

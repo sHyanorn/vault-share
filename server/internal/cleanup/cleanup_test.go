@@ -31,23 +31,9 @@ func (s *stalledBlobs) Sweep(ctx context.Context, _ time.Time) error {
 }
 
 func TestLoopOutlivesAStalledStore(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	disk, err := blob.NewDisk(filepath.Join(dir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	logger := slog.New(slog.DiscardHandler)
-	auditor, err := audit.New(dir, st, logger)
-	if err != nil {
-		t.Fatal(err)
-	}
+	job, disk, _ := newJob(t, slog.New(slog.DiscardHandler))
 	blobs := &stalledBlobs{Store: disk}
-	job := &Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
+	job.Blobs = blobs
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -98,9 +84,9 @@ func TestRunEndsUnusableSessions(t *testing.T) {
 	}
 }
 
-// orphanJob is a job over a new database and disk store whose clock the
+// newJob is a job over a new database and disk store whose clock the
 // returned function moves.
-func orphanJob(t *testing.T, logger *slog.Logger) (*Job, *blob.Disk, func(time.Duration)) {
+func newJob(t *testing.T, logger *slog.Logger) (*Job, *blob.Disk, func(time.Duration)) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
@@ -147,7 +133,7 @@ func stored(t *testing.T, disk *blob.Disk) int {
 // A vaultd started on the wrong database sees all stored content as
 // orphaned; nothing is deleted before the operator had an interval to notice.
 func TestFirstRunsDeleteNoOrphans(t *testing.T) {
-	job, disk, advance := orphanJob(t, slog.New(slog.DiscardHandler))
+	job, disk, advance := newJob(t, slog.New(slog.DiscardHandler))
 	putOrphans(t, disk, 3)
 	ctx := context.Background()
 	for _, wait := range []time.Duration{0, time.Minute, orphanInterval - 2*time.Minute} {
@@ -170,7 +156,7 @@ func TestFirstRunsDeleteNoOrphans(t *testing.T) {
 
 func TestOrphanSweepDeletesAtMostItsLimit(t *testing.T) {
 	var logs bytes.Buffer
-	job, disk, advance := orphanJob(t, slog.New(slog.NewJSONHandler(&logs, nil)))
+	job, disk, advance := newJob(t, slog.New(slog.NewJSONHandler(&logs, nil)))
 	const extra = 7
 	putOrphans(t, disk, maxOrphanDeletes+extra)
 	ctx := context.Background()
@@ -223,7 +209,7 @@ func (s *stuckBlobs) Delete(ctx context.Context, id string) error {
 // A sweep that fails must not come back a minute later with a new limit:
 // that would delete the limit per run instead of per interval.
 func TestFailedOrphanSweepWaitsItsIntervalToo(t *testing.T) {
-	job, disk, advance := orphanJob(t, slog.New(slog.DiscardHandler))
+	job, disk, advance := newJob(t, slog.New(slog.DiscardHandler))
 	job.Blobs = &stuckBlobs{Store: disk}
 	const extra = 150
 	putOrphans(t, disk, maxOrphanDeletes+extra)

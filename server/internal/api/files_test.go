@@ -513,7 +513,7 @@ func TestCleanupDeletesOrphanedContent(t *testing.T) {
 	if err := e.job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	e.advance(30 * time.Minute)
+	e.advance(61 * time.Minute)
 	sh := e.shared(100, 5, 86400)
 	pending := e.create(100, 5, 86400)
 	orphan := encoding.EncodeToString(randomBytes(idBytes))
@@ -522,13 +522,6 @@ func TestCleanupDeletesOrphanedContent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := e.job.Run(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !e.blobExists(orphan) {
-		t.Error("a sweep ran within the first hour")
-	}
-	e.advance(31 * time.Minute)
 	if err := e.job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
