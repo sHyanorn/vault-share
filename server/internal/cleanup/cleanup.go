@@ -23,7 +23,8 @@ type Job struct {
 	// Now defaults to time.Now; tests move it.
 	Now func() time.Time
 
-	orphansSwept time.Time
+	// orphanIntervalStart is the first run or the last orphan sweep.
+	orphanIntervalStart time.Time
 }
 
 // orphanInterval spaces the orphan sweeps, which list the whole store: they
@@ -83,18 +84,27 @@ func (j *Job) Run(ctx context.Context) error {
 	if err := j.Blobs.Sweep(ctx, now.Add(-store.UploadGrace)); err != nil {
 		errs = append(errs, err)
 	}
-	if j.orphansSwept.IsZero() {
-		j.orphansSwept = now
-	}
-	if now.Sub(j.orphansSwept) >= orphanInterval {
-		// Also after a failed sweep: a retry on the next run would bring
-		// a new limit with it, every minute.
-		j.orphansSwept = now
+	if j.orphanSweepDue(now) {
 		if err := j.deleteOrphans(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// orphanSweepDue reports whether an orphanInterval has passed since the first
+// run or the last sweep, and starts the next interval when it has. A sweep
+// that then fails waits like any other: a retry on the next run would bring
+// a new limit with it, every minute.
+func (j *Job) orphanSweepDue(now time.Time) bool {
+	if j.orphanIntervalStart.IsZero() {
+		j.orphanIntervalStart = now
+	}
+	if now.Sub(j.orphanIntervalStart) < orphanInterval {
+		return false
+	}
+	j.orphanIntervalStart = now
+	return true
 }
 
 func (j *Job) purge(ctx context.Context, p store.Purge) (bool, error) {

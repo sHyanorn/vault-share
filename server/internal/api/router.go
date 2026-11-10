@@ -50,7 +50,7 @@ type Options struct {
 	// MaxAccounts caps the number of accounts; zero disables the cap.
 	MaxAccounts int
 	// Health reports why vaultd cannot serve, or nil; /healthz answers 503
-	// while it fails. Nil always passes.
+	// while it fails. A nil Health always passes.
 	Health func(context.Context) error
 }
 
