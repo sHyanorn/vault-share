@@ -3,6 +3,7 @@ package api
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
@@ -48,6 +49,9 @@ type Options struct {
 	SignupClosed bool
 	// MaxAccounts caps the number of accounts; zero disables the cap.
 	MaxAccounts int
+	// Health reports why vaultd cannot serve, or nil; /healthz answers 503
+	// while it fails. Nil always passes.
+	Health func(context.Context) error
 }
 
 // NewRouter returns the root handler of vaultd.
@@ -111,8 +115,8 @@ func NewRouter(opts Options) (http.Handler, error) {
 	r.Use(securityHeaders)
 	r.Use(withClient(opts.TrustedProxies, opts.Logger))
 
-	r.Get("/healthz", healthz)
-	r.Head("/healthz", healthz)
+	r.Get("/healthz", healthz(opts.Health))
+	r.Head("/healthz", healthz(opts.Health))
 	r.Route("/api/v1", func(r chi.Router) {
 		// Before the limiter, so refused requests spend no client budget.
 		r.Use(onlyHost(opts.Host))
@@ -155,9 +159,17 @@ func NewRouter(opts Options) (http.Handler, error) {
 	return r, nil
 }
 
-func healthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+// healthz answers 200 while check passes and 503 otherwise. The probe is
+// public, so the answer never says what failed; check logs that.
+func healthz(check func(context.Context) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if check != nil && check(r.Context()) != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 // requestLog writes one structured line per request, panics included. The

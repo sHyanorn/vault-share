@@ -129,6 +129,19 @@ func (d *Disk) Sweep(_ context.Context, before time.Time) error {
 	return nil
 }
 
+// Check creates and removes a file where uploads are written. A stat would
+// not do: the open directory still answers after it was deleted or its
+// filesystem turned read-only.
+func (d *Disk) Check(context.Context) error {
+	name := tmpDir + "/check-" + rand.Text()
+	f, err := d.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	return d.root.Remove(name)
+}
+
 // syncDir makes the link durable.
 func (d *Disk) syncDir() error {
 	f, err := d.root.Open(".")

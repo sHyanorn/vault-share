@@ -52,6 +52,7 @@ Issues found during development, how they were found and how they were fixed. Se
 | F46 | 2026-11-07 | Low | Fixing F43 | A password or TOTP change could leave the account's other sessions alive, and a sign-out its own session | Fixed |
 | F47 | 2026-11-10 | High | Production readiness review | A new database over existing storage made cleanup delete all stored content | Fixed |
 | F48 | 2026-11-10 | Medium | Production readiness review | A download granted while an earlier one was redeemed could get a 500 and lose the file | Fixed |
+| F50 | 2026-11-10 | Info | Production readiness review | The health check answered ok with the database, the storage or the disk unusable | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -247,3 +248,8 @@ Issues found during development, how they were found and how they were fixed. Se
 ## F48 Last download lost between its count and its token (Medium)
 - Impact: a grant took the download count in one statement and stored the download token in the next. When the grant took the last count while an earlier token was being redeemed, the redeeming request saw no downloads left and no token pending and removed the file; the token insert then failed on its foreign key. The recipient with a valid link got a 500, and the file and its last download were gone. It needs two recipients within the same moment; under load it happened to 1 to 12 files in 640.
 - Fix: `GrantDownload` takes the count and stores the token in one transaction (D014), so a file with no downloads left always has its last token pending until that download is done. A test redeems one token while the last is granted, on many files at once, and failed on every run before the fix; store tests check that a grant whose token cannot be stored takes no download and that a file is kept from its last grant on.
+
+## F50 A health check that could not fail (Info)
+- Impact: `/healthz` answered 200 `ok` without looking at anything. With the blob directory deleted, with 680 KB left on the data volume and uploads failing with 500, and with the data directory gone, a monitor still saw a healthy instance; the operator learned of it from users. No data is exposed, hence Info.
+- Fix: the probe queries the database, writes and removes a file where uploads go (on S3 it asks for the bucket) and requires 128 MiB free on the data directory's filesystem; any failure answers 503 `unavailable` (D033). The reason goes to the log only, and a result is shared for 5 seconds, since the probe is public and not rate limited. Tests break each part in turn; the three cases above now answer 503.
+- Remaining: the probe reads one row, so it does not find damaged database pages it never touches; an overwritten database header under a running vaultd still answered 200.

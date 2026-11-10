@@ -187,6 +187,27 @@ func testStore(t *testing.T, s Store) {
 		}
 	})
 
+	t.Run("passes its check and leaves nothing behind", func(t *testing.T) {
+		before := map[string]bool{}
+		for id, err := range s.IDs(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			before[id] = true
+		}
+		if err := s.Check(ctx); err != nil {
+			t.Fatalf("Check on a working store: %v", err)
+		}
+		for id, err := range s.IDs(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !before[id] {
+				t.Errorf("Check left %s behind", id)
+			}
+		}
+	})
+
 	t.Run("refuses invalid ids", func(t *testing.T) {
 		for _, bad := range []string{"../escape", "AAAAAAAAAAAAAAAAAAAAA", "tmp/AAAAAAAAAAAAAAAAA"} {
 			if err := s.Put(ctx, bad, 1, strings.NewReader("x")); !errors.Is(err, ErrInvalidID) {

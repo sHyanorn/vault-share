@@ -37,6 +37,8 @@ type Store interface {
 	IDs(ctx context.Context) iter.Seq2[string, error]
 	// Sweep removes partial uploads abandoned before the given time.
 	Sweep(ctx context.Context, before time.Time) error
+	// Check reports whether the store can be reached and written to.
+	Check(ctx context.Context) error
 }
 
 // File ids are 16 random bytes in unpadded base64url: 22 characters.

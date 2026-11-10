@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,6 +41,32 @@ func TestHealthz(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestHealthzReportsAFailedCheck(t *testing.T) {
+	var failure error
+	h, err := NewRouter(Options{Logger: slog.New(slog.DiscardHandler), Health: func(context.Context) error { return failure }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(h, http.MethodGet, "/healthz"); rec.Code != http.StatusOK {
+		t.Fatalf("passing check: status %d", rec.Code)
+	}
+	failure = errors.New("database: disk I/O error at /data/vault.db")
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		rec := do(h, method, "/healthz")
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%s with a failing check: status %d, Cache-Control %q", method, rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		// The probe is public; the reason belongs in the log only.
+		if body := rec.Body.String(); strings.Contains(body, "database") || strings.Contains(body, "/data") {
+			t.Errorf("%s: the answer tells what failed: %s", method, body)
+		}
+	}
+	var body map[string]string
+	if err := json.NewDecoder(do(h, http.MethodGet, "/healthz").Body).Decode(&body); err != nil || body["status"] != "unavailable" {
+		t.Errorf("body %v err %v", body, err)
 	}
 }
 

@@ -221,4 +221,7 @@ func TestS3MissingBucketIsAnError(t *testing.T) {
 	if err := gone.Delete(ctx, newID()); err == nil {
 		t.Error("Delete reported success")
 	}
+	if err := gone.Check(ctx); err == nil {
+		t.Error("Check passed")
+	}
 }

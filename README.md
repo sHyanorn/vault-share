@@ -94,6 +94,7 @@ vaultd checks the last two at startup and refuses to start otherwise. Its creden
 A deployment built before 10 November 2026 (commit `96159bb` or earlier) meets these changes:
 
 - **A missing database stops the start.** vaultd used to create `vault.db` whenever it was missing, and cleanup then deleted the stored files it had no record of. It now refuses to start when the database is missing and the storage is not empty. Restore `vault.db`, or empty the `blobs` directory or the bucket to start over. An upgrade in place keeps its database and is not affected.
+- **`/healthz` can answer 503.** It now checks the database, the storage and the free space on the data volume, 128 MiB at least, where it used to answer 200 always. A monitor or load balancer that probes it will report an instance that is short of disk or has lost its storage.
 - **Leftover content goes later.** Stored content without a record is deleted from an hour after the start, at most 100 objects an hour, instead of at startup.
 
 ## Development

@@ -93,3 +93,20 @@ func TestSweepRemovesOnlyOldTempFiles(t *testing.T) {
 		t.Error("fresh temp file was removed")
 	}
 }
+
+func TestCheckFailsOnceTheDirectoryIsGone(t *testing.T) {
+	d, root := newDisk(t)
+	ctx := context.Background()
+	if err := d.Check(ctx); err != nil {
+		t.Fatalf("Check on a working directory: %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(root, "tmp")); err != nil || len(entries) != 0 {
+		t.Errorf("Check left %d files in tmp: %v", len(entries), err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Check(ctx); err == nil {
+		t.Error("Check passed on a deleted directory")
+	}
+}

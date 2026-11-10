@@ -19,6 +19,7 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/blob"
 	"github.com/sHyanorn/vault-share/server/internal/cleanup"
 	"github.com/sHyanorn/vault-share/server/internal/config"
+	"github.com/sHyanorn/vault-share/server/internal/health"
 	"github.com/sHyanorn/vault-share/server/internal/keyfile"
 	"github.com/sHyanorn/vault-share/server/internal/store"
 )
@@ -76,6 +77,7 @@ func run() error {
 	job := &cleanup.Job{Store: st, Blobs: blobs, Audit: auditor, Log: logger}
 	go job.Loop(ctx, cleanupInterval)
 
+	checker := &health.Checker{Store: st, Blobs: blobs, Dir: cfg.DataDir, MinFree: health.MinFreeBytes, Log: logger}
 	handler, err := api.NewRouter(api.Options{
 		Logger:         logger,
 		Store:          st,
@@ -89,6 +91,7 @@ func run() error {
 		AccountKey:     accountKey,
 		SignupClosed:   cfg.SignupClosed,
 		MaxAccounts:    cfg.MaxAccounts,
+		Health:         checker.Check,
 	})
 	if err != nil {
 		return err

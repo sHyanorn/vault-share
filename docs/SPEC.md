@@ -159,7 +159,7 @@ The server does not know whether a file has a password (D019). The audit log sto
 | POST, DELETE | `/api/v1/account/totp` | Turn two-factor sign-in on or off |
 | GET | `/api/v1/account/files` | List the account's files with their sealed entries |
 | PUT | `/api/v1/account/files/{id}` | Keep a file in the account, with the session and its delete token |
-| GET | `/healthz` | Health check |
+| GET | `/healthz` | Health check: 200 while the database, the blob store and the free space on the data volume pass, 503 otherwise (D033) |
 
 All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexistent files, expired files and wrong tokens all return the same 404, so file existence is not revealed.
 

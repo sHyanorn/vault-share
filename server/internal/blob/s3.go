@@ -318,6 +318,12 @@ func (s *S3) IDs(ctx context.Context) iter.Seq2[string, error] {
 	}
 }
 
+// Check asks the service for the bucket, which also proves the credentials.
+func (s *S3) Check(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket})
+	return err
+}
+
 // Sweep has nothing to do: an upload that fails leaves nothing behind.
 func (s *S3) Sweep(context.Context, time.Time) error {
 	return nil
