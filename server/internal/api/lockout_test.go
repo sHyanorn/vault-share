@@ -124,7 +124,7 @@ func TestAttemptsInFlightAnswerBusy(t *testing.T) {
 	e := newAccountEnv(t)
 	alice := newCreds("alice")
 	e.browser().signup(alice)
-	a := &accounts{store: e.store, hasher: newHasher(), keys: deriveServerKeys(randomBytes(32)),
+	a := &accounts{store: e.store, hasher: newHasher(testAuthParams), keys: deriveServerKeys(randomBytes(32)),
 		clientLocks: newLockouts(lockoutFailures, e.clock), accountLocks: newLockouts(accountFailures, e.clock),
 		deviceLocks: newLockouts(lockoutFailures, e.clock), totpLocks: newLockouts(lockoutFailures, e.clock),
 		now: e.clock, log: slog.New(slog.DiscardHandler)}

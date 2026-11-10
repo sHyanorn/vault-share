@@ -33,10 +33,8 @@ func parallel(n int, request func(i int) []byte) map[string]int {
 func TestConcurrentSignInsRespectTheLockouts(t *testing.T) {
 	// A real cost, so many sign-ins are in flight at once as in production,
 	// yet well within the test server's write timeout under the race detector.
-	saved := authParams
-	authParams = argonParams{memory: 2 << 10, time: 1, threads: 1}
-	defer func() { authParams = saved }()
-	e := newAccountEnv(t)
+	e := newEnvHashing(t, argonParams{memory: 2 << 10, time: 1, threads: 1},
+		func(o *Options) { o.TrustedProxies = loopbackProxies })
 	alice := newCreds("alice")
 	e.browser().signup(alice)
 	wrong := encoding.EncodeToString(randomBytes(32))

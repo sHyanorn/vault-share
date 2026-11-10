@@ -17,11 +17,9 @@ import (
 	"github.com/sHyanorn/vault-share/server/internal/audit"
 )
 
-func init() {
-	// The production parameters take tens of milliseconds a hash and far
-	// longer under the race detector; TestAuthHashParameters covers them.
-	authParams = argonParams{memory: 64, time: 1, threads: 1}
-}
+// The production parameters take tens of milliseconds a hash and far longer
+// under the race detector; TestAuthHashParameters covers them.
+var testAuthParams = argonParams{memory: 64, time: 1, threads: 1}
 
 // creds stands in for what the browser derives from a password (D026).
 type creds struct {
@@ -639,7 +637,7 @@ func TestAccountLogsNeverContainSecrets(t *testing.T) {
 }
 
 func TestAuthHashes(t *testing.T) {
-	h := newHasher()
+	h := newHasher(testAuthParams)
 	ctx := context.Background()
 	secret := randomBytes(32)
 	encoded, err := h.hash(ctx, secret)
@@ -681,10 +679,7 @@ func TestAuthHashParameters(t *testing.T) {
 	if defaultAuthParams != (argonParams{memory: 19 << 10, time: 2, threads: 1}) {
 		t.Errorf("parameters %+v", defaultAuthParams)
 	}
-	saved := authParams
-	defer func() { authParams = saved }()
-	authParams = defaultAuthParams
-	h := newHasher()
+	h := newHasher(defaultAuthParams)
 	secret := randomBytes(32)
 	encoded, err := h.hash(context.Background(), secret)
 	if err != nil || !strings.HasPrefix(encoded, "$argon2id$v=19$m=19456,t=2,p=1$") {
@@ -696,7 +691,7 @@ func TestAuthHashParameters(t *testing.T) {
 }
 
 func TestHashingIsBounded(t *testing.T) {
-	h := newHasher()
+	h := newHasher(testAuthParams)
 	for i := 0; i < hashSlots; i++ {
 		h.slots <- struct{}{}
 	}

@@ -42,6 +42,11 @@ func newEnv(t *testing.T) *env {
 
 // newEnvWith builds the server; mutate adjusts the router options first.
 func newEnvWith(t *testing.T, mutate func(*Options)) *env {
+	return newEnvHashing(t, testAuthParams, mutate)
+}
+
+// newEnvHashing is newEnvWith with the given cost of an auth hash.
+func newEnvHashing(t *testing.T, hashing argonParams, mutate func(*Options)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
@@ -68,7 +73,7 @@ func newEnvWith(t *testing.T, mutate func(*Options)) *env {
 	if mutate != nil {
 		mutate(&opts)
 	}
-	h, err := NewRouter(opts)
+	h, err := newRouter(opts, hashing)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,17 +23,14 @@ type argonParams struct {
 }
 
 // defaultAuthParams is the OWASP Password Storage Cheat Sheet minimum for
-// Argon2id. Tests lower authParams; a stored hash names its own parameters.
-var (
-	defaultAuthParams = argonParams{memory: 19 << 10, time: 2, threads: 1}
-	authParams        = defaultAuthParams
-)
+// Argon2id. A stored hash names its own parameters.
+var defaultAuthParams = argonParams{memory: 19 << 10, time: 2, threads: 1}
 
 const (
 	authSaltBytes = 16
 	authHashBytes = 32
-	// hashSlots bounds the hashes that run at once, each holding
-	// authParams.memory, so a burst of sign-ins queues instead of
+	// hashSlots bounds the hashes that run at once, each holding the
+	// memory of its parameters, so a burst of sign-ins queues instead of
 	// exhausting memory; hashWait bounds the queue.
 	hashSlots = 4
 	hashWait  = 10 * time.Second
@@ -45,15 +42,18 @@ var (
 )
 
 type hasher struct {
-	slots chan struct{}
+	// params are what new hashes are made with.
+	params argonParams
+	slots  chan struct{}
 	// dummy is verified for unknown usernames, so they take as long as known ones.
 	dummy string
 }
 
-func newHasher() *hasher {
+func newHasher(params argonParams) *hasher {
 	return &hasher{
-		slots: make(chan struct{}, hashSlots),
-		dummy: encodeHash(authParams, randomBytes(authSaltBytes), randomBytes(authHashBytes)),
+		params: params,
+		slots:  make(chan struct{}, hashSlots),
+		dummy:  encodeHash(params, randomBytes(authSaltBytes), randomBytes(authHashBytes)),
 	}
 }
 
@@ -75,7 +75,7 @@ func (h *hasher) hash(ctx context.Context, secret []byte) (string, error) {
 		return "", err
 	}
 	defer h.release()
-	p, salt := authParams, randomBytes(authSaltBytes)
+	p, salt := h.params, randomBytes(authSaltBytes)
 	return encodeHash(p, salt, argon2.IDKey(secret, salt, p.time, p.memory, p.threads, authHashBytes)), nil
 }
 

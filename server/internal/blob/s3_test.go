@@ -43,7 +43,7 @@ func newS3(t *testing.T) *S3 {
 		PathStyle:       true,
 	}
 	ctx := context.Background()
-	_, err := newS3Client(cfg).CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
+	_, err := newS3Client(cfg, responseTimeout, writeTimeout).CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
 	var owned *types.BucketAlreadyOwnedByYou
 	var exists *types.BucketAlreadyExists
 	if err != nil && !errors.As(err, &owned) && !errors.As(err, &exists) {
@@ -94,9 +94,8 @@ func silentService(t *testing.T) string {
 
 func TestS3RequestsTimeOut(t *testing.T) {
 	endpoint := silentService(t)
-	defer func(saved time.Duration) { responseTimeout = saved }(responseTimeout)
-	responseTimeout = 200 * time.Millisecond
-	c := newS3Client(S3Config{Endpoint: endpoint, Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true})
+	c := newS3Client(S3Config{Endpoint: endpoint, Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true},
+		200*time.Millisecond, writeTimeout)
 	// Only a backstop, so a missing timeout fails the test instead of hanging it.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -173,10 +172,8 @@ func TestNewS3ChecksTheBucket(t *testing.T) {
 
 func TestS3UploadsFailWhenTheServiceStopsReading(t *testing.T) {
 	endpoint := silentService(t)
-	defer func(saved time.Duration) { writeTimeout = saved }(writeTimeout)
-	writeTimeout = 200 * time.Millisecond
 	s := &S3{client: newS3Client(S3Config{Endpoint: endpoint, Region: "us-east-1",
-		AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true}), bucket: "vault"}
+		AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true}, responseTimeout, 200*time.Millisecond), bucket: "vault"}
 	// Far more than the socket buffers hold, so a write has to block.
 	const size = 64 << 20
 	done := make(chan error, 1)
@@ -205,7 +202,8 @@ func TestS3PutOutlivesACancellationAfterTheBody(t *testing.T) {
 		w.Header().Set("ETag", `"etag"`)
 	}))
 	defer srv.Close()
-	s := &S3{client: newS3Client(S3Config{Endpoint: srv.URL, Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true}), bucket: "vault"}
+	s := &S3{client: newS3Client(S3Config{Endpoint: srv.URL, Region: "us-east-1", AccessKeyID: "k", SecretAccessKey: "s", PathStyle: true},
+		responseTimeout, writeTimeout), bucket: "vault"}
 	if err := s.Put(ctx, newID(), 3, strings.NewReader("abc")); err != nil || !stored.Load() {
 		t.Errorf("Put = %v with the object stored: %v", err, stored.Load())
 	}

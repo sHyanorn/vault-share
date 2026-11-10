@@ -51,7 +51,7 @@ type S3 struct {
 // NewS3 connects to the bucket and checks what the store relies on: deleted
 // objects leave no old versions, and no write replaces an existing object.
 func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
-	s := &S3{client: newS3Client(cfg), bucket: cfg.Bucket}
+	s := &S3{client: newS3Client(cfg, responseTimeout, writeTimeout), bucket: cfg.Bucket}
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err != nil {
 		return nil, fmt.Errorf("bucket %s: %w", cfg.Bucket, err)
 	}
@@ -105,21 +105,24 @@ func (s *S3) checkConditionalWrites(ctx context.Context) error {
 // writeTimeout each write to the service, so a service that stops reading an
 // upload cannot hold it. Reads keep no deadline: a download waits on its
 // client, and a client that goes away cancels the request.
-var (
+const (
 	responseTimeout = time.Minute
 	writeTimeout    = time.Minute
 )
 
-type writeTimeoutConn struct{ net.Conn }
+type writeTimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
 
 func (c writeTimeoutConn) Write(p []byte) (int, error) {
-	if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+	if err := c.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
 		return 0, err
 	}
 	return c.Conn.Write(p)
 }
 
-func newS3Client(cfg S3Config) *s3.Client {
+func newS3Client(cfg S3Config, responseTimeout, writeTimeout time.Duration) *s3.Client {
 	key, secret := cfg.AccessKeyID, cfg.SecretAccessKey
 	opts := s3.Options{
 		Region: cfg.Region,
@@ -131,7 +134,7 @@ func newS3Client(cfg S3Config) *s3.Client {
 				if err != nil {
 					return nil, err
 				}
-				return writeTimeoutConn{conn}, nil
+				return writeTimeoutConn{conn, writeTimeout}, nil
 			}
 		}),
 		Credentials: aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {

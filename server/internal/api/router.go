@@ -56,6 +56,11 @@ type Options struct {
 
 // NewRouter returns the root handler of vaultd.
 func NewRouter(opts Options) (http.Handler, error) {
+	return newRouter(opts, defaultAuthParams)
+}
+
+// newRouter hashes auth secrets with hashing, which tests lower.
+func newRouter(opts Options, hashing argonParams) (http.Handler, error) {
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -96,7 +101,7 @@ func NewRouter(opts Options) (http.Handler, error) {
 	a := &accounts{
 		store:        opts.Store,
 		audit:        opts.Audit,
-		hasher:       newHasher(),
+		hasher:       newHasher(hashing),
 		keys:         deriveServerKeys(accountKey),
 		clientLocks:  newLockouts(lockoutFailures, now),
 		accountLocks: newLockouts(accountFailures, now),
