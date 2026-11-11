@@ -62,7 +62,7 @@
 - Date: 2026-11-06
 - Decision: files are encrypted in the browser in the record format of RFC 8188 (`aes128gcm` content encoding) with a 256-bit key, implemented in `web/src/crypto/ece.ts`
 - Layout: `salt(16) | rs(4, big-endian, always 65536) | idlen(1, always 0)`, then records of `rs` bytes. A record is AES-256-GCM over `data | delimiter | zero padding` with a 16-byte tag; the delimiter is `0x01` in every record except the last and `0x02` in the last. Every stream ends with a last record, even an empty file. Only the last record may be shorter than `rs`; the others carry `rs - 17` bytes of data
-- Keys: `fileKey = HKDF-SHA256(secret, salt = "", info = "vault-share/file", 32 bytes)` is the input keying material. Per file, `CEK = HKDF-SHA256(fileKey, salt, "Content-Encoding: aes256gcm\0", 32)` and `nonce_base = HKDF-SHA256(fileKey, salt, "Content-Encoding: nonce\0", 12)`; record `i` uses `nonce_base XOR i` in the last four bytes, so at most 2^32 records (256 TB at this record size, far beyond the 1 GB limit)
+- Keys: `fileKey = HKDF-SHA256(secret, salt = "", info = "vault-share/file", 32 bytes)` is the input keying material. Per file, `CEK = HKDF-SHA256(fileKey, salt, "Content-Encoding: aes256gcm\0", 32)` and `nonce_base = HKDF-SHA256(fileKey, salt, "Content-Encoding: nonce\0", 12)`; record `i` uses `nonce_base XOR i` in the last four bytes, so at most 2^32 records (256 TiB at this record size, far beyond the 1 GiB limit)
 - Metadata: `iv(12) | AES-256-GCM(JSON {name, type, size})` under `metaKey = HKDF-SHA256(secret, "", "vault-share/meta", 32)` with a random IV per encryption
 - Auth: `authKey = HKDF-SHA256(secret, "", "vault-share/auth", 32)` is an HMAC-SHA-256 key. The client signs the server's challenge with it; the server stores the raw key as the verifier (M2)
 - Rationale: RFC 8188 is a published, reviewed format with test vectors and a browser implementation in Firefox Send. Keeping its layout lets the RFC section 3.1 vector run unchanged against this implementation with a 128-bit key. AES-256 follows SPEC section 4
@@ -86,7 +86,7 @@
 - Date: 2026-11-06
 - Decision: the upload encrypts the file stream into a Blob and sends it with XMLHttpRequest; the download decrypts the response stream and writes it through `showSaveFilePicker` where the browser offers it, otherwise into a Blob that is handed to the browser's download
 - Rationale: streaming request bodies with `fetch` work only in Chromium over HTTP/2, so Firefox Send streamed uploads over a WebSocket instead; a Blob body works everywhere and XMLHttpRequest is the one transport with upload progress. Encryption and decryption themselves stay streaming with constant memory
-- Trade-off: browsers keep large Blobs in memory until they page them to disk, so a file near the 1 GB limit can be heavy on low-memory devices; on browsers without `showSaveFilePicker` the decrypted file is buffered the same way. A streaming upload for browsers that support it is a candidate for M6
+- Trade-off: browsers keep large Blobs in memory until they page them to disk, so a file near the 1 GiB limit can be heavy on low-memory devices; on browsers without `showSaveFilePicker` the decrypted file is buffered the same way. A streaming upload for browsers that support it is a candidate for M6
 
 ## D016 Security headers set by vaultd
 - Date: 2026-11-06

@@ -110,7 +110,7 @@ cd server && go test -race ./...
 cd web && npm ci && npm test && npm run dev
 ```
 
-Running vaultd outside Docker needs `VAULT_BASE_URL` set to the address you open, because the API answers only for that host. With the stack running, `npm run e2e` in `web/` runs the end-to-end tests. The [test report](docs/security/TEST_REPORT.md#6-reproducing) shows how to run the security checks.
+Running vaultd outside Docker needs `VAULT_BASE_URL` set to the address you open, because the API answers only for that host. With the stack running, `npx playwright install chromium` (once) and `npm run e2e` in `web/` run the end-to-end tests against `https://localhost`; set `E2E_BASE_URL` to test another address, such as a vaultd started on its own. The [test report](docs/security/TEST_REPORT.md#6-reproducing) shows how to run the security checks.
 
 ## Docs
 

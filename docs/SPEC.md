@@ -25,7 +25,7 @@ A zero-knowledge, end-to-end encrypted file sharing service: files are encrypted
 - Delete token: the uploader receives a delete link to remove the file early
 - File name and type are encrypted too; the server knows only the ciphertext size
 - Scheduled background cleanup of expired files
-- Per-file size limit of 1 GB (configurable); large files are processed as streamed chunks and never loaded into memory all at once
+- Per-file size limit of 1 GiB (configurable); large files are processed as streamed chunks and never loaded into memory all at once
 
 ### Nice to have
 
@@ -49,7 +49,7 @@ Based on the public Firefox Send design. When implementing it, work through each
    - `fileKey`: encrypts the file content
    - `metaKey`: encrypts metadata such as file name and type
    - `authKey`: proves possession of the link at download time; the server keeps it to verify signatures, and it decrypts nothing
-3. The file is split into 64 KB chunks, each encrypted with AES-256-GCM; the nonce is a random base value combined with the chunk index; the last chunk carries an end marker to prevent truncation attacks
+3. The file is encrypted with AES-256-GCM in 64 KiB records (65,536 bytes of ciphertext, 65,519 bytes of file data each); the nonce is a random base value combined with the record index; the last record carries an end marker to prevent truncation attacks
 4. The metadata JSON is encrypted with `metaKey`
 5. Upload the ciphertext, the encrypted metadata and the `authKey`
 6. The link is `/f/{id}#{base64url(secret)}`
