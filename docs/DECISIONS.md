@@ -39,6 +39,7 @@
 - Date: 2026-11-05
 - Decision: `go.mod` pins `go 1.27.3`, the current stable release
 - Rationale: Go 1.24 left support when Go 1.26 shipped and no longer receives security fixes; `GOTOOLCHAIN=auto` downloads the pinned version for any developer and CI reads it from `go.mod`
+- Update: raised to Go 1.27.4 for GO-2026-6859, which govulncheck reports as reachable.
 
 ## D009 vaultd serves the web client, Caddy only terminates TLS
 - Date: 2026-11-05
