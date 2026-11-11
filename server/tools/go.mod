@@ -2,7 +2,7 @@
 // the server module and its go.sum. Dependabot updates them here.
 module github.com/sHyanorn/vault-share/server/tools
 
-go 1.27.3
+go 1.27.4
 
 tool (
 	github.com/securego/gosec/v2/cmd/gosec
