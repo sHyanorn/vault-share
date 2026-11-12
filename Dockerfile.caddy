@@ -2,6 +2,6 @@
 # container; Compose maps 80 and 443 to them. The data and config
 # directories are handed to that user so the named volumes inherit the
 # ownership on first use.
-FROM caddy:2.11.9-alpine@sha256:e8d293dca35c033c4eb958d77b9096098e34da2987da3954acc0028267c6cc9b
+FROM caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
 RUN chown 65532:65532 /data /config
 USER 65532:65532
