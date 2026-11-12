@@ -4,7 +4,7 @@ End-to-end encrypted file sharing. The browser encrypts a file before upload, an
 
 ![Sharing a file: upload, open the link, download once, the link is gone](docs/demo.gif)
 
-Go 1.27 with chi and SQLite, React 19 with TypeScript and Vite, Caddy for TLS. Ciphertext lives on local disk or in an S3-compatible bucket.
+Go 1.27.4 with chi and SQLite, React 19 with TypeScript and Vite, Caddy for TLS. Ciphertext lives on local disk or in an S3-compatible bucket.
 
 ## How it works
 
@@ -28,7 +28,7 @@ sequenceDiagram
     R->>R: decrypt while downloading
 ```
 
-- **Passwords.** With a password, the link carries the secret wrapped under a key that Argon2id derives from the password (64 MiB, 2 passes). The server never learns whether a password exists.
+- **Passwords.** With a password, the link carries the secret wrapped under a key that Argon2id derives from the password (64 MiB, 2 passes). The server never sees the password; the [threat model](docs/security/THREAT_MODEL.md) lists how it can still tell that one exists.
 - **Integrity.** Each record carries its index and the last one is marked, so a changed, reordered or cut file fails to decrypt.
 - **What the server keeps.** It stores ciphertext, the encrypted name, hashes of the tokens, and the auth key. The auth key proves that a request comes from someone holding the link, but it decrypts nothing.
 

@@ -114,6 +114,7 @@
 - Layout: the link fragment is `salt(16) | iv(12) | AES-256-GCM(secret)`, 60 bytes with the 16-byte tag, where a link without a password has the 16-byte secret; the length tells them apart. The key is the 32-byte Argon2id output, the IV is random per wrap, and there is no associated data (`web/src/crypto/password.ts`)
 - Rationale: SPEC section 4; the OWASP Password Storage Cheat Sheet lists 19 MiB with 2 passes as the minimum and 46 MiB with 1 pass as an equivalent, and 64 MiB with 2 passes stays above both while taking well under a second in Chromium. Firefox Send only re-keyed the server-side authentication with PBKDF2 at 100 iterations, so its link still carried the file key
 - Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess, and the server never sees a guess, so no lockout applies. A weak password remains a weak password. Browser password managers may offer to save the per-file password under the site origin
+- Update: the server never sees the password but can tell whether a file has one. The download page asks for the metadata at once for a link without a password, and for a link with one only after the right password is entered; since D030, an entry kept in My files is 206 bytes with a password and 148 without. The threat model lists both.
 - Minimum (F21): wrapping needs a password of at least 8 code points, the floor of OWASP ASVS 5.0 (6.2.1) and of NIST SP 800-63B-4 for a password used with another factor, here the link; unwrapping accepts any length, so links made before the minimum still open
 
 ## D020 Caddy runs unprivileged
@@ -200,6 +201,7 @@
 - Account deletion: the account's files expire at once and lose their entries, so their links stop working and cleanup removes them within a minute; a download already granted finishes
 - Rationale: the server can list a user's files without being able to read them, which keeps "the server never sees file names" true for accounts. Requiring the owner token keeps the existing proof of ownership instead of adding a second one, and makes planting a file in someone else's list impossible
 - Trade-off: the server now knows which files belong to which account, and when they were created; an anonymous share stays unlinked. A file whose entry does not open, for example after a restore from a backup of another account key, is listed as unreadable and can only run out
+- Update: entries are sealed without padding, so the server can also tell from an entry's length whether the file has a password: 206 bytes with one, 148 without. The threat model lists this.
 
 ## D031 Account pages
 - Date: 2026-11-07

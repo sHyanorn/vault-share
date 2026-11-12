@@ -148,7 +148,7 @@ audit_log
   id, event, file_id, user_id, ip_hash, ua_hash, created_at
 ```
 
-The server does not know whether a file has a password (D019). The audit log stores the client address and user agent only as keyed hashes, balancing traceability and privacy (D018). Tokens, tickets and recovery codes are kept as SHA-256 hashes; the account password never reaches the server (D026).
+The server never sees a file's password (D019); the threat model lists how it can still tell that one exists. The audit log stores the client address and user agent only as keyed hashes, balancing traceability and privacy (D018). Tokens, tickets and recovery codes are kept as SHA-256 hashes; the account password never reaches the server (D026).
 
 ## 7. API
 

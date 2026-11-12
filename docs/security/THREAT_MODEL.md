@@ -84,6 +84,7 @@ Method: STRIDE. It is revised with every feature change.
 - Someone who keeps failing for a username locks it for 15 minutes for browsers that never signed in to it, at 20 attempts every 15 minutes; the owner's known browsers keep working (D027)
 - TOTP does not stop a phishing page that relays a code within its step
 - File size and upload time are visible to the server
+- The server can tell whether a file has a password in two cases. An entry kept in My files is sealed without padding, so it is 206 bytes with a password and 148 without. The download page asks for the metadata as soon as it opens a link without a password, but for a link with one only after the right password is entered, or never
 - Once a link leaks, anyone holding it can download the file; with a password the holder can still guess it offline at Argon2id cost per attempt
 - A copy of the database lets its holder fetch every live ciphertext and spend its download count through the API, without being able to decrypt (F20)
 - A power loss can roll back the newest download decrement and so grant one extra download (D005)

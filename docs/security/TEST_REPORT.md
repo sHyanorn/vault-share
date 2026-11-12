@@ -22,7 +22,7 @@ The assessment found eight issues, F18 to F25 in [FINDINGS.md](FINDINGS.md): one
 - **Fixed in documentation**: F20.
 - **Accepted**: F22, until upstream ships a fixed release.
 
-The first test pass found F18 to F22. An independent review of that pass and of its fixes found F23 to F25, and also showed that several checks could pass without proving their claim. Those checks were tightened, and everything below comes from the tightened versions.
+The first test pass found F18 to F22. A review of that pass and of its fixes found F23 to F25, and also showed that several checks could pass without proving their claim. Those checks were tightened, and everything below comes from the tightened versions.
 
 | Run on the fixed code (`a277b92`) | Result |
 |---|---|
@@ -370,7 +370,7 @@ The black-box script refuses non-local targets unless `--remote` confirms that t
 
 ## 7. M7: Accounts
 
-Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose stack, with the black-box checks `accounts`, `totp` and `account-files` and the browser check for accounts. The threat model lists what they cover. The independent review of M7 found F38 to F40, an adversarial verification of their fixes found F41 to F45, and fixing F43 turned up F46 ([FINDINGS.md](FINDINGS.md)); the runs below are on the code with all of them fixed.
+Accounts were added in M7 (D026 to D031) and tested on 2026-11-07 on the Compose stack, with the black-box checks `accounts`, `totp` and `account-files` and the browser check for accounts. The threat model lists what they cover. The review of M7 found F38 to F40, an adversarial verification of their fixes found F41 to F45, and fixing F43 turned up F46 ([FINDINGS.md](FINDINGS.md)); the runs below are on the code with all of them fixed.
 
 | Run at the end of M7 | Result |
 |---|---|

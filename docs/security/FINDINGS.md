@@ -4,20 +4,20 @@ Issues found during development, how they were found and how they were fixed. Th
 
 | ID | Date | Severity | Found by | Summary | Status |
 |---|---|---|---|---|---|
-| F1 | 2026-11-06 | High | Independent review of M2 | Orphaned ciphertext blobs let anonymous uploaders fill the disk | Fixed |
-| F2 | 2026-11-06 | High | Independent review of M2 | Concurrent uploads with the owner token could replace or delete acknowledged content | Fixed |
-| F3 | 2026-11-06 | High | Independent review of M2 | Uploads longer than 60 s were stored but never acknowledged, inviting retries | Fixed |
-| F4 | 2026-11-06 | Medium | Independent review of M2 | A granted download could be purged between token use and content open | Fixed |
-| F5 | 2026-11-06 | Medium | Independent review of M2 | Socket deadlines computed from the test clock made the suite time dependent | Fixed |
-| F6 | 2026-11-06 | Low | Independent review of M2 | Validation order of the download endpoint distinguished live files from missing ones | Fixed |
-| F7 | 2026-11-06 | Low | Independent review of M2 | Storage failures during upload were reported as client errors and not logged | Fixed |
-| F8 | 2026-11-06 | Low | Independent review of M2 | Anyone holding a file id could evict pending challenges through the per-file cap | Fixed |
-| F9 | 2026-11-06 | Low | Independent review of M2 | A file expiring while a download token was pending was purged under the recipient | Fixed |
-| F10 | 2026-11-06 | Low | Independent review of M3 | Bidi override characters in a file name spoofed the extension shown on the download page | Fixed |
-| F11 | 2026-11-06 | Low | Independent review of M3 | The uploader's MIME type became the type of the decrypted Blob | Fixed |
-| F12 | 2026-11-06 | Medium | Independent review of M4 | Rate limits and lockouts counted every IPv6 address separately, so one client could rotate through its /64 | Fixed |
-| F13 | 2026-11-06 | Medium | Independent review of M4 | Limiter and lockout tables grew without bound and rescanned on every insert past 10,000 keys | Fixed |
-| F14 | 2026-11-06 | Low | Independent review of M4 | A trusted proxy without a usable X-Forwarded-For silently merged every client into one bucket | Fixed |
+| F1 | 2026-11-06 | High | Review of M2 | Orphaned ciphertext blobs let anonymous uploaders fill the disk | Fixed |
+| F2 | 2026-11-06 | High | Review of M2 | Concurrent uploads with the owner token could replace or delete acknowledged content | Fixed |
+| F3 | 2026-11-06 | High | Review of M2 | Uploads longer than 60 s were stored but never acknowledged, inviting retries | Fixed |
+| F4 | 2026-11-06 | Medium | Review of M2 | A granted download could be purged between token use and content open | Fixed |
+| F5 | 2026-11-06 | Medium | Review of M2 | Socket deadlines computed from the test clock made the suite time dependent | Fixed |
+| F6 | 2026-11-06 | Low | Review of M2 | Validation order of the download endpoint distinguished live files from missing ones | Fixed |
+| F7 | 2026-11-06 | Low | Review of M2 | Storage failures during upload were reported as client errors and not logged | Fixed |
+| F8 | 2026-11-06 | Low | Review of M2 | Anyone holding a file id could evict pending challenges through the per-file cap | Fixed |
+| F9 | 2026-11-06 | Low | Review of M2 | A file expiring while a download token was pending was purged under the recipient | Fixed |
+| F10 | 2026-11-06 | Low | Review of M3 | Bidi override characters in a file name spoofed the extension shown on the download page | Fixed |
+| F11 | 2026-11-06 | Low | Review of M3 | The uploader's MIME type became the type of the decrypted Blob | Fixed |
+| F12 | 2026-11-06 | Medium | Review of M4 | Rate limits and lockouts counted every IPv6 address separately, so one client could rotate through its /64 | Fixed |
+| F13 | 2026-11-06 | Medium | Review of M4 | Limiter and lockout tables grew without bound and rescanned on every insert past 10,000 keys | Fixed |
+| F14 | 2026-11-06 | Low | Review of M4 | A trusted proxy without a usable X-Forwarded-For silently merged every client into one bucket | Fixed |
 | F15 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Only the first X-Forwarded-For line was read, so behind a proxy that appends a line the client chose its own address | Fixed |
 | F16 | 2026-11-06 | Medium | Adversarial verification of F12 to F14 | Failed download authentications from many addresses wrote audit rows with no global bound | Fixed |
 | F17 | 2026-11-06 | Medium | Adversarial verification of F15 and F16 | File creation had no global bound, so many addresses could fill the disk and push the audit history out | Fixed |
@@ -26,24 +26,24 @@ Issues found during development, how they were found and how they were fixed. Th
 | F20 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | The database holds the keys that pass the download check, which the docs denied | Fixed (documentation) |
 | F21 | 2026-11-06 | Low | OWASP Top 10 self-assessment (M5) | Password protection accepted passwords of any length | Fixed |
 | F22 | 2026-11-06 | Info | OWASP Top 10 self-assessment (M5) | The pinned Caddy release carries modules with published advisories | Accepted |
-| F23 | 2026-11-06 | Low | Independent review of M5 | Caddy's HTTP redirect server kept the default timeouts after F19 | Fixed |
-| F24 | 2026-11-06 | Low | Independent review of M5 | Cross-site reads through visitors' browsers could keep their request budget empty | Fixed |
-| F25 | 2026-11-06 | Low | Independent review of M5 | The API answered any Host, so a rebound name reached a directly exposed vaultd as same-origin | Fixed |
-| F26 | 2026-11-07 | High | Independent review of M6 | Concurrent uploads to one file held memory on S3 and temp files on disk outside the quota | Fixed |
-| F27 | 2026-11-07 | Medium | Independent review of M6 | Burned, expired or deleted ciphertext could stay in the bucket for good | Fixed |
-| F28 | 2026-11-07 | Medium | Independent review of M6 | S3 requests had no time limit, so a silent service stopped the cleanup job | Fixed |
-| F29 | 2026-11-07 | Medium | Independent review of M6 | An upload could fail with its object stored, and the object outlived its record | Fixed |
-| F30 | 2026-11-07 | Medium | Independent review of M6 | Stored content stayed unchanged only if the S3 service honoured If-None-Match, which nothing checked | Fixed |
-| F31 | 2026-11-07 | Low | Independent review of M6 | A versioned bucket kept deleted ciphertext as old versions | Fixed |
-| F32 | 2026-11-07 | Low | Independent review of M6 | A made-up download token cost an S3 GET before it was refused | Fixed |
+| F23 | 2026-11-06 | Low | Review of M5 | Caddy's HTTP redirect server kept the default timeouts after F19 | Fixed |
+| F24 | 2026-11-06 | Low | Review of M5 | Cross-site reads through visitors' browsers could keep their request budget empty | Fixed |
+| F25 | 2026-11-06 | Low | Review of M5 | The API answered any Host, so a rebound name reached a directly exposed vaultd as same-origin | Fixed |
+| F26 | 2026-11-07 | High | Review of M6 | Concurrent uploads to one file held memory on S3 and temp files on disk outside the quota | Fixed |
+| F27 | 2026-11-07 | Medium | Review of M6 | Burned, expired or deleted ciphertext could stay in the bucket for good | Fixed |
+| F28 | 2026-11-07 | Medium | Review of M6 | S3 requests had no time limit, so a silent service stopped the cleanup job | Fixed |
+| F29 | 2026-11-07 | Medium | Review of M6 | An upload could fail with its object stored, and the object outlived its record | Fixed |
+| F30 | 2026-11-07 | Medium | Review of M6 | Stored content stayed unchanged only if the S3 service honoured If-None-Match, which nothing checked | Fixed |
+| F31 | 2026-11-07 | Low | Review of M6 | A versioned bucket kept deleted ciphertext as old versions | Fixed |
+| F32 | 2026-11-07 | Low | Review of M6 | A made-up download token cost an S3 GET before it was refused | Fixed |
 | F33 | 2026-11-07 | Medium | Adversarial verification of F26 to F32 | Deleting or purging a file mid-upload released its quota charge while its bytes kept arriving | Fixed |
 | F34 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | A client that hung up right after its last byte left a stored object behind a failed upload | Fixed |
 | F35 | 2026-11-07 | Low | Adversarial verification of F26 to F32 | An S3 service that stopped reading mid-upload held the request and its file for good | Fixed |
 | F36 | 2026-11-07 | Low | Simplification review | A file size limit near the int64 maximum overflowed the quota arithmetic and disabled the quota | Fixed |
 | F37 | 2026-11-07 | Low | Simplification review | A leading space let a file name keep its leading dots, and a joiner-only name displayed as blank | Fixed |
-| F38 | 2026-11-07 | Medium | Independent review of M7 | Second-step codes sent at once escaped the ticket's and the account's attempt limits | Fixed |
-| F39 | 2026-11-07 | Low | Independent review of M7 | Sign-ins and download signatures sent at once escaped their lockouts | Fixed |
-| F40 | 2026-11-07 | Info | Independent review of M7 | Sign-in and second-step failures joined the audit log's shared failure budget | Accepted |
+| F38 | 2026-11-07 | Medium | Review of M7 | Second-step codes sent at once escaped the ticket's and the account's attempt limits | Fixed |
+| F39 | 2026-11-07 | Low | Review of M7 | Sign-ins and download signatures sent at once escaped their lockouts | Fixed |
+| F40 | 2026-11-07 | Info | Review of M7 | Sign-in and second-step failures joined the audit log's shared failure budget | Accepted |
 | F41 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | A second step could spend its ticket and code without opening a session | Fixed |
 | F42 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | Attempts refused only because others were in flight were answered as a 15-minute lockout | Fixed |
 | F43 | 2026-11-07 | Low | Adversarial verification of F38 and F39 | A ticket issued before a password or TOTP change could still complete the sign-in | Fixed |
