@@ -42,8 +42,21 @@ jobs:
         if: github.ref_type == 'tag'
         with:
           subject-path: client-manifest.json
-      - if: github.ref_type == 'tag'
-        run: cp "${{ steps.attest.outputs.bundle-path }}" client-manifest.sigstore.json
+      # The checks a reader runs: against GitHub's copy of the attestation,
+      # and offline against the bundle and Sigstore's trusted root.
+      - name: Verify the attestation
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "${{ steps.attest.outputs.bundle-path }}" client-manifest.sigstore.json
+          workflow="$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          gh attestation verify client-manifest.json --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$workflow" --source-ref "$GITHUB_REF"
+          gh attestation trusted-root > trusted_root.jsonl
+          gh attestation verify client-manifest.json --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$workflow" --source-ref "$GITHUB_REF" \
+            --bundle client-manifest.sigstore.json --custom-trusted-root trusted_root.jsonl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: client-manifest
