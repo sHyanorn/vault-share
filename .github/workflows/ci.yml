@@ -240,7 +240,7 @@ jobs:
           ./webcheck verify -manifest manifest.json http://localhost:8082 > changed.txt || code=$?
           cat changed.txt
           test "$code" -eq 1
-          test "$(grep -c '^changed' changed.txt)" -eq 1
+          grep -qx '1 difference(s) from the manifest' changed.txt
           grep -q "^changed  /$script " changed.txt
       - name: End-to-end tests
         working-directory: web

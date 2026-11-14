@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,17 +53,21 @@ func changeByte(t *testing.T, path string) {
 // index at / and at any path that names no file.
 func site(t *testing.T, dir string, csp string) *httptest.Server {
 	t.Helper()
+	srv := httptest.NewServer(siteHandler(dir, csp))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func siteHandler(dir, csp string) http.Handler {
 	files := http.FileServer(http.Dir(dir))
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", csp)
 		if info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(r.URL.Path))); err == nil && !info.IsDir() {
 			files.ServeHTTP(w, r)
 			return
 		}
 		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	})
 }
 
 func verifyCode(t *testing.T, args ...string) (int, string) {
@@ -166,5 +171,30 @@ func TestManifestNeedsAnIndex(t *testing.T) {
 	var out, errs bytes.Buffer
 	if code := run([]string{"manifest", "-dir", dir, "-csp", testCSP}, &out, &errs); code != 2 {
 		t.Fatalf("exit %d", code)
+	}
+}
+
+func TestVerifySiteChecksTLS(t *testing.T) {
+	dir, manifest := client(t)
+	srv := httptest.NewTLSServer(siteHandler(dir, testCSP))
+	defer srv.Close()
+	if code, out := verifyCode(t, "-manifest", manifest, srv.URL); code != 2 || !strings.Contains(out, "certificate") {
+		t.Fatalf("an unknown certificate: exit %d:\n%s", code, out)
+	}
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	write(t, ca, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})))
+	if code, out := verifyCode(t, "-manifest", manifest, "-cafile", ca, srv.URL); code != 0 {
+		t.Fatalf("with -cafile: exit %d:\n%s", code, out)
+	}
+}
+
+func TestVerifyDirFindsAMissingFile(t *testing.T) {
+	dir, manifest := client(t)
+	if err := os.Remove(filepath.Join(dir, "assets", "app.js")); err != nil {
+		t.Fatal(err)
+	}
+	code, out := verifyCode(t, "-manifest", manifest, "-dir", dir)
+	if code != 1 || !strings.Contains(out, "missing  assets/app.js") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
