@@ -271,9 +271,7 @@ func (h *files) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer try.end()
-	mac := hmac.New(sha256.New, f.AuthKey)
-	mac.Write(challenge)
-	if !h.challenges.valid(f.ID, challenge, now) || !hmac.Equal(mac.Sum(nil), signature) {
+	if !h.challenges.valid(f.ID, challenge, now) || !validSignature(f.AuthKey, challenge, signature) {
 		h.audit.Record(ctx, audit.DownloadDenied, f.ID, client)
 		if try.fail() {
 			h.audit.Record(ctx, audit.ClientLocked, f.ID, client)
@@ -507,6 +505,14 @@ func randomBytes(n int) []byte {
 		panic(err) // crypto/rand never fails on supported platforms
 	}
 	return b
+}
+
+// validSignature reports whether signature is the HMAC-SHA256 of challenge
+// under the file's auth key, in constant time.
+func validSignature(authKey, challenge, signature []byte) bool {
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write(challenge)
+	return hmac.Equal(mac.Sum(nil), signature)
 }
 
 func hashToken(token []byte) []byte {
