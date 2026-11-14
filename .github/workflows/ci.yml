@@ -97,6 +97,64 @@ jobs:
           node web/scripts/crosscheck.ts check python.json
       - name: The fixed vectors are what Python writes
         run: .venv/bin/python crosscheck/crosscheck.py check-vectors testdata/share_format_test.json
+  # The client must build byte for byte the same in the Dockerfile's image
+  # (musl), on glibc Linux on x64 and arm64, and on macOS, whose bundler and
+  # CSS minifier are each a native binary of their own.
+  reproducible:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: node-alpine-amd64, os: ubuntu-latest, docker: true }
+          - { name: ubuntu-x64, os: ubuntu-24.04 }
+          - { name: ubuntu-arm64, os: ubuntu-24.04-arm }
+          - { name: macos-arm64, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build in the Dockerfile's web stage
+        if: matrix.docker
+        run: |
+          docker build --target web --tag web-build .
+          docker run --rm web-build sh -c 'echo "node $(node --version), Alpine $(cat /etc/alpine-release), $(uname -m)"' > env.txt
+          docker run --rm web-build sh -c 'cd dist && find . -type f | LC_ALL=C sort | xargs sha256sum' > hashes.txt
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !matrix.docker }}
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build on the runner
+        if: ${{ !matrix.docker }}
+        run: |
+          (cd web && npm ci --ignore-scripts && npm run build)
+          echo "node $(node --version), ${{ matrix.os }}, $(uname -sm)" > env.txt
+          (cd web/dist && find . -type f | LC_ALL=C sort | xargs shasum -a 256) > hashes.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-build-${{ matrix.name }}
+          path: |
+            env.txt
+            hashes.txt
+  reproducible-compare:
+    needs: reproducible
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Every platform built the same client
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'web-build-*' --dir builds
+          cd builds
+          for build in *; do
+            printf '### %s\n%s\n```\n%s\n```\n' "$build" "$(cat "$build/env.txt")" "$(cat "$build/hashes.txt")"
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$(ls | wc -l)" -eq 4
+          for build in *; do
+            diff web-build-node-alpine-amd64/hashes.txt "$build/hashes.txt"
+          done
   semgrep:
     runs-on: ubuntu-latest
     steps:
