@@ -411,6 +411,9 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "auth, salt, new_auth and sealed_key must be base64url of 32, 16, 32 and 60 bytes")
 		return
 	}
+	if overlongCode(w, req.Code) {
+		return
+	}
 	ctx := r.Context()
 	token := randomBytes(tokenBytes)
 	var encoded string
@@ -453,6 +456,9 @@ func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	auth, ok := decodeFixed(req.Auth, authBytes)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request", "auth must be base64url of 32 bytes")
+		return
+	}
+	if overlongCode(w, req.Code) {
 		return
 	}
 	ctx := r.Context()

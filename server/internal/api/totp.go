@@ -19,6 +19,9 @@ const (
 	// and maxTicketAttempts how many codes one ticket may try.
 	ticketTTL         = 5 * time.Minute
 	maxTicketAttempts = 5
+	// maxCodeLength bounds a code as sent: longer than any TOTP or recovery
+	// code, dashes and spaces included.
+	maxCodeLength = 32
 )
 
 type secondStepResponse struct {
@@ -138,6 +141,16 @@ func (a *accounts) confirm(w http.ResponseWriter, r *http.Request, auth []byte, 
 	return store.User{}, false
 }
 
+// overlongCode refuses a code longer than any code, before it is checked.
+// An empty code stands for none.
+func overlongCode(w http.ResponseWriter, code string) bool {
+	if len(code) <= maxCodeLength {
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "invalid_request", "a code has at most 32 characters")
+	return true
+}
+
 // changeFailed answers a change that could not be made: busy while every
 // hashing slot is taken, an internal error otherwise.
 func (a *accounts) changeFailed(w http.ResponseWriter, what string, err error) {
@@ -162,7 +175,7 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket, ok := decodeFixed(req.Ticket, tokenBytes)
-	if !ok || req.Code == "" || len(req.Code) > 32 {
+	if !ok || req.Code == "" || len(req.Code) > maxCodeLength {
 		writeError(w, http.StatusBadRequest, "invalid_request", "ticket and code must be well-formed")
 		return
 	}
@@ -289,6 +302,9 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "auth must be base64url of 32 bytes")
 		return
 	}
+	if overlongCode(w, req.Code) {
+		return
+	}
 	ctx := r.Context()
 	if sessionFrom(ctx).user.TOTPSecret != nil {
 		writeError(w, http.StatusConflict, "totp_on", "two-factor sign-in is already on")
@@ -358,6 +374,9 @@ func (a *accounts) totpDisableHandler(w http.ResponseWriter, r *http.Request) {
 	auth, ok := decodeFixed(req.Auth, authBytes)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request", "auth must be base64url of 32 bytes")
+		return
+	}
+	if overlongCode(w, req.Code) {
 		return
 	}
 	ctx := r.Context()

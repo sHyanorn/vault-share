@@ -338,6 +338,47 @@ func TestConfirmationsCountPerSession(t *testing.T) {
 	}
 }
 
+// Every request that takes a code refuses one longer than any code before
+// it is checked, as the sign-in's second step does, and counts nothing
+// (F66).
+func TestOverlongCodesAreRefused(t *testing.T) {
+	e := newAccountEnv(t)
+	alice := newCreds("alice")
+	b := e.browser()
+	b.signup(alice)
+	secret, _ := b.enableTOTP(alice)
+	bob := newCreds("bob")
+	setup := e.browser()
+	setup.signup(bob)
+	if status, _ := setup.send(http.MethodPost, "/api/v1/account/totp/setup", nil, nil); status != http.StatusOK {
+		t.Fatalf("setup: %d", status)
+	}
+	long := strings.Repeat("1", 33)
+	auth := encoding.EncodeToString(alice.auth)
+	next := newCreds("alice")
+	for _, req := range []struct {
+		b            *browser
+		method, path string
+		body         any
+	}{
+		{b, http.MethodPost, "/api/v1/account/password", passwordRequest{Auth: auth, Salt: encoding.EncodeToString(next.salt),
+			NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed), Code: long}},
+		{b, http.MethodDelete, "/api/v1/account", confirmRequest{Auth: auth, Code: long}},
+		{b, http.MethodDelete, "/api/v1/account/totp", totpRequest{Auth: auth, Code: long}},
+		{setup, http.MethodPost, "/api/v1/account/totp", totpRequest{Auth: encoding.EncodeToString(bob.auth), Code: long}},
+	} {
+		for range lockoutFailures + 1 {
+			if status, body := req.b.send(req.method, req.path, req.body, nil); status != http.StatusBadRequest || errorCode(body) != "invalid_request" {
+				t.Errorf("%s %s with a %d-character code: %d %s", req.method, req.path, len(long), status, body)
+				break
+			}
+		}
+	}
+	if status, body := b.send(http.MethodDelete, "/api/v1/account/totp", totpRequest{Auth: auth, Code: e.code(secret, 0)}, nil); status != http.StatusOK {
+		t.Errorf("a right code afterwards: %d %s", status, body)
+	}
+}
+
 func TestDisableTOTP(t *testing.T) {
 	e := newAccountEnv(t)
 	alice := newCreds("alice")
