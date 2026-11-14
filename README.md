@@ -1,5 +1,7 @@
 # vault-share
 
+[![CI](https://github.com/sHyanorn/vault-share/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sHyanorn/vault-share/actions/workflows/ci.yml?query=branch%3Amain)
+
 End-to-end encrypted file sharing. The browser encrypts a file before upload, and the key travels only in the link, after the `#`, which browsers never send. The server stores ciphertext and cannot read file contents or names. A link can expire, allow a set number of downloads, or burn after reading. An optional account keeps a list of the files you shared, still without the server reading them.
 
 ![Sharing a file: upload, open the link, download once, the link is gone](docs/demo.gif)
