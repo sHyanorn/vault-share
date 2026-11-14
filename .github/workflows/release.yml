@@ -1,0 +1,66 @@
+name: release
+# On a v* tag: write the manifest of the web client the release image
+# serves, attest it through Sigstore with this workflow's identity, and
+# attach both to a draft release. Run by hand, it only writes the manifest.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # The client's files come out of the image, and the CSP from the image
+      # running, so the manifest describes what the release serves.
+      - name: Write the manifest of the image's client
+        run: |
+          docker build --tag vaultd .
+          (cd server && go build -o ../webcheck ./cmd/webcheck)
+          container=$(docker create vaultd)
+          docker cp "$container:/srv/web" client
+          docker rm "$container" > /dev/null
+          docker run --detach --publish 127.0.0.1:8080:8080 --env VAULT_BASE_URL=http://localhost:8080 vaultd > /dev/null
+          curl --silent --fail --retry 10 --retry-delay 1 --retry-all-errors http://localhost:8080/healthz > /dev/null
+          csp=$(curl --silent --head http://localhost:8080/ | tr -d '\r' | sed -n 's/^content-security-policy: //Ip')
+          ./webcheck manifest -dir client -csp "$csp" -version "$GITHUB_REF_NAME" \
+            -repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -commit "$GITHUB_SHA" > client-manifest.json
+          ./webcheck verify -manifest client-manifest.json http://localhost:8080
+          cat client-manifest.json
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        id: attest
+        if: github.ref_type == 'tag'
+        with:
+          subject-path: client-manifest.json
+      - if: github.ref_type == 'tag'
+        run: cp "${{ steps.attest.outputs.bundle-path }}" client-manifest.sigstore.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: client-manifest
+          path: client-manifest*.json
+  # Only this job can write to the repository, and it runs no build.
+  draft:
+    needs: manifest
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Attach the manifest and its attestation to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name client-manifest
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$GITHUB_REF_NAME" --generate-notes client-manifest.json client-manifest.sigstore.json
