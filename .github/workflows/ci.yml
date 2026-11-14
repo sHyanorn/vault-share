@@ -192,6 +192,42 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # The manifest comes from a build on the runner, its CSP from vaultd
+      # itself; the stack, behind Caddy, must serve exactly that. A second
+      # vaultd from the same image serves a copy of the stack's client.
+      - name: The served client matches a manifest of a separate build
+        run: |
+          (cd web && npm run build)
+          (cd server && go build -o ../webcheck ./cmd/webcheck)
+          docker compose cp vaultd:/srv/web served
+          image=$(docker compose images --quiet vaultd)
+          serve() {
+            docker run --detach --publish "127.0.0.1:$2:8080" --env "VAULT_BASE_URL=http://localhost:$2" \
+              --volume "$PWD/$1:/srv/web:ro" "$image" > /dev/null
+            curl --silent --fail --retry 10 --retry-delay 1 --retry-all-errors "http://localhost:$2/healthz" > /dev/null
+          }
+          serve served 8081
+          csp=$(curl --silent --head http://localhost:8081/ | tr -d '\r' | sed -n 's/^content-security-policy: //Ip')
+          ./webcheck manifest -dir web/dist -csp "$csp" > manifest.json
+          docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt root.crt
+          ./webcheck verify -manifest manifest.json -cafile root.crt https://localhost
+          ./webcheck verify -manifest manifest.json http://localhost:8081
+          # One changed byte in one script, served the same way, must be
+          # found, and nothing else.
+          cp -r served changed
+          script=$(cd changed && ls assets/*.js | head -1)
+          python3 -c 'import sys; b = bytearray(open(sys.argv[1], "rb").read()); b[1000] ^= 1; open(sys.argv[1], "wb").write(b)' "changed/$script"
+          serve changed 8082
+          code=0
+          ./webcheck verify -manifest manifest.json http://localhost:8082 > changed.txt || code=$?
+          cat changed.txt
+          test "$code" -eq 1
+          test "$(grep -c '^changed' changed.txt)" -eq 1
+          grep -q "^changed  /$script " changed.txt
       - name: End-to-end tests
         working-directory: web
         run: npm run e2e
