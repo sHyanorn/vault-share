@@ -242,9 +242,12 @@ jobs:
           test "$code" -eq 1
           grep -qx '1 difference(s) from the manifest' changed.txt
           grep -q "^changed  /$script " changed.txt
+      # The damaged-download tests run in the browsers job against a vaultd
+      # of their own: here their downloads would spend the client budget the
+      # browser and black-box checks below need.
       - name: End-to-end tests
         working-directory: web
-        run: npm run e2e
+        run: npm run e2e -- --grep-invert 'damaged download'
       - name: Browser security checks
         run: NODE_PATH="$PWD/web/node_modules" node scripts/browser_checks.cjs https://localhost
       # Last: its rate-limit check spends the client's create budget.
@@ -276,7 +279,7 @@ jobs:
           # IPv6 addresses tentative for a moment after the containers start.
           ip -6 address show tentative
           timeout 30 sh -c 'while [ -n "$(ip -6 address show tentative)" ]; do sleep 0.2; done'
-          (cd web && npm run e2e)
+          (cd web && npm run e2e -- --grep-invert 'damaged download')
           # Every test share ends burned or deleted, so the bucket must be
           # empty, and through those deletes: the orphan sweep found nothing.
           curl --silent --show-error --fail --aws-sigv4 aws:amz:us-east-1:s3 \
