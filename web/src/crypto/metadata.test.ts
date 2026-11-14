@@ -41,6 +41,20 @@ describe('metadata', () => {
     expect(toHex(a)).not.toBe(toHex(b))
   })
 
+  it('pads the plaintext, so the length shows nothing of a shorter name', async () => {
+    const key = await metaKey()
+    const length = async (name: string) =>
+      (await encryptMetadata(key, { ...meta, name })).length
+    const short = await length('a.pdf')
+    expect(short).toBe(12 + 1024 + 16)
+    expect(await length('salary-review-2026-final.pdf')).toBe(short)
+    expect(await length('名'.repeat(255))).toBe(short)
+    // A longer name takes the next KiB, and no blob passes the server's
+    // limit of 4096 bytes.
+    expect(await length('x'.repeat(1100))).toBe(12 + 2048 + 16)
+    expect(await length('x'.repeat(4000))).toBe(4096)
+  })
+
   it('rejects tampering, another key and truncation', async () => {
     const key = await metaKey()
     const blob = await encryptMetadata(key, meta)

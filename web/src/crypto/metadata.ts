@@ -8,16 +8,26 @@ export interface FileMetadata {
 
 const IV_LENGTH = 12
 const TAG_LENGTH = 16
+/**
+ * The JSON is padded with spaces to a multiple of PAD_TO bytes, so the
+ * blob's length shows nothing of a name that fits (D012), and to no more
+ * than the server's limit of 4096 bytes for the whole blob allows.
+ */
+const PAD_TO = 1024
+const MAX_PLAIN = 4096 - IV_LENGTH - TAG_LENGTH
 
-/** iv(12) | AES-256-GCM(JSON) */
+/** iv(12) | AES-256-GCM(JSON padded with spaces) */
 export async function encryptMetadata(
   metaKey: CryptoKey,
   meta: FileMetadata,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
-  const plain = new TextEncoder().encode(
+  const json = new TextEncoder().encode(
     JSON.stringify({ name: meta.name, type: meta.type, size: meta.size }),
   )
+  const padded = Math.min(Math.ceil(json.length / PAD_TO) * PAD_TO, MAX_PLAIN)
+  const plain = new Uint8Array(Math.max(json.length, padded)).fill(0x20)
+  plain.set(json)
   const params = { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 }
   const cipher = new Uint8Array(
     await crypto.subtle.encrypt(params, metaKey, plain),

@@ -70,6 +70,7 @@
 - Differences from Firefox Send: the decrypter rejects a header whose `rs` differs from 65536 or that carries a key id instead of ignoring it; an empty file still produces a last record, so a stream cut after the header fails instead of decrypting to nothing; metadata uses a random IV instead of all zeros; password protection (M4) will use Argon2id instead of PBKDF2 with 100 iterations
 - Bound: the 16-byte secret caps every key at 128 bits of entropy (SPEC section 4); AES-256 adds no strength beyond that and costs nothing
 - Contract for consumers (M3): `decryptStream` emits each authenticated record as soon as it is verified, so a stream error can arrive after plaintext has been written; the download page must treat any error as fatal and discard the partial file (RFC 8188 section 4.2). `name` and `type` from `decryptMetadata` are uploader-controlled strings that only pass a type check; sanitize them before display and before use in `Content-Disposition`
+- Update: the metadata JSON is padded with spaces to a multiple of 1024 bytes, and no further than the 4096 bytes the server accepts for the blob, so the blob's length no longer gives the server, or anyone holding the file id, the length of the name (F63). JSON allows white space after a value, so blobs sealed before and clients from before read either form
 
 ## D013 Tokens are random secrets hashed with SHA-256
 - Date: 2026-11-06
