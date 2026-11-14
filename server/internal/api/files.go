@@ -450,10 +450,18 @@ func (h *files) ownerFile(w http.ResponseWriter, r *http.Request) (store.File, b
 	return f, true
 }
 
+// decodeJSON reads a body of one JSON value into v, with nothing after it
+// but white space (F67), and answers 400 otherwise.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	err := dec.Decode(v)
+	if err == nil {
+		if _, next := dec.Token(); next != io.EOF {
+			err = errors.New("data after the JSON value")
+		}
+	}
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "malformed JSON body")
 		return false
 	}

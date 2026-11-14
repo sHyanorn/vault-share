@@ -793,3 +793,19 @@ func TestJSONBodiesAreBounded(t *testing.T) {
 		t.Errorf("oversized JSON: %d", status)
 	}
 }
+
+// A JSON body holds one value and nothing after it but white space (F67).
+func TestJSONBodiesEndWithTheirValue(t *testing.T) {
+	e := newEnv(t)
+	for body, want := range map[string]int{
+		`{"username":"alice"}`:          http.StatusOK,
+		"{\"username\":\"alice\"}\r\n ": http.StatusOK,
+		`{"username":"alice"}x`:         http.StatusBadRequest,
+		`{"username":"alice"}{}`:        http.StatusBadRequest,
+		`{"username":"alice"} "more"`:   http.StatusBadRequest,
+	} {
+		if status, _ := e.request(http.MethodPost, "/api/v1/account/salt", []byte(body), nil, nil); status != want {
+			t.Errorf("%q: %d, want %d", body, status, want)
+		}
+	}
+}

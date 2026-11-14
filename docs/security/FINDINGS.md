@@ -66,6 +66,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F60 | 2026-11-14 | Low | Code review | A new account could take the id, and with it the audit trail, of a deleted one | Fixed |
 | F65 | 2026-11-14 | Info | Code review | A link whose # arrived as %23 put its key in the request log | Fixed |
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
+| F67 | 2026-11-14 | Info | Code review | JSON bodies were accepted with data after the value | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -319,3 +320,7 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F66 Codes on account changes without a length check (Info)
 - Impact: the sign-in's second step refused a code longer than 32 characters, but a password change, an account deletion and turning two-factor sign-in on or off passed any code up to the 16 KiB body limit to the code check, against the rule that every input is checked for length and format. It cost a counted wrong code and nothing more.
 - Fix: those requests refuse a code longer than 32 characters with 400 before anything is checked or counted. A test sends each of them an overlong code six times and then confirms a change with a right one; it failed before the fix.
+
+## F67 Data after a JSON body (Info)
+- Impact: the API decoded the first JSON value of a body and ignored whatever followed it, so `{"username":"alice"}anything` was read as a valid request, against the rule that every input is checked for format. No effect was found.
+- Fix: a body must end after its value, but for white space, or it is answered 400. A test sends bodies followed by text, a second object and a second value; it failed before the fix.
