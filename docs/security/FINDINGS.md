@@ -71,7 +71,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F65 | 2026-11-14 | Info | Code review | A link whose # arrived as %23 put its key in the request log | Fixed |
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
 | F67 | 2026-11-14 | Info | Code review | JSON bodies were accepted with data after the value | Fixed |
-| F68 | 2026-11-14 | Low | Code review | A download that failed at Caddy left its token in Caddy's error log | Open |
+| F68 | 2026-11-14 | Low | Code review | A download that failed at Caddy left its token in Caddy's error log | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
