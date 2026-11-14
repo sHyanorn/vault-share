@@ -441,6 +441,23 @@ A code review led to a refactoring of the server and the web client, three fixes
 
 How the numbers are counted: as in section 8. CI runs `go test` without `-v`, so its log shows the packages, not the count; the count is the number of top-level test functions in the source, and the local run confirms it apart from the two S3 tests.
 
+## 10. Code review fixes, 2026-11-14
+
+A code review of 03af565 led to fixes for F56 to F61, F63 and F65 to F68, a corrected sentence of the threat model (F62) and one accepted risk (F64) ([FINDINGS.md](FINDINGS.md)). The tables of sections 8 and 9 are kept as they were; the runs below are of commit ea4a372.
+
+| Run after the fixes | Result | Where it ran |
+|---|---|---|
+| Go tests with `-race` | 173 test functions, every package passed | CI run 43536906405, with the S3 test service running |
+| Go tests with `-race`, without an S3 service | 171 passed, 227 with subtests; the 2 S3 tests skipped | Locally |
+| Vitest | 113 passed | CI and locally |
+| `scripts/blackbox.py`, Compose stack | 171 passed, none skipped | CI |
+| `scripts/blackbox.py`, vaultd direct | 165 passed; 2 skipped | Locally |
+| `scripts/browser_checks.cjs` | 30 passed | CI on the Compose stack |
+| End-to-end tests, disk and S3 | 8 passed on each | CI |
+| gosec, govulncheck on the source, npm audit | 0 issues | CI |
+
+How the numbers are counted: as in section 8.
+
 ## Evidence
 
 | File | Content |
