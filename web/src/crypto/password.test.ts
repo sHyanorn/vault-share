@@ -82,3 +82,43 @@ describe('password wrapping', () => {
     )
   }, 30_000)
 })
+
+describe('password normalization (F70)', () => {
+  const nfc = 'café horse 8chars'.normalize('NFC')
+  const nfd = nfc.normalize('NFD')
+
+  it('opens a link wrapped under one Unicode form with the other', async () => {
+    const secret = randomBytes(16)
+    for (const [wrapAs, typed] of [
+      [nfc, nfd],
+      [nfd, nfc],
+    ] as const) {
+      const wrapped = await wrapSecret(secret, wrapAs)
+      expect(await unwrapSecret(wrapped, typed)).toEqual(secret)
+    }
+  }, 60_000)
+
+  it('folds compatibility characters such as full-width letters', async () => {
+    const secret = randomBytes(16)
+    const wrapped = await wrapSecret(secret, 'ｐａｓｓｗｏｒｄ１２')
+    expect(await unwrapSecret(wrapped, 'password12')).toEqual(secret)
+    expect(await unwrapSecret(wrapped, 'ｐａｓｓｗｏｒｄ１２')).toEqual(secret)
+  }, 60_000)
+
+  it('opens a link wrapped before normalization in either form', async () => {
+    // Wrapped by crosscheck/vaultshare.py under the UTF-8 bytes of the NFD
+    // form, as the client wrapped every password before F70.
+    const legacy = fromHex(
+      '101112131415161718191a1b1c1d1e1f202122232425262728292a2b3e7e8f0bd2ca036d3739f9ee55bbadfba9a94b81c8f13a2f832f2528cfade557',
+    )
+    for (const typed of [nfd, nfc])
+      expect(await unwrapSecret(legacy, typed)).toEqual(
+        fromHex('00112233445566778899aabbccddeeff'),
+      )
+  }, 60_000)
+
+  it('counts the minimum length after normalization', () => {
+    // Seven characters, nine code points in NFD.
+    expect(passwordTooShort('caféé12'.normalize('NFD'))).toBe(true)
+  })
+})

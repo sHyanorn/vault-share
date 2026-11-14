@@ -72,6 +72,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
 | F67 | 2026-11-14 | Info | Code review | JSON bodies were accepted with data after the value | Fixed |
 | F68 | 2026-11-14 | Low | Code review | A download that failed at Caddy left its token in Caddy's error log | Fixed |
+| F70 | 2026-11-14 | Low | Second implementation of the share format | A share password typed in another Unicode form did not open its link | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -350,3 +351,7 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F68 Download tokens in Caddy's error log (Low)
 - Impact: Caddy writes a request that fails at Caddy itself, such as a 502 while vaultd restarts or is unreachable, to its error log at ERROR level with a `request` object whose `uri` keeps the query string, whether or not an access log is on (Caddy 2.11.9, `modules/caddyhttp/server.go`). A download that failed so left its one-time token, valid for five minutes, in `docker compose logs caddy`. The token only fetches ciphertext and spends a download already granted to its holder. The log checks of the test report ran without upstream failures. Found by reading Caddy's source.
 - Fix: Caddy's default log replaces the `token` parameter of a logged URI with `REDACTED` (D020). A CI step stops vaultd, requests content with a made-up token, and requires both the 502 entry with the path and the replaced token in Caddy's log and the token nowhere in it.
+
+## F70 Share passwords without Unicode normalization (Low)
+- Impact: the wrapping key was derived from the password's UTF-8 bytes as typed, while account passwords are normalized with NFKC (D026). A password with an accented letter typed as one code point (NFC) did not open a link wrapped under the same password typed as a letter and a combining mark (NFD), which some keyboards, input methods and copied text produce, and full-width letters did not match their ordinary forms. The recipient was told the password was wrong.
+- Fix: the password is normalized with NFKC before Argon2id, and unwrapping also tries the password as typed and its NFC and NFD forms, which older links used (D019). Tests open links wrapped under NFC, NFD and full-width forms with the other forms, and a link wrapped before the fix; they failed before it.

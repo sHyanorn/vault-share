@@ -31,6 +31,8 @@ const DATA = RS - 17
 const SIZES = [0, 1, DATA - 1, DATA, DATA + 1, 2 * DATA, 200_000]
 const NAME = 'résumé 2026.pdf'
 const PASSWORD = 'café horse 8chars'
+// The same password in full-width letters, which NFKC folds to the above.
+const WIDE = 'ｃａｆé ｈｏｒｓｅ ８ｃｈａｒｓ'
 
 interface Case {
   secret: string
@@ -87,9 +89,12 @@ async function generate(path: string) {
     })
   }
   const wraps: Wrap[] = []
-  for (const form of ['NFC', 'NFD']) {
+  for (const password of [
+    PASSWORD.normalize('NFC'),
+    PASSWORD.normalize('NFD'),
+    WIDE,
+  ]) {
     const secret = randomBytes(16)
-    const password = PASSWORD.normalize(form)
     const wrapped = await wrapSecret(secret, password)
     wraps.push({ password, wrapped: toHex(wrapped), secret: toHex(secret) })
   }
@@ -105,7 +110,7 @@ async function check(path: string) {
     wraps: Wrap[]
   }
   require(data.cases.length === SIZES.length &&
-    data.wraps.length === 2, 'counts')
+    data.wraps.length === 3, 'counts')
   for (const c of data.cases) {
     const keys = await deriveKeys(fromHex(c.secret))
     const body = fromHex(c.body)
@@ -138,10 +143,16 @@ async function check(path: string) {
     )
   }
   for (const w of data.wraps) {
-    const secret = await unwrapSecret(fromHex(w.wrapped), w.password)
-    require(secret !== null && toHex(secret) === w.secret, 'wrapped secret')
+    for (const form of ['NFC', 'NFD', 'NFKC']) {
+      const typed = w.password.normalize(form)
+      const secret = await unwrapSecret(fromHex(w.wrapped), typed)
+      require(secret !== null &&
+        toHex(secret) === w.secret, `wrapped secret, typed in ${form}`)
+    }
   }
-  console.log(`${data.wraps.length} wrapped secrets open with their passwords`)
+  console.log(
+    `${data.wraps.length} wrapped secrets open with their passwords typed in NFC, NFD and NFKC`,
+  )
 }
 
 const [command, path] = process.argv.slice(2)

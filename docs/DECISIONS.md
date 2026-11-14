@@ -118,6 +118,7 @@
 - Trade-off: the wrapped secret is in the link, so an attacker holding the link can guess passwords offline against the GCM tag at Argon2id cost per guess, and the server never sees a guess, so no lockout applies. A weak password remains a weak password. Browser password managers may offer to save the per-file password under the site origin
 - Update: the server never sees the password but can tell whether a file has one. The download page asks for the metadata at once for a link without a password, and for a link with one only after the right password is entered; since D030, an entry kept in My files is 206 bytes with a password and 148 without. The threat model lists both.
 - Minimum (F21): wrapping needs a password of at least 8 code points, the floor of OWASP ASVS 5.0 (6.2.1) and of NIST SP 800-63B-4 for a password used with another factor, here the link; unwrapping accepts any length, so links made before the minimum still open
+- Update (F70): the password is normalized with NFKC before Argon2id, as account passwords are (D026), so a password typed in another Unicode form opens the same link; the minimum length counts code points after normalization. A link wrapped before used the password as typed, so unwrapping tries NFKC first, then the password as typed, in NFC and in NFD, skipping forms that repeat. Each distinct form costs one derivation: a wrong password costs one to four, and one when no normalization changes it
 
 ## D020 Caddy runs unprivileged
 - Date: 2026-11-06

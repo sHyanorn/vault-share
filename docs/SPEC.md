@@ -75,7 +75,7 @@ The exact formats are in D012 and D019.
 - Content: the record format of RFC 8188 with a 256-bit key. Header `salt(16) | rs(4, always 65536) | idlen(1, always 0)`; each record is AES-256-GCM over `data | delimiter | padding`, the delimiter `0x01`, or `0x02` in the last record
 - Nonces: per file, a content key and a 12-byte nonce base come from HKDF over `fileKey` and the random header salt; record `i` uses the nonce base XOR `i`, so no nonce repeats under a key
 - Metadata: `iv(12) | AES-256-GCM(JSON {name, type, size})` under `metaKey`, with a random IV; the JSON is padded with spaces to a multiple of 1024 bytes, at most to the 4068 bytes that keep the blob within the server's 4096
-- Password: the link carries `salt(16) | iv(12) | AES-256-GCM(secret)`, 60 bytes, in place of `secret`; the key is `Argon2id(password, salt, 64 MiB, 2 passes, 1 lane, 32 bytes)`, the IV is random, and there is no associated data
+- Password: the link carries `salt(16) | iv(12) | AES-256-GCM(secret)`, 60 bytes, in place of `secret`; the key is `Argon2id(NFKC(password), salt, 64 MiB, 2 passes, 1 lane, 32 bytes)` over the password's UTF-8 bytes, the IV is random, and there is no associated data. Links wrapped before NFKC (D019) used the password as typed, so unwrapping tries NFKC first, then the password as typed, in NFC and in NFD
 
 ### Accounts (optional, D026)
 

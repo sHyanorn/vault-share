@@ -4,6 +4,7 @@ docs/DECISIONS.md D012 and D019, with pyca/cryptography for the primitives."""
 import hashlib
 import hmac
 import json
+import unicodedata
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -114,15 +115,20 @@ def _wrapping_key(password: str, salt: bytes) -> AESGCM:
 
 
 def wrap_secret(secret: bytes, password: str, salt: bytes, iv: bytes) -> bytes:
-    """salt | iv | AES-256-GCM(secret), with no associated data."""
-    return salt + iv + _wrapping_key(password, salt).encrypt(iv, secret, None)
+    """salt | iv | AES-256-GCM(secret) under Argon2id of the NFKC password, with no associated data."""
+    return salt + iv + _wrapping_key(unicodedata.normalize("NFKC", password), salt).encrypt(iv, secret, None)
 
 
 def unwrap_secret(wrapped: bytes, password: str) -> bytes | None:
-    """The secret, or None for a wrong password."""
+    """The secret, or None for a wrong password. Links wrapped before NFKC
+    used the password as typed, so that and its NFC and NFD forms follow."""
     if len(wrapped) != WRAPPED_LENGTH:
         raise FormatError("wrapped secret has the wrong length")
-    try:
-        return _wrapping_key(password, wrapped[:16]).decrypt(wrapped[16:28], wrapped[28:], None)
-    except InvalidTag:
-        return None
+    forms = [unicodedata.normalize("NFKC", password), password]
+    forms += [unicodedata.normalize(f, password) for f in ("NFC", "NFD")]
+    for form in dict.fromkeys(forms):
+        try:
+            return _wrapping_key(form, wrapped[:16]).decrypt(wrapped[16:28], wrapped[28:], None)
+        except InvalidTag:
+            pass
+    return None

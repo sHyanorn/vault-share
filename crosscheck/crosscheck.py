@@ -21,6 +21,8 @@ import vectors
 SIZES = [0, 1, vs.DATA - 1, vs.DATA, vs.DATA + 1, 2 * vs.DATA, 200_000]
 NAME = "résumé 2026.pdf"
 PASSWORD = "café horse 8chars"
+# The same password in full-width letters, which NFKC folds to the above.
+WIDE = "ｃａｆé ｈｏｒｓｅ ８ｃｈａｒｓ"
 
 
 def check_recorded() -> None:
@@ -55,7 +57,7 @@ def check(path: str) -> None:
     check_recorded()
     with open(path) as f:
         data = json.load(f)
-    assert len(data["cases"]) == len(SIZES) and len(data["wraps"]) == 2
+    assert len(data["cases"]) == len(SIZES) and len(data["wraps"]) == 3
     for case in data["cases"]:
         file_key, meta_key, auth_key = vs.derive_keys(bytes.fromhex(case["secret"]))
         body, plain = bytes.fromhex(case["body"]), bytes.fromhex(case["plain"])
@@ -74,9 +76,10 @@ def check(path: str) -> None:
             assert rejects(file_key, body[: vs.HEADER + (records - 1) * vs.RS]), "a cut body was accepted"
         print(f"size {case['size']}: {records} record(s), body, metadata, auth key and signature match; damage rejected")
     for wrap in data["wraps"]:
-        secret = vs.unwrap_secret(bytes.fromhex(wrap["wrapped"]), wrap["password"])
-        assert secret is not None and secret.hex() == wrap["secret"], "wrapped secret"
-    print(f"{len(data['wraps'])} wrapped secrets open with their passwords")
+        for form in ("NFC", "NFD", "NFKC"):
+            secret = vs.unwrap_secret(bytes.fromhex(wrap["wrapped"]), unicodedata.normalize(form, wrap["password"]))
+            assert secret is not None and secret.hex() == wrap["secret"], f"wrapped secret, typed in {form}"
+    print(f"{len(data['wraps'])} wrapped secrets open with their passwords typed in NFC, NFD and NFKC")
 
 
 def generate(path: str) -> None:
@@ -99,8 +102,8 @@ def generate(path: str) -> None:
             }
         )
     wraps = []
-    for form in ("NFC", "NFD"):
-        secret, password = os.urandom(16), unicodedata.normalize(form, PASSWORD)
+    for password in (unicodedata.normalize("NFC", PASSWORD), unicodedata.normalize("NFD", PASSWORD), WIDE):
+        secret = os.urandom(16)
         wrapped = vs.wrap_secret(secret, password, os.urandom(16), os.urandom(12))
         wraps.append({"password": password, "wrapped": wrapped.hex(), "secret": secret.hex()})
     with open(path, "w") as f:

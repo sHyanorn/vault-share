@@ -23,8 +23,17 @@ export const WRAPPED_LENGTH =
 /** In code points. Offline guessing makes a short password nearly worthless. */
 export const MIN_PASSWORD_LENGTH = 8
 
+/**
+ * NIST SP 800-63B-4 asks for Unicode normalization, as for account
+ * passwords, so the same password typed on another keyboard or system opens
+ * the link.
+ */
+function normalize(password: string): string {
+  return password.normalize('NFKC')
+}
+
 export function passwordTooShort(password: string): boolean {
-  return Array.from(password).length < MIN_PASSWORD_LENGTH
+  return Array.from(normalize(password)).length < MIN_PASSWORD_LENGTH
 }
 
 export async function wrapSecret(
@@ -39,7 +48,7 @@ export async function wrapSecret(
     )
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH))
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
-  const key = await wrappingKey(password, salt)
+  const key = await wrappingKey(normalize(password), salt)
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 },
@@ -56,7 +65,9 @@ export async function wrapSecret(
 
 /**
  * Returns null for a wrong password; throws only on a malformed input. Any
- * length is tried, so links made before the minimum length still open.
+ * length is tried, so links made before the minimum length still open, and
+ * so are the password as typed and its NFC and NFD forms, which links
+ * wrapped before normalization used.
  */
 export async function unwrapSecret(
   wrapped: Uint8Array<ArrayBuffer>,
@@ -67,18 +78,27 @@ export async function unwrapSecret(
   if (password === '') return null
   const salt = wrapped.subarray(0, SALT_LENGTH)
   const iv = wrapped.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH)
-  const key = await wrappingKey(password, salt)
-  try {
-    return new Uint8Array(
-      await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 },
-        key,
-        wrapped.subarray(SALT_LENGTH + IV_LENGTH),
-      ),
-    )
-  } catch {
-    return null
+  const forms = new Set([
+    normalize(password),
+    password,
+    password.normalize('NFC'),
+    password.normalize('NFD'),
+  ])
+  for (const form of forms) {
+    const key = await wrappingKey(form, salt)
+    try {
+      return new Uint8Array(
+        await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 },
+          key,
+          wrapped.subarray(SALT_LENGTH + IV_LENGTH),
+        ),
+      )
+    } catch {
+      // A wrong password, or a form the link was not wrapped under.
+    }
   }
+  return null
 }
 
 async function wrappingKey(
