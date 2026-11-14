@@ -71,6 +71,20 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps ${{ matrix.browsers }}
       - run: npm run test:browsers -- $(printf -- '--project %s ' ${{ matrix.browsers }})
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # A fresh vaultd of its own, so the tests have the client's whole budget.
+      - name: Damaged downloads against a local vaultd
+        run: |
+          npm run build
+          (cd ../server && go build -o "$RUNNER_TEMP/vaultd" ./cmd/vaultd)
+          mkdir "$RUNNER_TEMP/data"
+          VAULT_LISTEN_ADDR=127.0.0.1:8080 VAULT_BASE_URL=http://localhost:8080 \
+            VAULT_DATA_DIR="$RUNNER_TEMP/data" VAULT_WEB_DIR="$PWD/dist" "$RUNNER_TEMP/vaultd" &
+          curl --silent --fail --retry 10 --retry-delay 1 --retry-all-errors http://localhost:8080/healthz > /dev/null
+          E2E_BASE_URL=http://localhost:8080 E2E_ENGINES="${{ matrix.browsers }}" npx playwright test -g 'damaged download'
   # The Python implementation in crosscheck/ and the client each open what
   # the other makes, with new keys on every run.
   crosscheck:

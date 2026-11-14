@@ -47,9 +47,31 @@ function blobSink(name: string): Sink {
     kind: 'download',
     async consume(stream) {
       // The browser streams the Blob into its own storage as chunks arrive.
-      const blob = await new Response(stream, {
+      // Chromium rejects a body that fails to read with a bare TypeError,
+      // where the Fetch standard passes on the stream's own error; that error
+      // is kept, so a damaged record does not read as a dropped connection.
+      const reader = stream.getReader()
+      let failure: unknown
+      const relay = new ReadableStream<Uint8Array<ArrayBuffer>>({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read()
+            if (done) controller.close()
+            else controller.enqueue(value)
+          } catch (error) {
+            failure = error
+            controller.error(error)
+          }
+        },
+        cancel: (reason) => reader.cancel(reason),
+      })
+      const blob = await new Response(relay, {
         headers: { 'Content-Type': 'application/octet-stream' },
-      }).blob()
+      })
+        .blob()
+        .catch((error: unknown) => {
+          throw failure ?? error
+        })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
