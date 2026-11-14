@@ -71,6 +71,30 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps ${{ matrix.browsers }}
       - run: npm run test:browsers -- $(printf -- '--project %s ' ${{ matrix.browsers }})
+  # The Python implementation in crosscheck/ and the client each open what
+  # the other makes, with new keys on every run.
+  crosscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web
+      - run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --require-hashes -r crosscheck/requirements.txt
+      - name: Python opens what the client makes
+        run: |
+          node web/scripts/crosscheck.ts generate client.json
+          .venv/bin/python crosscheck/crosscheck.py check client.json
+      - name: The client opens what Python makes
+        run: |
+          .venv/bin/python crosscheck/crosscheck.py generate python.json
+          node web/scripts/crosscheck.ts check python.json
   semgrep:
     runs-on: ubuntu-latest
     steps:

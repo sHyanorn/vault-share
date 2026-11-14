@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.scripts.tsbuildinfo",
+    // The scripts run the client's crypto code, written against the DOM.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["scripts"]
+}
