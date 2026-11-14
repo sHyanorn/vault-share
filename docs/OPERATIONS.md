@@ -122,3 +122,28 @@ When sign-up answers 503 `capacity`, the instance holds `VAULT_MAX_ACCOUNTS` acc
 - 128 MiB is a fixed floor under which the database and small uploads soon fail. It says nothing about room for a large upload; size the quota (`VAULT_MAX_TOTAL_BYTES`) to the disk.
 - The check reads one row. It does not find damaged pages elsewhere in the database, and vaultd runs no integrity check at startup. `sqlite3 vault.db "PRAGMA integrity_check"` on a backup does.
 - Compose defines no health check for the vaultd container; probe `/healthz` from outside.
+
+## S3 storage
+
+With `VAULT_STORAGE=s3`, ciphertext goes to an S3-compatible bucket instead of the data volume. To try it against a throwaway local gateway:
+
+```bash
+docker compose -f compose.yaml -f compose.s3.yaml up --build
+```
+
+For a real bucket, set the `VAULT_S3_*` settings in `.env`. The bucket must:
+
+- belong to vaultd alone, because cleanup deletes every object named like a file id that has no record;
+- have versioning off, or deleted files would stay as old versions;
+- support conditional writes (`If-None-Match`), which keep stored content from being replaced.
+
+vaultd checks the last two at startup and refuses to start otherwise. Its credentials need `s3:ListBucket`, `s3:GetBucketVersioning`, `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the bucket. Files on S3 are capped at 5 GiB, the most S3 takes in one request. Switching storage moves no files, so switch once the existing shares have expired, at most seven days after the last upload.
+
+## Upgrading from commit 96159bb or earlier
+
+A deployment built before 10 November 2026 (commit `96159bb` or earlier) meets these changes:
+
+- **A missing database stops the start.** vaultd used to create `vault.db` whenever it was missing, and cleanup then deleted the stored files it had no record of. It now refuses to start when the database is missing and the storage is not empty. Restore `vault.db`, or empty the `blobs` directory or the bucket to start over. An upgrade in place keeps its database and is not affected.
+- **`/healthz` can answer 503.** It now checks the database, the storage and the free space on the data volume, 128 MiB at least, where it used to answer 200 always. A monitor or load balancer that probes it will report an instance that is short of disk or has lost its storage.
+- **A missing `account.key` stops the start.** vaultd used to create a new one whenever it was missing. It now refuses to start when the key is missing and the database holds accounts, because a new key breaks their authenticator codes and signs every browser out. Restore the key, or see the [operations manual](#startup-refusals) to replace it on purpose.
+- **Leftover content goes later.** Stored content without a record is deleted from an hour after the start, at most 100 objects an hour, instead of at startup.

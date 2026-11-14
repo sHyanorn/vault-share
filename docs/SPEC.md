@@ -214,3 +214,28 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - One-command startup with Docker Compose
 - English README: summary, encryption flow diagram, demo GIF, threat model summary, known limitations
 - All security documents listed in Section 9
+
+## Accounts and security in brief
+
+The README's summary of accounts and security as of commit e8da815.
+
+### Accounts
+
+Sharing needs no account. With one, every file you share appears under My files, with its name, its link and a delete button.
+
+- **The password stays in the browser.** Argon2id turns it into a master key, from which the browser derives the secret it signs in with and the key that seals a random account key. The server hashes that secret again with Argon2id and stores the sealed account key; neither opens anything.
+- **My files.** For each file the browser seals the share secret, the link key and the delete token under the account key, bound to the file id. The server lists these entries; only your browser opens them, and through them the names.
+- **Sessions.** An HttpOnly `__Host-` cookie with SameSite=Strict, ending after an hour idle or a day in all. Between page loads the browser keeps the account key sealed under a key the server releases only to the live session.
+- **Two-factor sign-in.** Optional TOTP with any authenticator app, and ten one-time recovery codes.
+
+There is no password reset: a forgotten password loses the account and its list, while the links you shared keep working. `VAULT_SIGNUP=closed` turns sign-ups off.
+
+### Security
+
+- **Browser hardening.** A strict Content Security Policy forbids inline script and eval, alongside HSTS, `no-referrer`, COOP, COEP and CORP.
+- **Server answers.** Missing files, expired files, used-up files and wrong tokens all get the same 404. Requests from other sites are refused, and the API answers only for its own host.
+- **Rate limits.** Each client, meaning one IPv4 address or one IPv6 /64, gets its own limits. Five wrong signatures lock that client out of a file for 15 minutes. A storage quota and a daily budget per client bound the storage, and a file takes one upload at a time.
+- **Sign-in.** Failed sign-ins are counted per client, per account and per known browser, so guessing from many addresses is bounded while the owner's own browsers keep working. A second-step code works once, and changes to how an account signs in ask for the password again.
+- **Supply chain.** Dependencies, CI actions and images are pinned by version or digest. The exception is the browser that Playwright installs in CI: its build follows the pinned Playwright release, and its system packages come from the runner. CI runs gosec, govulncheck, npm audit, Semgrep and a ZAP baseline scan, plus end-to-end tests on disk and on S3 and the security checks in [`scripts/`](../scripts).
+- **Test vectors.** The browser's cryptography is checked against the Wycheproof vectors for AES-GCM, HKDF and HMAC in Chromium, Firefox and WebKit, and the share format against a second implementation in Python written from the specification, with fixed vectors for damaged and cut files.
+- **Self-assessment.** The project was tested against the OWASP Top 10:2025: see the [test report](security/TEST_REPORT.md), the [threat model](security/THREAT_MODEL.md) and the [findings](security/FINDINGS.md) recorded along the way.
