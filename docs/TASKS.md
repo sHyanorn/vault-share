@@ -54,3 +54,12 @@
 - [x] Sign-up and login, Argon2id, session cookies, CSRF
 - [x] TOTP two-factor authentication
 - [x] "My files" list
+
+## M8 Verifiable Client and Evidence
+- [x] Reproducible web build, checked on four platforms in CI
+- [x] Release workflow that attests a manifest of the client
+- [x] `webcheck`: compare a deployment with a manifest, tested against a changed byte
+- [x] Wycheproof vectors in Node, Chromium, Firefox and WebKit
+- [x] Second implementation of the share format, with fixed vectors for malformed streams
+- [x] Damaged downloads reported as such (F69)
+- [x] Normalize share passwords (F70)

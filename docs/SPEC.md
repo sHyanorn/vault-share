@@ -87,7 +87,7 @@ The exact formats are in D012 and D019.
 
 ### Known limitations (to be documented in the threat model and README)
 
-- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: a strict CSP and candid documentation of the risk. Dependencies and images are pinned, but builds are not verified to be reproducible and no hashes of the client are published, so a user cannot check the code a server sent. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
+- The web client's encryption code is served by the server; if the server is compromised, an attacker can serve malicious code. Mitigations: a strict CSP, candid documentation of the risk, and a check after the fact: the client build is reproducible, each release publishes a manifest of the client's files and the CSP, attested by the release workflow, and `webcheck` compares a deployment with it (D038). The check covers only the responses the person running it receives, so a server can send them the released client and others a changed one, on any visit. Subresource Integrity does not help, because the same server serves the page that carries the hashes (D023)
 - A leaked link means a leaked file; this is inherent to link-based sharing
 - There is no password reset: the server cannot open an account key, so a forgotten password loses the account; shared links keep working
 
@@ -206,7 +206,8 @@ All errors use the format `{"error":{"code":"...","message":"..."}}`. Nonexisten
 - Frontend crypto module unit tests: encrypting then decrypting yields the original plaintext; tampering with any byte makes decryption fail; truncated ciphertext makes decryption fail
 - End-to-end tests (Playwright): the full upload, share, download and burn-after-reading flow, and an account from sign-up through two-factor sign-in to deletion
 - Known test vectors for the account key derivation, computed with two independent implementations (D026), and the RFC 4226 and RFC 6238 vectors for TOTP
-- Known test vectors: verify HKDF and AES-GCM against standard test vectors
+- Known test vectors: RFC 5869, RFC 8188 and NIST CAVP vectors under Node, and the Wycheproof AES-GCM (AES-256 with a 96-bit IV), HKDF-SHA256 and HMAC-SHA256 vectors under Node and in Chromium, Firefox and WebKit; the Wycheproof HMAC-SHA256 vectors with 256-bit keys also run against the server's signature check
+- A second implementation of the share format in Python, written from section 4 and D012/D019, opens what the client makes and the reverse, and writes fixed vectors for malformed streams: no last record, two last records, trailing data, a header alone, reordered and changed records (D039)
 
 ## 11. Deliverables
 

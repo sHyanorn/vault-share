@@ -54,13 +54,14 @@ There is no password reset: a forgotten password loses the account and its list,
 - **Rate limits.** Each client, meaning one IPv4 address or one IPv6 /64, gets its own limits. Five wrong signatures lock that client out of a file for 15 minutes. A storage quota and a daily budget per client bound the storage, and a file takes one upload at a time.
 - **Sign-in.** Failed sign-ins are counted per client, per account and per known browser, so guessing from many addresses is bounded while the owner's own browsers keep working. A second-step code works once, and changes to how an account signs in ask for the password again.
 - **Supply chain.** Dependencies, CI actions and images are pinned by version or digest. The exception is the browser that Playwright installs in CI: its build follows the pinned Playwright release, and its system packages come from the runner. CI runs gosec, govulncheck, npm audit, Semgrep and a ZAP baseline scan, plus end-to-end tests on disk and on S3 and the security checks in [`scripts/`](scripts).
+- **Test vectors.** The browser's cryptography is checked against the Wycheproof vectors for AES-GCM, HKDF and HMAC in Chromium, Firefox and WebKit, and the share format against a second implementation in Python written from the specification, with fixed vectors for damaged and cut files.
 - **Self-assessment.** The project was tested against the OWASP Top 10:2025: see the [test report](docs/security/TEST_REPORT.md), the [threat model](docs/security/THREAT_MODEL.md) and the [findings](docs/security/FINDINGS.md) recorded along the way.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Known limitations
 
-- **A compromised server** can send JavaScript that steals keys. Most web-based encryption tools share this weakness.
+- **A compromised server** can send JavaScript that steals keys. Most web-based encryption tools share this weakness. The client builds to the same bytes on every platform CI tests, and each release carries a signed manifest of the client's files, so anyone can check whether a server sends them the released client ([verifying the client](docs/VERIFYING.md)). The check covers only what the server sends the person checking, after the fact: a server can send the released client to them and a changed one to others, on any visit.
 - **A leaked link is a leaked file.** A password slows offline guessing down, but cannot stop it.
 - **What the server sees.** It knows each file's size and when it was uploaded and downloaded.
 - **Limits are per address.** They count one IPv4 address or one IPv6 /64 as one client. An attacker with many addresses can fill the quota or load the CPU, which needs protection in front of the server.
@@ -121,6 +122,7 @@ Running vaultd outside Docker needs `VAULT_BASE_URL` set to the address you open
 - [Operations: backup, restore, startup refusals](docs/OPERATIONS.md)
 - [Threat model](docs/security/THREAT_MODEL.md)
 - [Security test report](docs/security/TEST_REPORT.md)
+- [Verifying the client](docs/VERIFYING.md)
 
 ## License
 
