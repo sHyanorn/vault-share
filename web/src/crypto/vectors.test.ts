@@ -72,7 +72,7 @@ describe('aes128gcm content encoding (RFC 8188 section 3)', () => {
   })
 })
 
-describe('AES-256-GCM (NIST CAVP gcmEncryptExtIV256, count 0 of the first 96-bit IV group)', () => {
+describe('AES-256-GCM (NIST CAVP gcmEncryptExtIV256, count 0 of the PTlen = 128, AADlen = 0 group)', () => {
   it('matches the published ciphertext and tag', async () => {
     const key = await crypto.subtle.importKey(
       'raw',
