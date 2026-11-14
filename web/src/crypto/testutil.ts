@@ -55,3 +55,34 @@ export async function collect(
   }
   return out
 }
+
+interface VectorTest {
+  tcId: number
+  result: string
+  [field: string]: unknown
+}
+
+/**
+ * Vectors in Wycheproof's layout with the first valid test's expected
+ * `field` changed and the first invalid test marked valid. A runner that
+ * cannot fail passes these too; a working one names both tcIds.
+ */
+export function corrupted(
+  json: string,
+  field: string,
+  applies: (group: unknown) => boolean = () => true,
+) {
+  const file = JSON.parse(json) as { testGroups: { tests: VectorTest[] }[] }
+  const tests = file.testGroups.filter(applies).flatMap((g) => g.tests)
+  const valid = tests.find((t) => t.result === 'valid')!
+  const invalid = tests.find((t) => t.result === 'invalid')!
+  const hex = valid[field] as string
+  valid[field] = hex.slice(0, -1) + (hex.endsWith('0') ? '1' : '0')
+  invalid.result = 'valid'
+  return { json: JSON.stringify(file), ids: [valid.tcId, invalid.tcId] }
+}
+
+/** The tcIds named in a runner's failures. */
+export function failedIds(failures: string[]): Set<number> {
+  return new Set(failures.map((f) => Number(/tcId (\d+) /.exec(f)?.[1])))
+}

@@ -37,7 +37,7 @@ def derive_keys(secret: bytes) -> tuple[bytes, bytes, bytes]:
     return tuple(hkdf(secret, b"", f"vault-share/{label}".encode(), 32) for label in ("file", "meta", "auth"))
 
 
-def _record_keys(file_key: bytes, salt: bytes) -> tuple[AESGCM, bytes]:
+def record_keys(file_key: bytes, salt: bytes) -> tuple[AESGCM, bytes]:
     cek = hkdf(file_key, salt, b"Content-Encoding: aes256gcm\x00", 32)
     nonce_base = hkdf(file_key, salt, b"Content-Encoding: nonce\x00", 12)
     return AESGCM(cek), nonce_base
@@ -51,7 +51,7 @@ def record_nonce(nonce_base: bytes, seq: int) -> bytes:
 
 def encrypt_body(file_key: bytes, plaintext: bytes, salt: bytes) -> bytes:
     """Header, then records of DATA bytes each; the last record, always present, is marked 2."""
-    aead, nonce_base = _record_keys(file_key, salt)
+    aead, nonce_base = record_keys(file_key, salt)
     chunks = [plaintext[i : i + DATA] for i in range(0, len(plaintext), DATA)] or [b""]
     out = [salt + RS.to_bytes(4, "big") + b"\x00"]
     for seq, chunk in enumerate(chunks):
@@ -71,7 +71,7 @@ def decrypt_records(file_key: bytes, body: bytes):
     records = [body[i : i + RS] for i in range(HEADER, len(body), RS)]
     if not records:
         raise FormatError("no records")
-    aead, nonce_base = _record_keys(file_key, salt)
+    aead, nonce_base = record_keys(file_key, salt)
     for seq, record in enumerate(records):
         last = seq == len(records) - 1
         try:

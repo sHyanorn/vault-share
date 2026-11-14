@@ -1,9 +1,11 @@
 """Checks the web client against vaultshare.py, in both directions.
 
-    python crosscheck.py check FILE      open what the client made (web/scripts/crosscheck.ts generate)
-    python crosscheck.py generate FILE   make shares for the client to open (crosscheck.ts check)
+    python crosscheck.py check FILE          open what the client made (web/scripts/crosscheck.ts generate)
+    python crosscheck.py generate FILE       make shares for the client to open (crosscheck.ts check)
+    python crosscheck.py vectors FILE        write the fixed vectors of vectors.py
+    python crosscheck.py check-vectors FILE  confirm FILE is what vectors.py writes, and passes
 
-Both files have the same shape: {"cases": [...], "wraps": [...]}, bytes in hex.
+The first two files have the same shape: {"cases": [...], "wraps": [...]}, bytes in hex.
 """
 
 import json
@@ -14,6 +16,7 @@ import unicodedata
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import vaultshare as vs
+import vectors
 
 SIZES = [0, 1, vs.DATA - 1, vs.DATA, vs.DATA + 1, 2 * vs.DATA, 200_000]
 NAME = "résumé 2026.pdf"
@@ -105,8 +108,15 @@ def generate(path: str) -> None:
     print(f"wrote {len(cases)} shares and {len(wraps)} wrapped secrets to {path}")
 
 
+def write_vectors(path: str) -> None:
+    with open(path, "w") as f:
+        json.dump(vectors.build(), f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(f"wrote {path}")
+
+
 if __name__ == "__main__":
-    commands = {"check": check, "generate": generate}
+    commands = {"check": check, "generate": generate, "vectors": write_vectors, "check-vectors": vectors.check}
     if len(sys.argv) != 3 or sys.argv[1] not in commands:
         sys.exit(__doc__)
     commands[sys.argv[1]](sys.argv[2])

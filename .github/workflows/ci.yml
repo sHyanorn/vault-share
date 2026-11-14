@@ -95,6 +95,8 @@ jobs:
         run: |
           .venv/bin/python crosscheck/crosscheck.py generate python.json
           node web/scripts/crosscheck.ts check python.json
+      - name: The fixed vectors are what Python writes
+        run: .venv/bin/python crosscheck/crosscheck.py check-vectors testdata/share_format_test.json
   semgrep:
     runs-on: ubuntu-latest
     steps:
