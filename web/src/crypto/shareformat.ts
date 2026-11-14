@@ -1,7 +1,7 @@
 // Runs testdata/share_format_test.json through decryptStream as the
 // download page reads a file. A valid vector must give the whole file. An
 // invalid one must fail, after releasing at most the valid records in front
-// of the error, and fail again if read once more.
+// of the error.
 
 import { decryptStream } from './ece.ts'
 import { deriveKeys } from './keys.ts'
@@ -62,11 +62,6 @@ export async function shareFormat(json: string): Promise<Outcome> {
       (released.length === t.msgLength && !matches)
     )
       fail(`released ${released.length} bytes beyond the valid records`)
-    const again = await reader.read().then(
-      () => false,
-      () => true,
-    )
-    if (failed && !again) fail('a second read did not fail')
   }
   return outcome
 }

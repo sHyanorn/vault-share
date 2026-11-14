@@ -64,8 +64,9 @@ interface VectorTest {
 
 /**
  * Vectors in Wycheproof's layout with the first valid test's expected
- * `field` changed and the first invalid test marked valid. A runner that
- * cannot fail passes these too; a working one names both tcIds.
+ * `field` changed, the first invalid test marked valid and the second
+ * valid test marked invalid, so both of a runner's branches are tried. A
+ * runner that checks both names all three tcIds.
  */
 export function corrupted(
   json: string,
@@ -74,12 +75,16 @@ export function corrupted(
 ) {
   const file = JSON.parse(json) as { testGroups: { tests: VectorTest[] }[] }
   const tests = file.testGroups.filter(applies).flatMap((g) => g.tests)
-  const valid = tests.find((t) => t.result === 'valid')!
+  const [valid, relabelled] = tests.filter((t) => t.result === 'valid')
   const invalid = tests.find((t) => t.result === 'invalid')!
-  const hex = valid[field] as string
-  valid[field] = hex.slice(0, -1) + (hex.endsWith('0') ? '1' : '0')
+  const hex = valid![field] as string
+  valid![field] = hex.slice(0, -1) + (hex.endsWith('0') ? '1' : '0')
   invalid.result = 'valid'
-  return { json: JSON.stringify(file), ids: [valid.tcId, invalid.tcId] }
+  relabelled!.result = 'invalid'
+  return {
+    json: JSON.stringify(file),
+    ids: [valid!.tcId, invalid.tcId, relabelled!.tcId],
+  }
 }
 
 /** The tcIds named in a runner's failures. */

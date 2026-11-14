@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// The Wycheproof HMAC-SHA256 vectors with a 256-bit key and a full 256-bit
-// tag, the sizes of an auth key and a download signature: valid tags must
-// pass the server's check and every modified one must fail it.
+// The Wycheproof HMAC-SHA256 vectors with a 256-bit key, the size of an auth
+// key: a valid full tag must pass the server's check, and a modified tag or
+// a valid one truncated to 128 bits must fail it.
 func TestValidSignatureWycheproof(t *testing.T) {
 	raw, err := os.ReadFile("../../../testdata/wycheproof/hmac_sha256_test.json")
 	if err != nil {
@@ -41,18 +41,18 @@ func TestValidSignatureWycheproof(t *testing.T) {
 	}
 	count := 0
 	for _, g := range file.TestGroups {
-		if g.KeySize != 256 || g.TagSize != 256 {
+		if g.KeySize != 256 {
 			continue
 		}
 		for _, tc := range g.Tests {
 			count++
 			got := validSignature(unhex(tc.Key), unhex(tc.Msg), unhex(tc.Tag))
-			if got != (tc.Result == "valid") {
-				t.Errorf("tcId %d (%s): valid = %v, want %s", tc.TcID, tc.Comment, got, tc.Result)
+			if want := tc.Result == "valid" && g.TagSize == 256; got != want {
+				t.Errorf("tcId %d (%s, %d-bit tag): valid = %v, want %v", tc.TcID, tc.Comment, g.TagSize, got, want)
 			}
 		}
 	}
-	if count != 81 {
-		t.Fatalf("applied %d vectors, want 81", count)
+	if count != 162 {
+		t.Fatalf("applied %d vectors, want 162", count)
 	}
 }

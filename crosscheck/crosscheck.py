@@ -64,7 +64,7 @@ def check(path: str) -> None:
         assert vs.decrypt_body(file_key, body) == plain, "body"
         meta = vs.decrypt_metadata(meta_key, bytes.fromhex(case["meta"]))
         assert meta == {"name": case["name"], "type": case["type"], "size": case["size"]}, "metadata"
-        assert (len(case["meta"]) // 2 - 28) % vs.META_PAD == 0, "metadata padding"
+        assert (len(case["meta"]) // 2 - 28) % 1024 == 0, "metadata padding"
         assert vs.sign_challenge(auth_key, bytes.fromhex(case["challenge"])).hex() == case["sig"], "signature"
         changed = bytearray(body)
         changed[-1] ^= 1

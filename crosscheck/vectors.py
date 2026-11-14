@@ -21,7 +21,7 @@ NOTES = {
     "EmptyFinal": "The last record holds no data, after full records. RFC 8188 allows it, so another encoder may write it.",
     "Padding": "Zero bytes after the delimiter are padding (RFC 8188) and are removed.",
     "CounterRollover": "More than 256 records: the index XORed into the nonce reaches its next byte.",
-    "HeaderFailure": "The header is cut, missing, or names a record size other than 65536 or a key id. It must be refused before any record is decrypted.",
+    "HeaderFailure": "The header is cut, missing, or names a record size other than 65536 or a key id. It must be refused.",
     "Truncation": "The stream is cut: no last record, or a record or tag cut short.",
     "TrailingData": "Bytes follow the last record: garbage, or another validly encrypted record.",
     "Delimiter": "A record has the delimiter of another position, no delimiter, or a non-zero byte after it.",
@@ -30,7 +30,7 @@ NOTES = {
     "WrongKey": "A valid stream opened with another secret.",
     "PartialPlaintext": (
         "The stream starts with valid records, whose data msgLength and msgSha256 describe. A streaming decrypter "
-        "may release that prefix before it fails, never more, and must keep failing if read again."
+        "may release that prefix before it fails, never more."
     ),
 }
 

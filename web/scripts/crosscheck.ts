@@ -114,6 +114,7 @@ async function check(path: string) {
       decryptStream(streamOf(body, 4099), keys.fileKey),
     )
     require(plain.length === c.size && toHex(plain) === c.plain, 'body')
+    require((c.meta.length / 2 - 28) % 1024 === 0, 'metadata padding')
     const meta = await decryptMetadata(keys.metaKey, fromHex(c.meta))
     require(meta.name === c.name &&
       meta.type === c.type &&
