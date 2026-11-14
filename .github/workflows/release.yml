@@ -1,7 +1,7 @@
 name: release
-# On a v* tag: write the manifest of the web client the release image
-# serves, attest it through Sigstore with this workflow's identity, and
-# attach both to a draft release. Run by hand, it only writes the manifest.
+# On a v* tag: write the manifest of the web client the Dockerfile builds,
+# attest it through Sigstore with this workflow's identity, and attach both
+# to a draft release. Run by hand, it only writes and checks the manifest.
 on:
   push:
     tags: ['v*']
@@ -9,12 +9,9 @@ on:
 permissions:
   contents: read
 jobs:
+  # The build runs here, with no token that can sign or write.
   manifest:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -22,7 +19,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       # The client's files come out of the image, and the CSP from the image
-      # running, so the manifest describes what the release serves.
+      # running, so the manifest describes what a deployment of it serves.
       - name: Write the manifest of the image's client
         run: |
           docker build --tag vaultd .
@@ -37,17 +34,30 @@ jobs:
             -repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" -commit "$GITHUB_SHA" > client-manifest.json
           ./webcheck verify -manifest client-manifest.json http://localhost:8080
           cat client-manifest.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: client-manifest
+          path: client-manifest.json
+  # Signs the manifest and runs nothing from the repository.
+  attest:
+    needs: manifest
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name client-manifest
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         id: attest
-        if: github.ref_type == 'tag'
         with:
           subject-path: client-manifest.json
       # The checks a reader runs: against GitHub's copy of the attestation,
       # and offline against the bundle and Sigstore's trusted root.
       - name: Verify the attestation
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           cp "${{ steps.attest.outputs.bundle-path }}" client-manifest.sigstore.json
           workflow="$GITHUB_REPOSITORY/.github/workflows/release.yml"
@@ -59,12 +69,11 @@ jobs:
             --bundle client-manifest.sigstore.json --custom-trusted-root trusted_root.jsonl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: client-manifest
-          path: client-manifest*.json
+          name: client-manifest-attestation
+          path: client-manifest.sigstore.json
   # Only this job can write to the repository, and it runs no build.
   draft:
-    needs: manifest
-    if: github.ref_type == 'tag'
+    needs: attest
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -75,5 +84,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name client-manifest
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name client-manifest-attestation
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "$GITHUB_REF_NAME" --generate-notes client-manifest.json client-manifest.sigstore.json
