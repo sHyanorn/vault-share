@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { generateSecret, toBase64Url, wrapSecret } from '../crypto/index.ts'
+import {
+  fromBase64Url,
+  generateSecret,
+  toBase64Url,
+  wrapSecret,
+} from '../crypto/index.ts'
 import {
   buildDeleteLink,
   buildLink,
@@ -50,7 +55,13 @@ describe('password-protected link', () => {
     const secret = generateSecret()
     const wrapped = await wrapSecret(secret, 'open sesame')
     const link = new URL(buildLink('https://share.example', id, wrapped))
-    expect(link.hash).not.toContain(toBase64Url(secret))
+    // The secret's bytes are nowhere in the fragment, at any offset: its
+    // base64 lines up with the fragment's only at offsets divisible by 3.
+    const fragment = fromBase64Url(link.hash.slice(1))
+    const at = fragment.findIndex((_, i) =>
+      secret.every((byte, j) => fragment[i + j] === byte),
+    )
+    expect(at).toBe(-1)
     const parsed = parseLocation(link.pathname, link.hash)
     expect(parsed?.wrapped).toEqual(wrapped)
     expect(parsed?.secret).toBeUndefined()
