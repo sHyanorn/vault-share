@@ -44,7 +44,23 @@ go run ./cmd/webcheck verify -manifest ../client-manifest.json https://vault.exa
 
 ## Build hashes of v1.0.0
 
-(The table of each platform's hashes, from the CI run of the tag and from one machine outside CI, lands after the tag.)
+The client of v1.0.0, from commit `8da9b130a3d76f59e556ae56eff7c1d27084a229`, built to the same three files in each of these environments:
+
+| Build | Environment | Run |
+|---|---|---|
+| The Dockerfile's Node image | Node v22.23.4, Alpine 3.24.3, x86_64 | [CI run of the tag](https://github.com/sHyanorn/vault-share/actions/runs/43628958957) |
+| Linux x64 | Node v22.23.4, ubuntu-24.04, x86_64 | CI run of the tag |
+| Linux arm64 | Node v22.23.4, ubuntu-24.04-arm, aarch64 | CI run of the tag |
+| macOS arm64 | Node v22.23.4, macos-15, arm64 | CI run of the tag |
+| Linux x64 | Node v22.23.4, Ubuntu 24.04.5, glibc 2.39, x86_64 | One machine outside CI |
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `assets/index-C9eG6dna.css` | 12469 | `4a8c1e44d8b25ab0724c9a26af742604a3329de2ebbfe414cd9deeba9c31a4fb` |
+| `assets/index-DAeX8toZ.js` | 312686 | `d06c847ff75f7f72daf4da8e9f64cd0cf3447c3f8c9d940d8fd5be0a1f105c46` |
+| `index.html` | 396 | `7f1abd9f08e5d741f0fdb367f1bda1d86353b10bb273fe2a69efe18f639dca00` |
+
+The release's `client-manifest.json` lists the same files, sizes and hashes. Its own SHA-256, which the attestation names, is `44b8e80c6298b072c28e81eb5b2498296061092414f606dca728fc699e5d45c8`.
 
 ## What this does not do
 
