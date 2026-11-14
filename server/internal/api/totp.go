@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,13 +48,13 @@ func (a *accounts) matchFactor(u store.User, code string) (factor, bool, error) 
 	return factor{recovery: hash}, ok, nil
 }
 
-// secondFactor checks a code for the account under its second-step lockout:
-// match reads the code as a factor, and spend uses the factor up, reporting
-// false if it already was. An error from either ends the attempt uncounted
-// and is returned.
-func (a *accounts) secondFactor(ctx context.Context, userID int64, match func() (factor, bool, error), spend func(factor) (bool, error)) (authResult, factor, error) {
-	try, why := a.totpLocks.admit(strconv.FormatInt(userID, 10))
-	if try == nil {
+// secondFactor checks a code for the account under locks: match reads the
+// code as a factor, and spend uses the factor up, reporting false if it
+// already was. An error from either ends the attempt uncounted and is
+// returned.
+func (a *accounts) secondFactor(ctx context.Context, userID int64, locks []lock, match func() (factor, bool, error), spend func(factor) (bool, error)) (authResult, factor, error) {
+	try, why := admitAll(locks...)
+	if why != 0 {
 		return why.result(), factor{}, nil
 	}
 	defer try.end()
@@ -68,7 +67,7 @@ func (a *accounts) secondFactor(ctx context.Context, userID int64, match func() 
 	}
 	client := clientFrom(ctx)
 	if ok {
-		try.pass(true)
+		try.pass()
 		if f.recovery != nil {
 			a.audit.RecordAccount(ctx, audit.RecoveryCodeUsed, userID, client)
 		}
@@ -83,10 +82,12 @@ func (a *accounts) secondFactor(ctx context.Context, userID int64, match func() 
 
 // reauthenticate asks the signed-in owner for the password again, and for
 // a code while two-factor sign-in is on, before a change that could lock
-// them out. It answers the request itself when that fails.
+// them out. Failures count in the session alone (D035). It answers the
+// request itself when that fails.
 func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth []byte, code string) (store.User, bool) {
 	ctx := r.Context()
-	u, result := a.authenticate(r, sessionFrom(ctx).user.Username, auth)
+	s := sessionFrom(ctx)
+	u, result := a.authenticate(r, s.user.Username, auth, &s)
 	switch result {
 	case authOK:
 	case authFailed:
@@ -100,7 +101,7 @@ func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth [
 		return u, true
 	}
 	match := func() (factor, bool, error) { return a.matchFactor(u, code) }
-	result, _, err := a.secondFactor(ctx, u.ID, match, func(f factor) (bool, error) {
+	result, _, err := a.secondFactor(ctx, u.ID, []lock{a.sessionLock(s, "code")}, match, func(f factor) (bool, error) {
 		if f.recovery != nil {
 			return a.store.UseRecoveryCode(ctx, u.ID, f.recovery)
 		}
@@ -167,7 +168,8 @@ func (a *accounts) secondStepHandler(w http.ResponseWriter, r *http.Request) {
 	token := randomBytes(tokenBytes)
 	var failures int
 	match := func() (factor, bool, error) { return a.matchFactor(u, req.Code) }
-	result, f, err := a.secondFactor(ctx, u.ID, match, func(f factor) (bool, error) {
+	locks := a.stepLocks(r, a.secondStep, u.Username, u)
+	result, f, err := a.secondFactor(ctx, u.ID, locks, match, func(f factor) (bool, error) {
 		var err error
 		failures, err = a.store.CompleteSecondStep(ctx, store.SecondStep{
 			TicketHash: ticketHash, UserID: u.ID, Step: f.step, RecoveryHash: f.recovery,
@@ -289,7 +291,8 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		step, ok := totp.Match(secret, strings.ReplaceAll(req.Code, " ", ""), a.now())
 		return factor{step: step}, ok, nil
 	}
-	result, f, _ := a.secondFactor(ctx, u.ID, match, func(factor) (bool, error) { return true, nil })
+	locks := []lock{a.sessionLock(sessionFrom(ctx), "code")}
+	result, f, _ := a.secondFactor(ctx, u.ID, locks, match, func(factor) (bool, error) { return true, nil })
 	switch result {
 	case authOK:
 	case authFailed:

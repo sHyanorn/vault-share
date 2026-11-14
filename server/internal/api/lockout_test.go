@@ -125,21 +125,19 @@ func TestAttemptsInFlightAnswerBusy(t *testing.T) {
 	alice := newCreds("alice")
 	e.browser().signup(alice)
 	a := &accounts{store: e.store, hasher: newHasher(testAuthParams), keys: deriveServerKeys(randomBytes(32)),
-		clientLocks: newLockouts(lockoutFailures, e.clock), accountLocks: newLockouts(accountFailures, e.clock),
-		deviceLocks: newLockouts(lockoutFailures, e.clock), totpLocks: newLockouts(lockoutFailures, e.clock),
-		now: e.clock, log: slog.New(slog.DiscardHandler)}
+		password: newSignInLocks(accountFailures, e.clock), now: e.clock, log: slog.New(slog.DiscardHandler)}
 	r, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 	clientKey := bucketFrom(r.Context()) + "|alice"
 	for range lockoutFailures - 1 {
-		try, _ := a.clientLocks.admit(clientKey)
+		try, _ := a.password.client.admit(clientKey)
 		try.fail()
 	}
-	held, _ := a.clientLocks.admit(clientKey)
-	if _, result := a.authenticate(r, "alice", alice.auth); result != authBusy {
+	held, _ := a.password.client.admit(clientKey)
+	if _, result := a.authenticate(r, "alice", alice.auth, nil); result != authBusy {
 		t.Errorf("with an attempt in flight: %v, want busy", result)
 	}
 	held.end()
-	if _, result := a.authenticate(r, "alice", alice.auth); result != authOK {
+	if _, result := a.authenticate(r, "alice", alice.auth, nil); result != authOK {
 		t.Errorf("once it ended: %v", result)
 	}
 }

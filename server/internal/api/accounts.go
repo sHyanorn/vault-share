@@ -24,10 +24,11 @@ const (
 	// maxSessionsPerUser ends the oldest sessions of an account that signs
 	// in again and again.
 	maxSessionsPerUser = 10
-	// Sign-in lockouts: a client is refused a username after
+	// Password lockouts: a client is refused a username after
 	// lockoutFailures failures, unknown browsers are refused it after
 	// accountFailures failures from anywhere, and a known browser after
-	// lockoutFailures of its own.
+	// lockoutFailures of its own. The second step allows lockoutFailures
+	// in each (D035).
 	accountFailures = 20
 )
 
@@ -38,10 +39,10 @@ type accounts struct {
 	audit  *audit.Recorder
 	hasher *hasher
 	keys   serverKeys
-	// Failures per client and username, per username for browsers not known
-	// to the account, per device cookie for known ones, and second steps per
-	// account.
-	clientLocks, accountLocks, deviceLocks, totpLocks *lockouts
+	// Failures of each step of signing in, and of the changes confirmed
+	// from each session (D027, D035).
+	password, secondStep signInLocks
+	sessionLocks         *lockouts
 	// issuer names the service in authenticator apps.
 	issuer      string
 	signup      bool
@@ -163,7 +164,7 @@ func (a *accounts) loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "username and auth must be well-formed")
 		return
 	}
-	u, result := a.authenticate(r, req.Username, auth)
+	u, result := a.authenticate(r, req.Username, auth, nil)
 	switch result {
 	case authOK:
 	case authFailed:
@@ -198,10 +199,48 @@ const (
 	authError
 )
 
-// authenticate checks auth for username under the sign-in lockouts. An
-// unknown username fails the same way and after the same work as a wrong
-// secret, and counts against the same lockouts.
-func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (store.User, authResult) {
+// signInLocks count the failures of one step of signing in: per client and
+// username, per device cookie for browsers the account knows, and per
+// username for all others together (D027, D035).
+type signInLocks struct {
+	client, account, device *lockouts
+}
+
+// newSignInLocks allows lockoutFailures per client and per known browser,
+// and perAccount to all other browsers together.
+func newSignInLocks(perAccount int, now func() time.Time) signInLocks {
+	return signInLocks{
+		client:  newLockouts(lockoutFailures, now),
+		account: newLockouts(perAccount, now),
+		device:  newLockouts(lockoutFailures, now),
+	}
+}
+
+// stepLocks names the locks a sign-in step for u counts under, reached
+// through r: its client's, and its browser's if u knows the browser, or
+// else the account's. Failures counted for the account are others' too, so
+// a step that passes forgets only the client's and the browser's.
+func (a *accounts) stepLocks(r *http.Request, step signInLocks, username string, u store.User) []lock {
+	client := lock{step.client, bucketFrom(r.Context()) + "|" + username, true}
+	if device, known := a.knownDevice(r, u); known {
+		return []lock{client, {step.device, device, true}}
+	}
+	return []lock{client, {step.account, username, false}}
+}
+
+// sessionLock counts the failures of one step of the changes confirmed from
+// session s, apart from every sign-in: only its holder can fail there
+// (D035).
+func (a *accounts) sessionLock(s session, step string) lock {
+	return lock{a.sessionLocks, step + "|" + encoding.EncodeToString(hashToken(s.token)), true}
+}
+
+// authenticate checks auth for username. A sign-in counts under the
+// password step's lockouts; a change confirmed from session s, when s is
+// not nil, under that session's own. An unknown username fails the same way
+// and after the same work as a wrong secret, and counts against the same
+// lockouts.
+func (a *accounts) authenticate(r *http.Request, username string, auth []byte, s *session) (store.User, authResult) {
 	ctx := r.Context()
 	// The account comes first, since a device cookie counts only for the
 	// account as it signs in now. A username without one is empty here and
@@ -211,21 +250,15 @@ func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (
 		a.log.Error("load account", "err", err)
 		return store.User{}, authError
 	}
-	clientKey := bucketFrom(ctx) + "|" + username
-	scope, scopeKey := a.accountLocks, username
-	if device, known := a.knownDevice(r, u); known {
-		scope, scopeKey = a.deviceLocks, device
+	locks := a.stepLocks(r, a.password, username, u)
+	if s != nil {
+		locks = []lock{a.sessionLock(*s, "password")}
 	}
-	byClient, why := a.clientLocks.admit(clientKey)
-	if byClient == nil {
+	try, why := admitAll(locks...)
+	if why != 0 {
 		return store.User{}, why.result()
 	}
-	defer byClient.end()
-	inScope, why := scope.admit(scopeKey)
-	if inScope == nil {
-		return store.User{}, why.result()
-	}
-	defer inScope.end()
+	defer try.end()
 	ok, err := a.hasher.verify(ctx, u.AuthHash, auth)
 	switch {
 	case errors.Is(err, errBusy):
@@ -234,14 +267,12 @@ func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (
 		a.log.Error("verify password", "err", err)
 		return store.User{}, authError
 	case ok:
-		byClient.pass(true)
-		inScope.pass(scope == a.deviceLocks)
+		try.pass()
 		return u, authOK
 	}
 	client := clientFrom(ctx)
 	a.audit.RecordAccount(ctx, audit.LoginFailed, u.ID, client)
-	lockedClient := byClient.fail()
-	if inScope.fail() || lockedClient {
+	if try.fail() {
 		a.audit.RecordAccount(ctx, audit.ClientLocked, u.ID, client)
 	}
 	return store.User{}, authFailed

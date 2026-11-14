@@ -59,6 +59,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F53 | 2026-11-10 | Info | Code review | An opened password field left empty shares without a password under a hint that asks for one | Open |
 | F54 | 2026-11-10 | Info | Code review | A late answer from an ended session can sign a new session out in the browser | Open |
 | F55 | 2026-11-10 | Info | Code review | A session that ends during an upload leaves the file shared but out of My files | Open |
+| F56 | 2026-11-14 | Medium | Code review | Anyone who knew the password could lock the owner out of the second step and every change, known browsers included | Fixed |
 | F57 | 2026-11-14 | Low | Code review | Device cookies outlived a password change and could be minted without bound | Fixed |
 | F60 | 2026-11-14 | Low | Code review | A new account could take the id, and with it the audit trail, of a deleted one | Fixed |
 
@@ -288,6 +289,10 @@ Issues found during development, how they were found and how they were fixed. Th
 - Status: open.
 
 
+
+## F56 The second-step lock shut the owner out (Medium)
+- Impact: second steps were counted per account alone, at sign-in and for the changes that ask for a code. Someone who knew the password could send five wrong codes from any address, and the owner was then refused every sign-in, password change, TOTP switch-off and deletion for 15 minutes, in a known browser and in a signed-in session, recovery codes included; six requests renewed it whenever it ended. The owner could not end it, since changing the password needed the locked second step, and the threat model's statement that the owner's known browsers keep working held for the password step only.
+- Fix: the second step is counted per client, per known browser and for all other browsers together, as the password step is, and a change confirmed from a session is counted in that session alone (D035). One test locks the second step from browsers the account does not know, then signs in from a known browser with a recovery code and changes the password from the owner's session; another fails a session's confirmations five times, then signs in and confirms a change from another session. Both failed before the fix.
 ## F57 Device cookies that outlived the password (Low)
 - Impact: a device cookie signed only the username and a random nonce, so it stayed valid for half a year whatever happened to the account, and every sign-in minted a new one. Someone who once knew the password could sign in from many addresses, keep the cookies and, after the owner changed the password, guess the new one with five checked guesses per cookie every 15 minutes, where the account allows twenty to all browsers it does not know: eight cookies gave 40. The cookies also counted for a new account under a deleted one's name.
 - Fix: the cookie signs one of eight slots together with the account's auth hash and sealed TOTP secret (D036), so a password change, a TOTP change and a deletion end every cookie issued before, and an account has at most eight. A test signs eight browsers in before each of those changes and counts the checked guesses afterwards, then counts the distinct cookies of 40 sign-ins; it failed before the fix on all four counts. Since the account is now read before the lockouts are asked, another test checks that a username without an account gets exactly the answers of an account reached from a browser it does not know.

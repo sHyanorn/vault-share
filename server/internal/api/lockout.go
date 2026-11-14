@@ -150,3 +150,63 @@ func (a *attempt) pass(forget bool) {
 func (a *attempt) end() {
 	a.pass(false)
 }
+
+// A lock names a lockout and the key an attempt is counted under. forget
+// drops the key's failures when the attempt passes; it suits a key whose
+// failures are all its own, such as a client's, a browser's or a session's,
+// and not one that others share.
+type lock struct {
+	in     *lockouts
+	key    string
+	forget bool
+}
+
+// tries is one attempt admitted under several locks, which ends the same
+// way under each.
+type tries []counted
+
+type counted struct {
+	*attempt
+	forget bool
+}
+
+// admitAll admits an attempt under every lock in turn, or under none and
+// says why.
+func admitAll(locks ...lock) (tries, refusal) {
+	var t tries
+	for _, l := range locks {
+		try, why := l.in.admit(l.key)
+		if try == nil {
+			t.end()
+			return nil, why
+		}
+		t = append(t, counted{try, l.forget})
+	}
+	return t, 0
+}
+
+// pass ends the attempt without a failure under every lock.
+func (t tries) pass() {
+	for _, c := range t {
+		c.pass(c.forget)
+	}
+}
+
+// fail ends the attempt as a failure under every lock and reports whether
+// it locked any of them.
+func (t tries) fail() bool {
+	locked := false
+	for _, c := range t {
+		if c.fail() {
+			locked = true
+		}
+	}
+	return locked
+}
+
+// end ends the attempt uncounted under every lock where it has not ended.
+func (t tries) end() {
+	for _, c := range t {
+		c.end()
+	}
+}

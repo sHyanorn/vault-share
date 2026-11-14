@@ -266,6 +266,78 @@ func TestSecondStepLockout(t *testing.T) {
 	}
 }
 
+// Someone who knows the password and keeps failing the second step locks it
+// for browsers the account does not know. The owner's known browsers still
+// sign in, recovery codes included, and a signed-in session still changes
+// the password, which ends the campaign (F56).
+func TestSecondStepLockSparesTheOwner(t *testing.T) {
+	e := newAccountEnv(t)
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	secret, codes := owner.enableTOTP(alice)
+	laptop := e.browser()
+	if status, _, body := laptop.secondStep(alice, e.code(secret, 0)); status != http.StatusOK {
+		t.Fatalf("the laptop signs in: %d %s", status, body)
+	}
+	e.advance(totp.Period)
+
+	for i := 0; i < lockoutFailures; i++ {
+		if status, _, _ := e.browser().secondStep(alice, "000000"); status != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i, status)
+		}
+	}
+	if status, _, body := e.browser().secondStep(alice, e.code(secret, 0)); status != http.StatusTooManyRequests || errorCode(body) != "locked" {
+		t.Errorf("a browser the account does not know: %d %s", status, body)
+	}
+	if status, _, body := laptop.secondStep(alice, codes[0]); status != http.StatusOK {
+		t.Errorf("a known browser with a recovery code: %d %s", status, body)
+	}
+	next := newCreds("alice")
+	if status, body := owner.send(http.MethodPost, "/api/v1/account/password", passwordRequest{
+		Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
+		NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed),
+		Code: e.code(secret, 0),
+	}, nil); status != http.StatusOK {
+		t.Errorf("a password change from the owner's session: %d %s", status, body)
+	}
+}
+
+// A change confirmed from a session counts its failures in that session
+// alone: five wrong codes lock that session's changes, while the account's
+// sign-ins and its other sessions go on (F56).
+func TestConfirmationsCountPerSession(t *testing.T) {
+	e := newAccountEnv(t)
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	secret, _ := owner.enableTOTP(alice)
+	stolen := e.browser()
+	if status, _, body := stolen.secondStep(alice, e.code(secret, 0)); status != http.StatusOK {
+		t.Fatalf("sign-in: %d %s", status, body)
+	}
+	e.advance(totp.Period)
+	remove := func(b *browser, code string) (int, []byte) {
+		return b.send(http.MethodDelete, "/api/v1/account", confirmRequest{Auth: encoding.EncodeToString(alice.auth), Code: code}, nil)
+	}
+	for i := 0; i < lockoutFailures; i++ {
+		if status, body := remove(stolen, "000000"); status != http.StatusForbidden || errorCode(body) != "wrong_code" {
+			t.Fatalf("wrong code %d: %d %s", i, status, body)
+		}
+	}
+	if status, body := remove(stolen, e.code(secret, 0)); status != http.StatusTooManyRequests || errorCode(body) != "locked" {
+		t.Errorf("the session after %d wrong codes: %d %s", lockoutFailures, status, body)
+	}
+	if status, _, body := e.browser().secondStep(alice, e.code(secret, 0)); status != http.StatusOK {
+		t.Errorf("a sign-in: %d %s", status, body)
+	}
+	e.advance(totp.Period)
+	if status, body := owner.send(http.MethodDelete, "/api/v1/account/totp",
+		totpRequest{Auth: encoding.EncodeToString(alice.auth), Code: e.code(secret, 0)}, nil); status != http.StatusOK {
+		t.Errorf("another session of the account: %d %s", status, body)
+	}
+}
+
 func TestDisableTOTP(t *testing.T) {
 	e := newAccountEnv(t)
 	alice := newCreds("alice")
