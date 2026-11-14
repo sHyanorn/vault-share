@@ -23,7 +23,7 @@ type Phase =
   | { kind: 'ready'; info: ShareInfo }
   | { kind: 'downloading'; info: ShareInfo; progress: ShareProgress }
   | { kind: 'done'; info: ShareInfo; sink: Sink['kind'] }
-  | { kind: 'failed'; info: ShareInfo; message: string }
+  | { kind: 'failed'; info: ShareInfo; message: string; retry: boolean }
 
 export default function DownloadPage() {
   const [location] = useState(() =>
@@ -116,17 +116,16 @@ export default function DownloadPage() {
       )
       setPhase({ kind: 'done', info, sink: sink.kind })
     } catch (error) {
-      // Gone, or this was the last permitted download: nothing to retry.
-      if (
-        (error instanceof ApiError && error.status === 404) ||
-        granted.current === 0
-      ) {
+      if (error instanceof ApiError && error.status === 404) {
         setPhase({ kind: 'unavailable' })
       } else {
+        // After the last permitted download a retry would only get a 404,
+        // but the failure itself, such as a damaged file, is still reported.
         setPhase({
           kind: 'failed',
           info,
           message: describeError(error, 'download'),
+          retry: granted.current !== 0,
         })
       }
     } finally {
@@ -246,10 +245,16 @@ export default function DownloadPage() {
           <Hero
             icon={<LinkOffIcon />}
             title="Download failed"
-            text={phase.message}
+            text={
+              phase.retry
+                ? phase.message
+                : `${phase.message} No downloads are left, so the link no longer works.`
+            }
             tone="muted"
           />
-          <Button onClick={() => download(phase.info)}>Try again</Button>
+          {phase.retry && (
+            <Button onClick={() => download(phase.info)}>Try again</Button>
+          )}
         </section>
       )
   }

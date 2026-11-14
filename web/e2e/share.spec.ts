@@ -302,6 +302,25 @@ test('a damaged download written to disk is aborted, never committed', async ({
   }
 })
 
+test('a damaged download that used up the link says so, with no retry', async ({
+  page,
+  context,
+}) => {
+  // One download, the default: spending it on a damaged file must still
+  // report the damage, and not offer a retry the server would refuse.
+  const content = randomBytes(200_000)
+  const { link } = await share(page, 'photos.zip', content)
+  const visit = await context.newPage()
+  let offered = 0
+  visit.on('download', () => offered++)
+  await openDamaged(visit, link, damages[2]![1])
+  await visit.getByRole('button', { name: 'Download' }).click()
+  await expectDiscarded(visit)
+  await expect(visit.getByText('No downloads are left')).toBeVisible()
+  await expect(visit.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+  expect(offered).toBe(0)
+})
+
 test('a link without its key is refused before anything is fetched', async ({
   page,
 }) => {
