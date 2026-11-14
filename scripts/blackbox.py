@@ -593,7 +593,11 @@ def check_access(t):
     body = t.content(burn.id, token)
     after = t.c.request("GET", f"{API}/{burn.id}/meta").status
     t.ok(hidden == 404 and body.status == 200 and body.body == burn.content and after == 404,
-         "the last permitted download still completes, and the file is gone at once", f"{hidden} {body.status} {after}")
+         "the last permitted download still completes", f"{hidden} {body.status} {after}")
+    # The metadata answers 404 for every file without downloads left, burned
+    # or not; the owner token still finds a record that was not removed.
+    gone = t.c.request("DELETE", f"{API}/{burn.id}", headers=burn.bearer).status
+    t.ok(gone == 404, "the file is gone at once: its owner token finds no record", str(gone))
 
 
 def check_upload(t):

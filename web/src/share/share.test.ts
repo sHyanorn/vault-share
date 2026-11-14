@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  decryptMetadata,
   decryptStream,
   deriveKeys,
   encryptMetadata,
@@ -61,6 +62,9 @@ describe('uploadFile', () => {
     expect(request.max_downloads).toBe(2)
     expect(fromBase64Url(request.auth_key)).toHaveLength(32)
     expect(JSON.stringify(request)).not.toContain('notes.txt')
+    // The metadata travels sealed: its bytes do not hold the name.
+    const sentMeta = fromBase64Url(request.meta)
+    expect(new TextDecoder().decode(sentMeta)).not.toContain('notes.txt')
 
     const [id, blob, ownerToken] = vi.mocked(api.uploadContent).mock.calls[0]!
     expect(id).toBe('AAAAAAAAAAAAAAAAAAAAAA')
@@ -75,6 +79,9 @@ describe('uploadFile', () => {
     expect(location?.id).toBe('AAAAAAAAAAAAAAAAAAAAAA')
     // The secret in the link decrypts what was uploaded.
     const keys = await deriveKeys(location!.secret!)
+    expect((await decryptMetadata(keys.metaKey, sentMeta)).name).toBe(
+      'notes.txt',
+    )
     const ciphertext = new Uint8Array(await blob.arrayBuffer())
     expect(
       await collect(decryptStream(streamOf(ciphertext), keys.fileKey)),
@@ -171,7 +178,8 @@ describe('downloadShare', () => {
     expect(chunks).toHaveLength(0)
   })
 
-  it('fails on tampered ciphertext without handing over the partial file', async () => {
+  // Whether a partial file is handed over is up to the sink (save.test.ts).
+  it('fails on tampered ciphertext', async () => {
     const { secret, ciphertext } = await sharedFile()
     const bad = new Uint8Array(ciphertext)
     bad[bad.length - 1] ^= 1

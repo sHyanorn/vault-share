@@ -96,7 +96,7 @@ Every operation must demand the right secret and tell nothing to anyone without 
 | CLNT-07 | Cross-origin reads and a CORS preflight | No `Access-Control-Allow-Origin`; the preflight gets 405 | `cors` |
 | SESS-05 | A create and a read sent from a page on another origin, in Chromium and by script | Before the fix, the create made a file (F18). Now both get 403 `cross_origin`, read from the browser's network log (F24) | [`cross-site.txt`](evidence/cross-site.txt), [`browser-checks.txt`](evidence/browser-checks.txt) |
 | INPV-17 | An API request under a foreign Host, as from a rebound name | 421 `misdirected` at vaultd (F25). Through Caddy, the request never reaches vaultd | `host`, [`probes.txt`](evidence/probes.txt) |
-| BUSL-05 | Burn after reading | The last permitted download completes and the file is gone at once | `access`, [`link-after-burn.png`](evidence/link-after-burn.png) |
+| BUSL-05 | Burn after reading | The last permitted download completes and the file is gone at once: its owner token finds no record afterwards | `access`, [`link-after-burn.png`](evidence/link-after-burn.png) |
 
 **Status**: F18, F24 and F25 fixed.
 
@@ -314,7 +314,7 @@ The scope is behaviour under bad input, storage failures, races, timeouts and pa
 | ERRH-01, ERRH-02 | Error responses in the `errors`, `traversal` and `input` checks, matched against a pattern for stack traces, SQL errors and file contents | No match. API errors are generic JSON; errors from Go's HTTP server and file server are plain status text | `errors`, `traversal`, `input` |
 | INPV-15 | Conflicting `Content-Length` values, an obfuscated `Transfer-Encoding` and an unsupported one, sent to an endpoint whose handler answers 405 | Refused with 400 or 501 before any handler runs, while a well-framed request reaches the handler | `framing`, [`probes.txt`](evidence/probes.txt) |
 | | Failure paths: `TestStorageFailureIsNotTheClientsFault`, `TestGrantedDownloadSurvivesCleanup`, `TestNoDeleteDuringUpload`, `TestSlowUploadStillGetsItsResponse` and `TestStorageRefundWithARealClock` | Pass | [`go-test.txt`](evidence/go-test.txt) |
-| | A download whose ciphertext fails to decrypt | No partial file is handed over (`share.test.ts`) | [`web-test.txt`](evidence/web-test.txt) |
+| | A download whose ciphertext fails to decrypt | No partial file is handed over: the file sink aborts its write and the download sink offers no Blob when the stream fails after its first record (`save.test.ts`) | [`web-test.txt`](evidence/web-test.txt) |
 
 On the INPV-15 row: when a request carries both `Content-Length` and chunked encoding, Go uses the chunked framing. A request hidden after the body is then answered on the sender's own connection. Caddy frames every request it forwards anew, so Caddy and vaultd cannot disagree about where a request ends.
 
