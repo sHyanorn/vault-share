@@ -111,6 +111,10 @@ With a new key:
 
 Without accounts in the database, a missing `account.key` is created as on a first start.
 
+## Account cap
+
+When sign-up answers 503 `capacity`, the instance holds `VAULT_MAX_ACCOUNTS` accounts (10,000 by default). Raise `VAULT_MAX_ACCOUNTS` and restart vaultd. Accounts never expire, and vaultd provides no way to delete an account other than its owner's own deletion.
+
 ## Health check
 
 `GET /healthz` answers 200 when the database answers a query, the storage takes a write (on S3: the bucket answers) and the data volume has at least 128 MiB free; otherwise 503, with the reason in the log. Results are reused for 5 seconds.

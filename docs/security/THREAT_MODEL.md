@@ -92,4 +92,5 @@ Method: STRIDE. It is revised with every feature change.
 - The server is a single instance; its in-memory limiter state resets on restart
 - The S3 credentials in vaultd's environment can read and delete every object in the bucket, so the bucket must belong to vaultd alone; cleanup also deletes any object named like a file id that has no record
 - A group of clients with upload bandwidth can fill the storage quota and keep uploads unavailable until their files expire, up to seven days; their creates also push older audit entries out, at most a few entries per record and quota / 64 KiB records at a time (D021)
+- Sign-ups from many addresses can fill the account cap (`VAULT_MAX_ACCOUNTS`, 10,000 by default) for good: accounts never expire and vaultd has no way to remove another's account, so sign-up answers 503 `capacity` until the operator raises the cap; existing accounts and anonymous sharing are unaffected (F64)
 - An attacker with many IPv6 /64s can saturate the CPU: a measured flood raised another client's p99 latency from under 1 ms to 37 ms. Per-client limits cannot stop this; it needs protection upstream of the server

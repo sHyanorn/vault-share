@@ -67,6 +67,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F61 | 2026-11-14 | Low | Code review | Four security checks could not fail for the reason they gave | Fixed |
 | F62 | 2026-11-14 | Info | Code review | The threat model overstated what an offline guess at an account password costs | Fixed (documentation) |
 | F63 | 2026-11-14 | Info | Code review | The metadata's length gave the server the length of the file name | Fixed |
+| F64 | 2026-11-14 | Low | Code review | Sign-ups from many addresses can fill the account cap for good | Accepted |
 | F65 | 2026-11-14 | Info | Code review | A link whose # arrived as %23 put its key in the request log | Fixed |
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
 | F67 | 2026-11-14 | Info | Code review | JSON bodies were accepted with data after the value | Fixed |
@@ -328,6 +329,10 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F63 The file name's length in the metadata (Info)
 - Impact: the metadata blob was `12 + 16 + len(JSON)` bytes and the server knows the exact size, so the server, a holder of the database and anyone with the file id learned the length of the name, to within the few lengths of the type the browser derives from the extension. With the size, that can tell which of a known set of documents was shared. SPEC said the server knows only the ciphertext size.
 - Fix: the JSON is padded with spaces to a multiple of 1024 bytes, at most to the 4096 bytes the server accepts for the blob (D012), so every name up to about 900 bytes gives a blob of 1052. Old blobs still open, since JSON allows white space after a value, and the SPEC vectors encrypt their JSON directly. A test compares the blob lengths of short, long and CJK names and of names past one KiB; it failed before the fix.
+
+## F64 An account cap that stays full (Low)
+- Impact: sign-up creates accounts while fewer than `VAULT_MAX_ACCOUNTS` exist, 10,000 by default, at five an hour per client. 2,000 client addresses, a /53 of IPv6 /64s, fill the cap within an hour. Accounts never expire and vaultd cannot remove another's account, so every later sign-up answers 503 `capacity` until the operator raises the cap; the sign-ups also take usernames of the attacker's choosing. Existing accounts and anonymous sharing are unaffected. The storage quota, the comparable case, empties itself within seven days.
+- Decision: accepted, without account expiry. The threat model lists it as a residual risk, and the operations manual tells the operator to raise the cap.
 
 ## F65 Keys in the request log through an encoded # (Info)
 - Impact: the request log wrote the decoded path of every request. A mail gateway, messenger or link shortener that rewrites `#` as `%23` makes the browser send the key of a share link, or the owner token of a delete link, in the path; vaultd answered with the web client, which called the link incomplete, and logged the path with the key in clear next to the file id. API paths were logged the same way. It needs a fault outside vault-share, hence Info.
