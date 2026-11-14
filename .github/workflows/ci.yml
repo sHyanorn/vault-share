@@ -257,6 +257,11 @@ jobs:
       - name: End-to-end tests on S3
         run: |
           docker compose up --detach --wait
+          # Chromium cancels requests in flight with ERR_NETWORK_CHANGED when a
+          # host address changes, and the new network's interfaces keep their
+          # IPv6 addresses tentative for a moment after the containers start.
+          ip -6 address show tentative
+          timeout 30 sh -c 'while [ -n "$(ip -6 address show tentative)" ]; do sleep 0.2; done'
           (cd web && npm run e2e)
           # Every test share ends burned or deleted, so the bucket must be
           # empty, and through those deletes: the orphan sweep found nothing.
