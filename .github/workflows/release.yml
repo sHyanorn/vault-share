@@ -71,7 +71,7 @@ jobs:
         with:
           name: client-manifest-attestation
           path: client-manifest.sigstore.json
-  # Only this job can write to the repository, and it runs no build.
+  # Only this job can write the repository's contents, and it runs no build.
   draft:
     needs: attest
     runs-on: ubuntu-latest
