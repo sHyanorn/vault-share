@@ -52,6 +52,25 @@ func TestCreateUser(t *testing.T) {
 	}
 }
 
+// Audit entries outlive their account, so no id is given out twice (F60).
+func TestAccountIDsAreNeverReused(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.CreateUser(ctx, user("first"), 10); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := s.CreateUser(ctx, user("gone"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteUser(ctx, gone, t0); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := s.CreateUser(ctx, user("next"), 10); err != nil || id <= gone {
+		t.Errorf("after account %d was deleted, the next got id %d (%v)", gone, id, err)
+	}
+}
+
 func TestAccountCapHoldsUnderConcurrency(t *testing.T) {
 	s := openTest(t)
 	var created atomic.Int32

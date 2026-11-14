@@ -519,6 +519,50 @@ func TestQuotaMigrationChargesExistingRecords(t *testing.T) {
 	}
 }
 
+// An existing database gives new accounts ids above every id its accounts
+// and audit entries hold, including that of a deleted newest account (F60).
+func TestAccountIDMigrationSkipsAuditedIDs(t *testing.T) {
+	all, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := fstest.MapFS{}
+	for _, name := range []string{"0001_files.sql", "0002_audit.sql", "0003_quota.sql",
+		"0004_accounts.sql", "0005_totp.sql", "0006_account_files.sql"} {
+		data, err := fs.ReadFile(all, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = &fstest.MapFile{Data: data}
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := migrate(ctx, db, before); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO users (id, username, salt, auth_hash, sealed_key, created_at) VALUES
+			(1, 'a', x'00', 'h', x'00', 0), (2, 'b', x'00', 'h', x'00', 0), (3, 'c', x'00', 'h', x'00', 0)`,
+		`DELETE FROM users WHERE id = 3`,
+		`INSERT INTO audit_log (event, user_id, created_at) VALUES ('account.deleted', 3, 0)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db, all); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{db: db, claimed: map[string]bool{}}
+	if id, err := s.CreateUser(ctx, user("d"), 10); err != nil || id != 4 {
+		t.Errorf("first account after the migration got id %d (%v), want 4", id, err)
+	}
+}
+
 // Transactions take the write lock when they begin, so one that reads and
 // then writes never fails because another wrote in between (F39).
 func TestTransactionsThatReadThenWriteSucceed(t *testing.T) {

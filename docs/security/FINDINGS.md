@@ -59,6 +59,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F53 | 2026-11-10 | Info | Code review | An opened password field left empty shares without a password under a hint that asks for one | Open |
 | F54 | 2026-11-10 | Info | Code review | A late answer from an ended session can sign a new session out in the browser | Open |
 | F55 | 2026-11-10 | Info | Code review | A session that ends during an upload leaves the file shared but out of My files | Open |
+| F60 | 2026-11-14 | Low | Code review | A new account could take the id, and with it the audit trail, of a deleted one | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -284,3 +285,7 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F55 A session that ends during an upload (Info)
 - Impact: a file shared while signed in is added to My files before its content is sent. When the session has ended by then, that request is answered 401: the browser signs out while the upload goes on, and the result shows the link with "Could not save it to My files." The file is shared and can be deleted with its delete link, but the account's list never shows it.
 - Status: open.
+
+## F60 Account ids reused after a deletion (Low)
+- Impact: `users.id` was an `INTEGER PRIMARY KEY` without `AUTOINCREMENT`, so SQLite gave a new account the largest id plus one. Once the newest account was deleted, the next sign-up took its id, and with it the deleted account's audit entries, which name accounts by id and stay for 30 days. Anyone could arrange this by signing up, acting and deleting the account. A sealed TOTP secret of the old account would also open under the new one, for someone who can write the database.
+- Fix: ids come from a counter that only grows (D037); migration 0007 starts it above every id in the users table and the audit log. A store test deletes the newest account and creates another, and a migration test starts from a database whose deleted newest account still has audit entries; both failed before the fix.

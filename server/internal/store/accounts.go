@@ -54,11 +54,13 @@ func (s *Store) HasUsers(ctx context.Context) (bool, error) {
 }
 
 // CreateUser inserts the account while fewer than max exist and returns its
-// id, ErrUsernameTaken or ErrCapacity.
+// id, ErrUsernameTaken or ErrCapacity. The id comes from account_ids, so it
+// was never held by an account before (D037).
 func (s *Store) CreateUser(ctx context.Context, u User, max int) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (username, salt, auth_hash, sealed_key, created_at)
-		SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?
+		INSERT INTO users (id, username, salt, auth_hash, sealed_key, created_at)
+		SELECT (SELECT next FROM account_ids WHERE id = 1), ?, ?, ?, ?, ?
+		WHERE (SELECT COUNT(*) FROM users) < ?
 		ON CONFLICT (username) DO NOTHING`,
 		u.Username, u.Salt, u.AuthHash, u.SealedKey, u.CreatedAt.Unix(), max)
 	if err != nil {

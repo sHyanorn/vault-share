@@ -227,3 +227,10 @@
 - Decision: vaultd creates `account.key` only while the users table is empty. With accounts and no key it refuses to start; there is no override setting, the operator restores the key or writes 32 random bytes to the file by hand (docs/OPERATIONS.md). A key of the wrong length stops the start as before. New key files are written to a temporary file, synced and renamed into place. `audit.key` is still created whenever it is missing
 - Rationale: the two-factor secrets (D029) and the device keys (D027) hang on this key, so a silent new one breaks sign-in for accounts that cannot tell why (F49). Whether anything depends on the key is exactly whether an account exists, which makes the check certain, as in D032. Losing `audit.key` costs only the comparison of address hashes across the loss (D018), which does not justify stopping a start
 - Trade-off: a restore must bring the key along with the database, or the instance stays down until the operator decides. The made-up salts of D027 come from the same key, so after a replacement a salt that changed marks a username without an account to someone who recorded salts before
+
+## D037 Account ids are never reused
+- Date: 2026-11-14
+- Decision: a new account takes its id from the one-row table `account_ids`, which a trigger keeps above every id inserted into `users`. Migration 0007 starts it above every id in `users` and in the audit log
+- Rationale: audit entries outlive the account they name (D018), and SQLite gives a table without `AUTOINCREMENT` the largest id plus one, so the sign-up after the newest account's deletion took that account's id and its audit trail (F60). The sealed TOTP secret binds the id as well (D029)
+- Rejected: `AUTOINCREMENT` needs `users` rebuilt. SQLite turns foreign keys off only outside a transaction, and migrations run inside one; with them on, dropping `users` cascades into sessions, recovery codes and tickets and unlinks the account's files
+- Trade-off: an id freed before the upgrade whose audit entries had already expired can be given out once more; nothing refers to it by then

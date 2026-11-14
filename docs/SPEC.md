@@ -135,6 +135,9 @@ users                                -- D026, D027, D029
   totp_secret, totp_pending          -- sealed under a server key; NULL when off
   totp_step, totp_failures, created_at
 
+account_ids                          -- one row: the next account id, above every id used before (D037)
+  id, next
+
 sessions
   token_hash, user_id, created_at, seen_at
 
