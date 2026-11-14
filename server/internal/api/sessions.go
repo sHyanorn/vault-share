@@ -18,9 +18,10 @@ const (
 	sessionCookie = "__Host-vault_session"
 	deviceCookie  = "__Host-vault_device"
 	// deviceCookieAge keeps a browser known to the account for half a year.
-	deviceCookieAge  = 180 * 24 * time.Hour
-	deviceNonceBytes = 16
-	deviceTagBytes   = 16
+	deviceCookieAge = 180 * 24 * time.Hour
+	// deviceSlots bounds the browsers an account knows at once (D036).
+	deviceSlots    = 8
+	deviceTagBytes = 16
 )
 
 // serverKeys are the purpose keys derived from the account key file, so no
@@ -70,30 +71,36 @@ func (a *accounts) fakeSalt(username string) []byte {
 // Device Cookies": a browser that signed in to an account before carries a
 // signed mark of it, and its failures are counted on their own, so a
 // guessing campaign that locks the account for unknown browsers does not
-// lock its owner out.
-func (a *accounts) newDeviceCookie(username string) string {
-	nonce := randomBytes(deviceNonceBytes)
-	return encoding.EncodeToString(append(nonce, a.deviceTag(username, nonce)...))
+// lock its owner out. The mark names one of deviceSlots slots, drawn at
+// random, so an account knows at most that many browsers (D036).
+func (a *accounts) newDeviceCookie(u store.User) string {
+	slot := randomBytes(1)[0] % deviceSlots
+	return encoding.EncodeToString(append([]byte{slot}, a.deviceTag(u, slot)...))
 }
 
-// knownDevice returns the request's device cookie if it marks username.
-func (a *accounts) knownDevice(r *http.Request, username string) (string, bool) {
+// knownDevice returns the request's device cookie if it marks a browser
+// known to u. For a username without an account u is empty, and no cookie
+// marks it.
+func (a *accounts) knownDevice(r *http.Request, u store.User) (string, bool) {
 	c, err := r.Cookie(deviceCookie)
 	if err != nil {
 		return "", false
 	}
-	raw, ok := decodeFixed(c.Value, deviceNonceBytes+deviceTagBytes)
-	if !ok {
+	raw, ok := decodeFixed(c.Value, 1+deviceTagBytes)
+	if !ok || raw[0] >= deviceSlots {
 		return "", false
 	}
-	nonce, tag := raw[:deviceNonceBytes], raw[deviceNonceBytes:]
-	return c.Value, hmac.Equal(tag, a.deviceTag(username, nonce))
+	return c.Value, hmac.Equal(raw[1:], a.deviceTag(u, raw[0]))
 }
 
-// A username never holds a zero byte and the nonce has a fixed length, so
-// no two cookies sign the same input.
-func (a *accounts) deviceTag(username string, nonce []byte) []byte {
-	return mac(a.keys.deviceCookie, append([]byte(username+"\x00"), nonce...))[:deviceTagBytes]
+// deviceTag binds a slot to the account as it signs in now: its name, the
+// hash of its auth secret and its sealed TOTP secret. A password change, a
+// TOTP change or a new account under the name changes them, which ends every
+// cookie issued before (D036). Neither a username nor a PHC string holds a
+// zero byte and the slot has a fixed length, so no two inputs collide.
+func (a *accounts) deviceTag(u store.User, slot byte) []byte {
+	data := append([]byte(u.Username+"\x00"+u.AuthHash+"\x00"), slot)
+	return mac(a.keys.deviceCookie, append(data, u.TOTPSecret...))[:deviceTagBytes]
 }
 
 func setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {

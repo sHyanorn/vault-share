@@ -59,6 +59,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F53 | 2026-11-10 | Info | Code review | An opened password field left empty shares without a password under a hint that asks for one | Open |
 | F54 | 2026-11-10 | Info | Code review | A late answer from an ended session can sign a new session out in the browser | Open |
 | F55 | 2026-11-10 | Info | Code review | A session that ends during an upload leaves the file shared but out of My files | Open |
+| F57 | 2026-11-14 | Low | Code review | Device cookies outlived a password change and could be minted without bound | Fixed |
 | F60 | 2026-11-14 | Low | Code review | A new account could take the id, and with it the audit trail, of a deleted one | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
@@ -286,6 +287,10 @@ Issues found during development, how they were found and how they were fixed. Th
 - Impact: a file shared while signed in is added to My files before its content is sent. When the session has ended by then, that request is answered 401: the browser signs out while the upload goes on, and the result shows the link with "Could not save it to My files." The file is shared and can be deleted with its delete link, but the account's list never shows it.
 - Status: open.
 
+
+## F57 Device cookies that outlived the password (Low)
+- Impact: a device cookie signed only the username and a random nonce, so it stayed valid for half a year whatever happened to the account, and every sign-in minted a new one. Someone who once knew the password could sign in from many addresses, keep the cookies and, after the owner changed the password, guess the new one with five checked guesses per cookie every 15 minutes, where the account allows twenty to all browsers it does not know: eight cookies gave 40. The cookies also counted for a new account under a deleted one's name.
+- Fix: the cookie signs one of eight slots together with the account's auth hash and sealed TOTP secret (D036), so a password change, a TOTP change and a deletion end every cookie issued before, and an account has at most eight. A test signs eight browsers in before each of those changes and counts the checked guesses afterwards, then counts the distinct cookies of 40 sign-ins; it failed before the fix on all four counts. Since the account is now read before the lockouts are asked, another test checks that a username without an account gets exactly the answers of an account reached from a browser it does not know.
 ## F60 Account ids reused after a deletion (Low)
 - Impact: `users.id` was an `INTEGER PRIMARY KEY` without `AUTOINCREMENT`, so SQLite gave a new account the largest id plus one. Once the newest account was deleted, the next sign-up took its id, and with it the deleted account's audit entries, which name accounts by id and stay for 30 days. Anyone could arrange this by signing up, acting and deleting the account. A sealed TOTP secret of the old account would also open under the new one, for someone who can write the database.
 - Fix: ids come from a counter that only grows (D037); migration 0007 starts it above every id in the users table and the audit log. A store test deletes the newest account and creates another, and a migration test starts from a database whose deleted newest account still has audit entries; both failed before the fix.

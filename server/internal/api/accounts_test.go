@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -492,6 +493,131 @@ func TestLoginLockouts(t *testing.T) {
 	}
 	if counts[audit.LoginFailed] != accountFailures+lockoutFailures+lockoutFailures || unknownFailures != lockoutFailures || counts[audit.ClientLocked] < 3 {
 		t.Errorf("audit counts %v, failures for unknown users %d", counts, unknownFailures)
+	}
+}
+
+// guesses sends n wrong auth secrets for username from b and returns how
+// many of them were checked.
+func (b *browser) guesses(username string, n int) int {
+	b.e.t.Helper()
+	checked := 0
+	for range n {
+		status, body := b.send(http.MethodPost, "/api/v1/session",
+			loginRequest{Username: username, Auth: encoding.EncodeToString(randomBytes(32))}, nil)
+		if status == http.StatusUnauthorized && errorCode(body) == "login_failed" {
+			checked++
+		}
+	}
+	return checked
+}
+
+// A device cookie counts only while the account signs in as it did when the
+// cookie was issued, and an account knows at most deviceSlots browsers (F57).
+func TestDeviceCookiesEndWithTheSignInTheyMark(t *testing.T) {
+	e := newAccountEnv(t)
+	// known signs n browsers in to c's account, each from its own address.
+	known := func(c creds, n int) []*browser {
+		t.Helper()
+		browsers := make([]*browser, n)
+		for i := range browsers {
+			browsers[i] = e.browser()
+			if status, _ := browsers[i].login(c.username, c.auth); status != http.StatusOK {
+				t.Fatalf("sign-in %d to %s: %d", i, c.username, status)
+			}
+		}
+		return browsers
+	}
+	// Eight browsers that once signed in get no more checked guesses than
+	// the account allows browsers it does not know.
+	guessed := func(browsers []*browser, username string) int {
+		n := 0
+		for _, b := range browsers {
+			n += b.guesses(username, lockoutFailures)
+		}
+		return n
+	}
+
+	alice := newCreds("alice")
+	owner := e.browser()
+	owner.signup(alice)
+	thieves := known(alice, 8)
+	next := newCreds("alice")
+	if status, body := owner.send(http.MethodPost, "/api/v1/account/password", passwordRequest{
+		Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
+		NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed),
+	}, nil); status != http.StatusOK {
+		t.Fatalf("password change: %d %s", status, body)
+	}
+	if n := guessed(thieves, "alice"); n != accountFailures {
+		t.Errorf("after a password change: %d guesses checked, want %d", n, accountFailures)
+	}
+
+	bob := newCreds("bob")
+	owner = e.browser()
+	owner.signup(bob)
+	thieves = known(bob, 8)
+	owner.enableTOTP(bob)
+	if n := guessed(thieves, "bob"); n != accountFailures {
+		t.Errorf("after two-factor sign-in was turned on: %d guesses checked, want %d", n, accountFailures)
+	}
+
+	carol := newCreds("carol")
+	owner = e.browser()
+	owner.signup(carol)
+	thieves = known(carol, 8)
+	if status, _ := owner.send(http.MethodDelete, "/api/v1/account", confirmRequest{Auth: encoding.EncodeToString(carol.auth)}, nil); status != http.StatusNoContent {
+		t.Fatalf("delete: %d", status)
+	}
+	if status, _ := e.browser().signup(newCreds("carol")); status != http.StatusCreated {
+		t.Fatalf("a new account under the name: %d", status)
+	}
+	if n := guessed(thieves, "carol"); n != accountFailures {
+		t.Errorf("for a new account under a deleted one's name: %d guesses checked, want %d", n, accountFailures)
+	}
+
+	dave := newCreds("dave")
+	e.browser().signup(dave)
+	cookies := map[string]bool{}
+	for _, b := range known(dave, 40) {
+		cookies[b.cookies[deviceCookie]] = true
+	}
+	if len(cookies) > deviceSlots {
+		t.Errorf("40 sign-ins left %d distinct device cookies, want at most %d", len(cookies), deviceSlots)
+	}
+}
+
+// The account is read before the lockouts are asked, yet a username without
+// an account takes the same path as a browser the account does not know, so
+// the answers tell nothing about which names exist.
+func TestLockoutsAnswerUnknownUsernamesAlike(t *testing.T) {
+	e := newAccountEnv(t)
+	e.browser().signup(newCreds("alice"))
+	other := e.browser()
+	other.signup(newCreds("bob"))
+	trace := func(username string) []string {
+		var answers []string
+		try := func(b *browser, n int) {
+			for range n {
+				status, body := b.send(http.MethodPost, "/api/v1/session",
+					loginRequest{Username: username, Auth: encoding.EncodeToString(randomBytes(32))}, nil)
+				answers = append(answers, fmt.Sprintf("%d %s %s", status, errorCode(body), b.last.Get("Retry-After")))
+			}
+		}
+		// A browser known to another account, one with a cookie that does
+		// not verify, then browsers without one.
+		foreign := e.browser()
+		foreign.cookies[deviceCookie] = other.cookies[deviceCookie]
+		try(foreign, lockoutFailures+1)
+		garbled := e.browser()
+		garbled.cookies[deviceCookie] = encoding.EncodeToString(randomBytes(len(other.cookies[deviceCookie]) * 3 / 4))
+		try(garbled, lockoutFailures+1)
+		for range accountFailures {
+			try(e.browser(), 1)
+		}
+		return answers
+	}
+	if known, unknown := trace("alice"), trace("ghost"); strings.Join(known, ", ") != strings.Join(unknown, ", ") {
+		t.Errorf("an account:      %v\nno such account: %v", known, unknown)
 	}
 }
 

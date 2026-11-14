@@ -203,9 +203,17 @@ const (
 // secret, and counts against the same lockouts.
 func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (store.User, authResult) {
 	ctx := r.Context()
+	// The account comes first, since a device cookie counts only for the
+	// account as it signs in now. A username without one is empty here and
+	// takes the path of a browser the account does not know.
+	u, err := a.store.UserByName(ctx, username)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		a.log.Error("load account", "err", err)
+		return store.User{}, authError
+	}
 	clientKey := bucketFrom(ctx) + "|" + username
 	scope, scopeKey := a.accountLocks, username
-	if device, known := a.knownDevice(r, username); known {
+	if device, known := a.knownDevice(r, u); known {
 		scope, scopeKey = a.deviceLocks, device
 	}
 	byClient, why := a.clientLocks.admit(clientKey)
@@ -218,12 +226,6 @@ func (a *accounts) authenticate(r *http.Request, username string, auth []byte) (
 		return store.User{}, why.result()
 	}
 	defer inScope.end()
-	// An attempt that cannot be checked ends uncounted.
-	u, err := a.store.UserByName(ctx, username)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		a.log.Error("load account", "err", err)
-		return store.User{}, authError
-	}
 	ok, err := a.hasher.verify(ctx, u.AuthHash, auth)
 	switch {
 	case errors.Is(err, errBusy):
@@ -299,9 +301,11 @@ func (a *accounts) endPresentedSession(w http.ResponseWriter, r *http.Request) b
 	return true
 }
 
+// setSessionCookies sets the session and marks the browser as known to u as
+// u signs in now, so callers pass u as the change they made left it.
 func (a *accounts) setSessionCookies(w http.ResponseWriter, u store.User, token []byte) {
 	setCookie(w, sessionCookie, encoding.EncodeToString(token), store.SessionLifetime)
-	setCookie(w, deviceCookie, a.newDeviceCookie(u.Username), deviceCookieAge)
+	setCookie(w, deviceCookie, a.newDeviceCookie(u), deviceCookieAge)
 }
 
 // signedIn describes a fresh session, the sealed account key included.
@@ -392,7 +396,7 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.PasswordChanged, u.ID, clientFrom(ctx))
-	u.SealedKey = sealed
+	u.AuthHash, u.SealedKey = encoded, sealed
 	a.setSessionCookies(w, u, token)
 	writeSession(w, http.StatusOK, a.signedIn(u, token))
 }
