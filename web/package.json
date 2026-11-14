@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "test:browsers": "playwright test -c playwright.vectors.config.ts"
   },
   "dependencies": {
     "hash-wasm": "4.12.0",
