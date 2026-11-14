@@ -131,6 +131,40 @@ func TestRequestLogOmitsQueryString(t *testing.T) {
 	}
 }
 
+// A link whose # reached the browser as %23 sends its key in the path, so
+// the log keeps a path only up to its first escaped character, on every
+// route and in a panic's line too (F65).
+func TestLogsCutPathsAtTheFirstEscape(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	web := t.TempDir()
+	writeFile(t, filepath.Join(web, "index.html"), "INDEX")
+	h := newTestRouterWith(t, func(o *Options) {
+		o.WebDir = web
+		o.Logger = log
+	})
+	panics := requestLog(log)(recoverer(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	})))
+	const id, key = "AAAAAAAAAAAAAAAAAAAAAA", "c2VjcmV0LWtleS0xNmJ5dGVz"
+	for _, c := range []struct {
+		h           http.Handler
+		path, shown string
+	}{
+		{h, "/f/" + id + "%23" + key, "/f/" + id},
+		{h, "/d/" + id + "%23" + key, "/d/" + id},
+		{h, "/api/v1/files/" + id + "%23" + key + "/meta", "/api/v1/files/" + id},
+		{h, "/f/" + id + "%2523" + key, "/f/" + id},
+		{panics, "/f/" + id + "%23" + key, "/f/" + id},
+	} {
+		buf.Reset()
+		do(c.h, http.MethodGet, c.path)
+		if out := buf.String(); strings.Contains(out, key) || !strings.Contains(out, `"path":"`+c.shown+`"`) {
+			t.Errorf("GET %s logged %s", c.path, out)
+		}
+	}
+}
+
 func TestPanicIsLoggedAndAnswered(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))

@@ -51,6 +51,7 @@
 - Date: 2026-11-05
 - Decision: the request log records method, path, status, size and duration; no query string, no client address
 - Rationale: download tokens travel in the query string (SPEC §7); client addresses belong in the audit log as keyed hashes (D018)
+- Update: the path is logged as sent up to its first escaped character, in the request log and for a panic. No path vaultd serves holds one, while a share or delete link whose `#` reached the browser as `%23` carries its key there (F65)
 
 ## D011 Supply chain pinning
 - Date: 2026-11-05

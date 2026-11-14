@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -188,7 +189,8 @@ func healthz(check func(context.Context) error) http.HandlerFunc {
 }
 
 // requestLog writes one structured line per request, panics included. The
-// query string is deliberately omitted because download tokens travel in it.
+// query string is deliberately omitted because download tokens travel in
+// it, and the path is cut by logPath.
 func requestLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -197,13 +199,21 @@ func requestLog(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 			log.Info("request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", logPath(r),
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
 		})
 	}
+}
+
+// logPath is the request's path as sent, up to its first escaped
+// character. No path vaultd serves holds one, while a link whose # reached
+// the browser as %23 carries its key there (F65).
+func logPath(r *http.Request) string {
+	path, _, _ := strings.Cut(r.URL.EscapedPath(), "%")
+	return path
 }
 
 // recoverer turns a panic into a 500 and records it through the structured
@@ -221,7 +231,7 @@ func recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 				}
 				log.Error("panic",
 					"method", r.Method,
-					"path", r.URL.Path,
+					"path", logPath(r),
 					"value", fmt.Sprint(rec),
 					"stack", string(debug.Stack()),
 				)

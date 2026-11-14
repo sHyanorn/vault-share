@@ -64,6 +64,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F58 | 2026-11-14 | Low | Code review | A last download that overlapped an earlier one left the burned file stored until the next cleanup | Fixed |
 | F59 | 2026-11-14 | Low | Code review | A code that confirmed a password change, TOTP switch-off or deletion was spent even when the change failed | Fixed |
 | F60 | 2026-11-14 | Low | Code review | A new account could take the id, and with it the audit trail, of a deleted one | Fixed |
+| F65 | 2026-11-14 | Info | Code review | A link whose # arrived as %23 put its key in the request log | Fixed |
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
 
 ## F1 Orphaned ciphertext blobs (High)
@@ -310,6 +311,10 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F60 Account ids reused after a deletion (Low)
 - Impact: `users.id` was an `INTEGER PRIMARY KEY` without `AUTOINCREMENT`, so SQLite gave a new account the largest id plus one. Once the newest account was deleted, the next sign-up took its id, and with it the deleted account's audit entries, which name accounts by id and stay for 30 days. Anyone could arrange this by signing up, acting and deleting the account. A sealed TOTP secret of the old account would also open under the new one, for someone who can write the database.
 - Fix: ids come from a counter that only grows (D037); migration 0007 starts it above every id in the users table and the audit log. A store test deletes the newest account and creates another, and a migration test starts from a database whose deleted newest account still has audit entries; both failed before the fix.
+
+## F65 Keys in the request log through an encoded # (Info)
+- Impact: the request log wrote the decoded path of every request. A mail gateway, messenger or link shortener that rewrites `#` as `%23` makes the browser send the key of a share link, or the owner token of a delete link, in the path; vaultd answered with the web client, which called the link incomplete, and logged the path with the key in clear next to the file id. API paths were logged the same way. It needs a fault outside vault-share, hence Info.
+- Fix: the request log and the panic log keep the path as sent up to its first escaped character (D010), which no path vaultd serves contains. A test requests share, delete and API paths with `%23` and with `%2523` and checks that no key reaches the log; it failed before the fix.
 
 ## F66 Codes on account changes without a length check (Info)
 - Impact: the sign-in's second step refused a code longer than 32 characters, but a password change, an account deletion and turning two-factor sign-in on or off passed any code up to the 16 KiB body limit to the code check, against the rule that every input is checked for length and format. It cost a counted wrong code and nothing more.
