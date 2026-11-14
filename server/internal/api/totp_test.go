@@ -516,6 +516,39 @@ func TestSecondStepFailureCountsAfterHangUp(t *testing.T) {
 	}
 }
 
+// A code that confirms a change is spent with the change: a client that
+// hangs up once its code was checked leaves both done or neither (F59).
+func TestConfirmingCodeGoesWithTheChange(t *testing.T) {
+	e, hangUp := newHangUpEnv(t)
+	alice := newCreds("alice")
+	b := e.browser()
+	b.signup(alice)
+	_, codes := b.enableTOTP(alice)
+
+	// The recovery code is recorded once it is spent.
+	next := newCreds("alice")
+	ctx := hangUp()
+	b.direct(ctx, http.MethodPost, "/api/v1/account/password", passwordRequest{
+		Auth: encoding.EncodeToString(alice.auth), Salt: encoding.EncodeToString(next.salt),
+		NewAuth: encoding.EncodeToString(next.auth), SealedKey: encoding.EncodeToString(next.sealed),
+		Code: codes[0],
+	})
+	if ctx.Err() == nil {
+		t.Fatal("the request was not cancelled")
+	}
+	first, _ := e.browser().send(http.MethodPost, "/api/v1/session",
+		loginRequest{Username: "alice", Auth: encoding.EncodeToString(alice.auth)}, nil)
+	changed := first == http.StatusUnauthorized
+	current := alice
+	if changed {
+		current = next
+	}
+	status, _, body := e.browser().secondStep(current, codes[0])
+	if spent := status != http.StatusOK; spent != changed {
+		t.Errorf("password changed %v, recovery code spent %v: %d %s", changed, spent, status, body)
+	}
+}
+
 // A change to how an account signs in ends its other sessions in its own
 // transaction, so a client that hangs up once the change is made, before
 // the answer, leaves none of them behind (F46). The change is audited after

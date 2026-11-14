@@ -46,10 +46,13 @@ func (s *Store) EnableTOTP(ctx context.Context, userID int64, sealed []byte, ste
 	return enabled && err == nil, err
 }
 
-// DisableTOTP turns two-factor sign-in off and drops the recovery codes.
-// The account's sign-ins restart with r.
-func (s *Store) DisableTOTP(ctx context.Context, userID int64, r Renewal) error {
+// DisableTOTP spends f, turns two-factor sign-in off and drops the recovery
+// codes. The account's sign-ins restart with r.
+func (s *Store) DisableTOTP(ctx context.Context, userID int64, r Renewal, f *Factor) error {
 	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if err := s.spend(ctx, tx, userID, f); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE users SET totp_secret = NULL, totp_pending = NULL WHERE id = ?`, userID); err != nil {
 			return err
@@ -74,8 +77,8 @@ func replaceCodes(ctx context.Context, tx *sql.Tx, userID int64, codeHashes [][]
 	return nil
 }
 
-// The statements that spend a second-step code, alone or in
-// CompleteSecondStep; each changes a row only for a code not yet used.
+// The statements that spend a second-step code; each changes a row only for
+// a code not yet used.
 const (
 	// useTOTPStep takes the step and the account id.
 	useTOTPStep = `UPDATE users SET totp_step = ?1 WHERE id = ?2 AND totp_step < ?1 AND totp_secret IS NOT NULL`
@@ -83,15 +86,33 @@ const (
 	useRecoveryCode = `DELETE FROM recovery_codes WHERE user_id = ? AND code_hash = ?`
 )
 
-// UseTOTPStep records step as used and reports false when it, or a later
-// one, already was: the same code never works twice, even in parallel.
-func (s *Store) UseTOTPStep(ctx context.Context, userID, step int64) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx, useTOTPStep, step, userID))
+// Factor is a second-step code that matched: a TOTP time step, or a
+// recovery code by its hash.
+type Factor struct {
+	Step         int64
+	RecoveryHash []byte
 }
 
-// UseRecoveryCode spends a recovery code and reports whether it was one.
-func (s *Store) UseRecoveryCode(ctx context.Context, userID int64, codeHash []byte) (bool, error) {
-	return s.changed(s.db.ExecContext(ctx, useRecoveryCode, userID, codeHash))
+// spend uses f up in tx, or returns ErrFactorUsed when a step at least as
+// late was used, or the recovery code is gone; the same code never works
+// twice, even in parallel. It runs in the transaction of what the code
+// confirms, so neither happens without the other (F41, F59). A nil f, for a
+// change that asked for no code, spends nothing.
+func (s *Store) spend(ctx context.Context, tx *sql.Tx, userID int64, f *Factor) error {
+	if f == nil {
+		return nil
+	}
+	var spent bool
+	var err error
+	if f.RecoveryHash != nil {
+		spent, err = s.changed(tx.ExecContext(ctx, useRecoveryCode, userID, f.RecoveryHash))
+	} else {
+		spent, err = s.changed(tx.ExecContext(ctx, useTOTPStep, f.Step, userID))
+	}
+	if err == nil && !spent {
+		err = ErrFactorUsed
+	}
+	return err
 }
 
 // RecoveryCodesLeft counts the account's unused recovery codes.
@@ -162,17 +183,8 @@ func (s *Store) CompleteSecondStep(ctx context.Context, st SecondStep, now time.
 		if !ticket {
 			return ErrNotFound
 		}
-		var spent bool
-		if st.RecoveryHash != nil {
-			spent, err = s.changed(tx.ExecContext(ctx, useRecoveryCode, st.UserID, st.RecoveryHash))
-		} else {
-			spent, err = s.changed(tx.ExecContext(ctx, useTOTPStep, st.Step, st.UserID))
-		}
-		if err != nil {
+		if err := s.spend(ctx, tx, st.UserID, &Factor{Step: st.Step, RecoveryHash: st.RecoveryHash}); err != nil {
 			return err
-		}
-		if !spent {
-			return ErrFactorUsed
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT totp_failures FROM users WHERE id = ?`, st.UserID).Scan(&failures); err != nil {
 			return err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -14,7 +15,14 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
-	if used, _ := s.UseTOTPStep(ctx, id, 100); used {
+	useStep := func(step int64) (bool, error) {
+		err := inTx(ctx, s.db, func(tx *sql.Tx) error { return s.spend(ctx, tx, id, &Factor{Step: step}) })
+		if errors.Is(err, ErrFactorUsed) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	if used, _ := useStep(100); used {
 		t.Fatal("a step was used while two-factor sign-in is off")
 	}
 	s.SetPendingTOTP(ctx, id, []byte("sealed"))
@@ -26,7 +34,7 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 16 {
 		wg.Go(func() {
-			if used, err := s.UseTOTPStep(ctx, id, 101); err != nil {
+			if used, err := useStep(101); err != nil {
 				t.Error(err)
 			} else if used {
 				won.Add(1)
@@ -38,7 +46,7 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 		t.Errorf("step 101 used %d times", won.Load())
 	}
 	for step, want := range map[int64]bool{100: false, 101: false, 102: true} {
-		if used, _ := s.UseTOTPStep(ctx, id, step); used != want {
+		if used, _ := useStep(step); used != want {
 			t.Errorf("step %d used %v, want %v", step, used, want)
 		}
 	}
@@ -48,7 +56,7 @@ func TestTOTPStepIsUsedOnce(t *testing.T) {
 	if ok, _ := s.EnableTOTP(ctx, id, []byte("again"), 0, nil, renewal); ok {
 		t.Error("enabled without a pending secret")
 	}
-	if err := s.DisableTOTP(ctx, id, renewal); err != nil {
+	if err := s.DisableTOTP(ctx, id, renewal, nil); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := s.UserByName(ctx, "alice")
@@ -155,6 +163,49 @@ func TestCompleteSecondStepSpendsBothOrNeither(t *testing.T) {
 	}
 }
 
+// A code that confirms a change is spent in the change's transaction: a used
+// code changes nothing, and a change that fails keeps the code (F59).
+func TestChangesSpendTheirCodeWithTheChange(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(s *Store, id int64, f *Factor) error{
+		"password": func(s *Store, id int64, f *Factor) error {
+			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal, f)
+		},
+		"disable": func(s *Store, id int64, f *Factor) error { return s.DisableTOTP(ctx, id, renewal, f) },
+		"delete":  func(s *Store, id int64, f *Factor) error { return s.DeleteUser(ctx, id, t0, f) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openTest(t)
+			id, _ := s.CreateUser(ctx, user("alice"), 10)
+			s.SetPendingTOTP(ctx, id, []byte("sealed"))
+			s.EnableTOTP(ctx, id, []byte("sealed"), 100, [][]byte{[]byte("code")}, Renewal{SessionHash: []byte("first"), Now: t0})
+			unchanged := func() bool {
+				u, err := s.UserByID(ctx, id)
+				n, _ := s.RecoveryCodesLeft(ctx, id)
+				return err == nil && u.AuthHash == user("alice").AuthHash && u.TOTPSecret != nil && n == 1
+			}
+			for _, used := range []*Factor{{Step: 100}, {RecoveryHash: []byte("not-a-code")}} {
+				if err := change(s, id, used); !errors.Is(err, ErrFactorUsed) || !unchanged() {
+					t.Errorf("a used code %+v: %v", used, err)
+				}
+			}
+			// The change fails after the code is spent: both roll back.
+			if _, err := s.db.Exec(`
+				CREATE TRIGGER no_update BEFORE UPDATE ON users BEGIN SELECT RAISE(ABORT, 'refused'); END;
+				CREATE TRIGGER no_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+				t.Fatal(err)
+			}
+			if err := change(s, id, &Factor{RecoveryHash: []byte("code")}); err == nil || !unchanged() {
+				t.Errorf("a change that failed: %v, or it spent the code", err)
+			}
+			s.db.Exec(`DROP TRIGGER no_update; DROP TRIGGER no_delete`)
+			if err := change(s, id, &Factor{RecoveryHash: []byte("code")}); err != nil || unchanged() {
+				t.Errorf("the change with an unused code: %v", err)
+			}
+		})
+	}
+}
+
 // A change to how an account signs in ends the account's sessions and its
 // sign-ins waiting for a second step, and nobody else's, and opens the
 // renewal session in the same transaction: when that session cannot open,
@@ -163,7 +214,7 @@ func TestChangesRestartSignIns(t *testing.T) {
 	ctx := context.Background()
 	for name, change := range map[string]func(s *Store, id int64) error{
 		"password": func(s *Store, id int64) error {
-			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal)
+			return s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal, nil)
 		},
 		"enable": func(s *Store, id int64) error {
 			if ok, err := s.EnableTOTP(ctx, id, []byte("sealed"), 1, nil, renewal); !ok {
@@ -171,7 +222,7 @@ func TestChangesRestartSignIns(t *testing.T) {
 			}
 			return nil
 		},
-		"disable": func(s *Store, id int64) error { return s.DisableTOTP(ctx, id, renewal) },
+		"disable": func(s *Store, id int64) error { return s.DisableTOTP(ctx, id, renewal, nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := openTest(t)

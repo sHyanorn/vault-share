@@ -80,45 +80,72 @@ func (a *accounts) secondFactor(ctx context.Context, userID int64, locks []lock,
 	return authFailed, f, nil
 }
 
-// reauthenticate asks the signed-in owner for the password again, and for
-// a code while two-factor sign-in is on, before a change that could lock
-// them out. Failures count in the session alone (D035). It answers the
-// request itself when that fails.
-func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth []byte, code string) (store.User, bool) {
-	ctx := r.Context()
-	s := sessionFrom(ctx)
+// reauthenticate asks the signed-in owner for the password again before a
+// change that could lock them out. Failures count in the session alone
+// (D035). It answers the request itself when that fails.
+func (a *accounts) reauthenticate(w http.ResponseWriter, r *http.Request, auth []byte) (store.User, bool) {
+	s := sessionFrom(r.Context())
 	u, result := a.authenticate(r, s.user.Username, auth, &s)
 	switch result {
 	case authOK:
+		return u, true
 	case authFailed:
 		writeError(w, http.StatusForbidden, "wrong_password", "the password is wrong")
-		return store.User{}, false
 	default:
 		refuse(w, result)
+	}
+	return store.User{}, false
+}
+
+// confirm makes a change once the signed-in owner has given the password
+// again, and a code while two-factor sign-in is on. change makes the change
+// and spends the code, nil without one, in one transaction, so a code is
+// used up only by a change that happened (F59); it returns
+// store.ErrFactorUsed for a code already used. confirm answers the request
+// itself unless the change was made, and returns the account as it was.
+func (a *accounts) confirm(w http.ResponseWriter, r *http.Request, auth []byte, code, what string, change func(store.User, *store.Factor) error) (store.User, bool) {
+	u, ok := a.reauthenticate(w, r, auth)
+	if !ok {
 		return store.User{}, false
 	}
 	if u.TOTPSecret == nil {
-		return u, true
-	}
-	match := func() (factor, bool, error) { return a.matchFactor(u, code) }
-	result, _, err := a.secondFactor(ctx, u.ID, []lock{a.sessionLock(s, "code")}, match, func(f factor) (bool, error) {
-		if f.recovery != nil {
-			return a.store.UseRecoveryCode(ctx, u.ID, f.recovery)
+		if err := change(u, nil); err != nil {
+			a.changeFailed(w, what, err)
+			return store.User{}, false
 		}
-		return a.store.UseTOTPStep(ctx, u.ID, f.step)
-	})
-	if err != nil {
-		a.log.Error("spend second factor", "err", err)
-	}
-	switch result {
-	case authOK:
 		return u, true
-	case authFailed:
+	}
+	ctx := r.Context()
+	match := func() (factor, bool, error) { return a.matchFactor(u, code) }
+	locks := []lock{a.sessionLock(sessionFrom(ctx), "code")}
+	result, _, err := a.secondFactor(ctx, u.ID, locks, match, func(f factor) (bool, error) {
+		err := change(u, &store.Factor{Step: f.step, RecoveryHash: f.recovery})
+		if errors.Is(err, store.ErrFactorUsed) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+	switch {
+	case err != nil:
+		a.changeFailed(w, what, err)
+	case result == authOK:
+		return u, true
+	case result == authFailed:
 		writeError(w, http.StatusForbidden, "wrong_code", "the code is wrong")
 	default:
 		refuse(w, result)
 	}
 	return store.User{}, false
+}
+
+// changeFailed answers a change that could not be made: busy while every
+// hashing slot is taken, an internal error otherwise.
+func (a *accounts) changeFailed(w http.ResponseWriter, what string, err error) {
+	if errors.Is(err, errBusy) {
+		busy(w)
+		return
+	}
+	internalError(w, a.log, what, err)
 }
 
 type secondStepRequest struct {
@@ -267,7 +294,7 @@ func (a *accounts) totpEnableHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "totp_on", "two-factor sign-in is already on")
 		return
 	}
-	u, ok := a.reauthenticate(w, r, auth, "")
+	u, ok := a.reauthenticate(w, r, auth)
 	if !ok {
 		return
 	}
@@ -338,13 +365,11 @@ func (a *accounts) totpDisableHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "totp_off", "two-factor sign-in is off")
 		return
 	}
-	u, ok := a.reauthenticate(w, r, auth, req.Code)
-	if !ok {
-		return
-	}
 	token := randomBytes(tokenBytes)
-	if err := a.store.DisableTOTP(ctx, u.ID, a.renewal(token)); err != nil {
-		internalError(w, a.log, "disable TOTP", err)
+	u, ok := a.confirm(w, r, auth, req.Code, "disable TOTP", func(u store.User, f *store.Factor) error {
+		return a.store.DisableTOTP(ctx, u.ID, a.renewal(token), f)
+	})
+	if !ok {
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.TOTPDisabled, u.ID, clientFrom(ctx))

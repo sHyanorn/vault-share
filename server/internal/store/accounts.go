@@ -103,11 +103,14 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return u, err
 }
 
-// SetPassword replaces what the account's password protects: the browser's
-// salt, the hash of the auth secret and the sealed account key. The
-// account's sign-ins restart with r.
-func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, authHash string, sealedKey []byte, r Renewal) error {
+// SetPassword spends f and replaces what the account's password protects:
+// the browser's salt, the hash of the auth secret and the sealed account key.
+// The account's sign-ins restart with r.
+func (s *Store) SetPassword(ctx context.Context, userID int64, salt []byte, authHash string, sealedKey []byte, r Renewal, f *Factor) error {
 	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if err := s.spend(ctx, tx, userID, f); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE users SET salt = ?, auth_hash = ?, sealed_key = ? WHERE id = ?`, salt, authHash, sealedKey, userID); err != nil {
 			return err
@@ -138,11 +141,15 @@ func restartSignIns(ctx context.Context, tx *sql.Tx, userID int64, r Renewal) er
 	return insertSession(ctx, tx, r.SessionHash, userID, r.Now, 1)
 }
 
-// DeleteUser removes the account and, through the cascade, its sessions
-// and second-step state. Its files expire at now, so their links stop
-// working and cleanup removes them; a download already granted finishes.
-func (s *Store) DeleteUser(ctx context.Context, userID int64, now time.Time) error {
+// DeleteUser spends f and removes the account and, through the cascade, its
+// sessions and second-step state. Its files expire at now, so their links
+// stop working and cleanup removes them; a download already granted
+// finishes.
+func (s *Store) DeleteUser(ctx context.Context, userID int64, now time.Time, f *Factor) error {
 	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if err := s.spend(ctx, tx, userID, f); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE files SET expires_at = MIN(expires_at, ?), user_id = NULL, entry = NULL WHERE user_id = ?`,
 			now.Unix(), userID); err != nil {

@@ -412,18 +412,16 @@ func (a *accounts) passwordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	u, ok := a.reauthenticate(w, r, auth, req.Code)
-	if !ok {
-		return
-	}
-	encoded, err := a.hasher.hash(ctx, newAuth)
-	if err != nil {
-		busy(w)
-		return
-	}
 	token := randomBytes(tokenBytes)
-	if err := a.store.SetPassword(ctx, u.ID, salt, encoded, sealed, a.renewal(token)); err != nil {
-		internalError(w, a.log, "set password", err)
+	var encoded string
+	u, ok := a.confirm(w, r, auth, req.Code, "set password", func(u store.User, f *store.Factor) error {
+		var err error
+		if encoded, err = a.hasher.hash(ctx, newAuth); err != nil {
+			return err
+		}
+		return a.store.SetPassword(ctx, u.ID, salt, encoded, sealed, a.renewal(token), f)
+	})
+	if !ok {
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.PasswordChanged, u.ID, clientFrom(ctx))
@@ -458,12 +456,10 @@ func (a *accounts) deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	u, ok := a.reauthenticate(w, r, auth, req.Code)
+	u, ok := a.confirm(w, r, auth, req.Code, "delete account", func(u store.User, f *store.Factor) error {
+		return a.store.DeleteUser(ctx, u.ID, a.now(), f)
+	})
 	if !ok {
-		return
-	}
-	if err := a.store.DeleteUser(ctx, u.ID, a.now()); err != nil {
-		internalError(w, a.log, "delete account", err)
 		return
 	}
 	a.audit.RecordAccount(ctx, audit.AccountDeleted, u.ID, clientFrom(ctx))

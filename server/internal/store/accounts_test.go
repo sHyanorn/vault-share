@@ -63,7 +63,7 @@ func TestAccountIDsAreNeverReused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(ctx, gone, t0); err != nil {
+	if err := s.DeleteUser(ctx, gone, t0, nil); err != nil {
 		t.Fatal(err)
 	}
 	if id, err := s.CreateUser(ctx, user("next"), 10); err != nil || id <= gone {
@@ -170,7 +170,7 @@ func TestDeleteUserEndsItsSessions(t *testing.T) {
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
 	s.CreateSession(ctx, []byte("token"), id, t0, 10)
-	if err := s.DeleteUser(ctx, id, t0); err != nil {
+	if err := s.DeleteUser(ctx, id, t0, nil); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -184,7 +184,7 @@ func TestSetPassword(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	id, _ := s.CreateUser(ctx, user("alice"), 10)
-	if err := s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal); err != nil {
+	if err := s.SetPassword(ctx, id, []byte("new-salt"), "$argon2id$new", []byte("new-sealed"), renewal, nil); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := s.UserByName(ctx, "alice")

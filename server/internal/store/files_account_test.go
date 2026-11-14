@@ -70,7 +70,7 @@ func TestDeleteUserExpiresItsFiles(t *testing.T) {
 	}
 	s.KeepFile(ctx, "hers", alice, []byte("entry"), t0)
 	now := t0.Add(time.Hour)
-	if err := s.DeleteUser(ctx, alice, now); err != nil {
+	if err := s.DeleteUser(ctx, alice, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	hers, _ := s.GetFile(ctx, "hers")
