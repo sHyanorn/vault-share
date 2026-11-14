@@ -71,6 +71,7 @@ Issues found during development, how they were found and how they were fixed. Th
 | F65 | 2026-11-14 | Info | Code review | A link whose # arrived as %23 put its key in the request log | Fixed |
 | F66 | 2026-11-14 | Info | Code review | Codes sent with account changes had no length check | Fixed |
 | F67 | 2026-11-14 | Info | Code review | JSON bodies were accepted with data after the value | Fixed |
+| F68 | 2026-11-14 | Low | Code review | A download that failed at Caddy left its token in Caddy's error log | Open |
 
 ## F1 Orphaned ciphertext blobs (High)
 - Impact: the upload handler published the blob before marking the record. When the record had been deleted or purged meanwhile, the blob stayed on disk with no record pointing to it, outside every cleanup rule. Each repetition leaked up to the file size limit, invisible to the database and to any future quota.
@@ -345,3 +346,7 @@ Issues found during development, how they were found and how they were fixed. Th
 ## F67 Data after a JSON body (Info)
 - Impact: the API decoded the first JSON value of a body and ignored whatever followed it, so `{"username":"alice"}anything` was read as a valid request, against the rule that every input is checked for format. No effect was found.
 - Fix: a body must end after its value, but for white space, or it is answered 400. A test sends bodies followed by text, a second object and a second value; it failed before the fix.
+
+## F68 Download tokens in Caddy's error log (Low)
+- Impact: Caddy writes a request that fails at Caddy itself, such as a 502 while vaultd restarts or is unreachable, to its error log at ERROR level with a `request` object whose `uri` keeps the query string, whether or not an access log is on (Caddy 2.11.9, `modules/caddyhttp/server.go`). A download that failed so left its one-time token, valid for five minutes, in `docker compose logs caddy`. The token only fetches ciphertext and spends a download already granted to its holder. The log checks of the test report ran without upstream failures. Found by reading Caddy's source.
+- Fix: Caddy's default log replaces the `token` parameter of a logged URI with `REDACTED` (D020). A CI step stops vaultd, requests content with a made-up token, and requires both the 502 entry with the path and the replaced token in Caddy's log and the token nowhere in it.

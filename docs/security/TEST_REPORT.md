@@ -277,7 +277,7 @@ The scope:
 - whether anyone is alerted.
 
 **Controls**:
-- **Request log**: one JSON line per request, without the query string (D010). Panics go through the same logger. Caddy writes no access log.
+- **Request log**: one JSON line per request, without the query string (D010). Panics go through the same logger. Caddy writes no access log; a request that fails at Caddy goes to its error log with the download token replaced (F68).
 - **Audit log**: audit events carry keyed client hashes (D018). The audit table is bounded, and failure events share a budget (F16).
 - **Warnings**: vaultd warns about a misconfigured proxy and about dropped audit entries.
 

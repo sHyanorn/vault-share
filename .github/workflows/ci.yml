@@ -93,6 +93,18 @@ jobs:
         run: |
           docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt root.crt
           python3 scripts/blackbox.py https://localhost --cafile root.crt --http-url http://localhost
+      # A request that fails at Caddy is logged with its URI (F68). The 502
+      # entry must be there with the token replaced, and the token nowhere.
+      - name: Caddy logs no download token
+        run: |
+          docker compose stop vaultd
+          path=/api/v1/files/AAAAAAAAAAAAAAAAAAAAAA/content
+          token=CHECK$(openssl rand -hex 16)
+          status=$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' "https://localhost$path?token=$token")
+          docker compose logs caddy > caddy.log
+          test "$status" = 502 || { echo "status $status"; exit 1; }
+          grep -F "\"uri\":\"$path?token=REDACTED\"" caddy.log | grep -qF '"status":502' || { cat caddy.log; exit 1; }
+          if grep -F "$token" caddy.log; then exit 1; fi
       - name: Move the stack to S3
         run: |
           docker compose down --volumes

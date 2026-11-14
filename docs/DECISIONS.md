@@ -125,6 +125,7 @@
 - Rationale: SPEC section 8 asks every container to run as a non-root user; binding the privileged ports would have required a capability, and Caddy's `http_port` and `https_port` options exist for exactly this port-forwarding setup
 - Note: HTTP/3 is off because Caddy would advertise the internal port in `Alt-Svc`; a deployment that upgrades from the root-owned Caddy needs fresh `caddy-data` and `caddy-config` volumes
 - Timeouts (F19, F23): `read_header 10s` and `idle 2m`, the values of vaultd's own server, on both ports; the HTTP site is declared in the Caddyfile because the redirect server Caddy adds by itself ignores server options. Bodies and responses are left to vaultd, which gives each transfer a deadline from its size
+- Logs: a request that fails at Caddy, such as a 502 while vaultd is down, goes to its error log with its URI whether or not an access log is on, so the default log replaces the `token` query parameter with `REDACTED` (F68). A CI step stops vaultd, requests content with a token, and requires the 502 entry with the replaced token and the token nowhere
 
 ## D021 Storage quota and per-client storage budget
 - Date: 2026-11-06

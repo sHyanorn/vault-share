@@ -9,6 +9,15 @@
 	default_sni {$VAULT_DOMAIN:localhost}
 	# The container's filesystem is read-only; nothing to install the local root into.
 	skip_install_trust
+	# A request that fails here, such as a 502 while vaultd is down, goes to
+	# the error log with its URI; download tokens travel in the query (F68).
+	log default {
+		format filter {
+			request>uri query {
+				replace token REDACTED
+			}
+		}
+	}
 	servers {
 		# HTTP/3 would advertise the internal port; TCP only.
 		protocols h1 h2
