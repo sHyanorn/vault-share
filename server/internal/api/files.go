@@ -348,9 +348,10 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
-	if f.DownloadsLeft == 0 {
-		h.burn(ctx, id, now)
-	}
+	// The count may have reached zero since f was read, for a download
+	// granted meanwhile, so every redemption asks; burn removes nothing
+	// while downloads or tokens are left (F58).
+	h.burn(ctx, id, now)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
@@ -363,7 +364,7 @@ func (h *files) content(w http.ResponseWriter, r *http.Request) {
 }
 
 // burn removes a file whose downloads are used up, unless another download
-// token is still pending for it. The record goes first so the content can
+// token is still pending for it, and otherwise does nothing. The record goes first so the content can
 // never be taken from a download in progress; a failed content deletion is
 // logged, and cleanup deletes the content once it finds no record for it.
 func (h *files) burn(ctx context.Context, id string, now time.Time) {
