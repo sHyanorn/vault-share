@@ -74,7 +74,7 @@ Each table names the test cases, what was run and what came back. Unless stated 
 
 ### A01:2025 Broken Access Control
 
-There are no accounts. Access rests on three secrets:
+A share needs no account. Access to it rests on three secrets:
 - the 128-bit file id in the link;
 - the auth key derived from the link's secret;
 - the owner token in the delete link.
@@ -152,7 +152,7 @@ The scope is everything that ends up in the build or the running service: Go mod
 **Not covered**:
 - **Images Dependabot never sees**: the Semgrep and ZAP images are pinned inside `run:` commands, so they get no update pull requests and are updated by hand.
 - **OS packages**: the packages of the Alpine-based Caddy image are not scanned.
-- **Build provenance**: no SBOM is published, and reproducible builds are not verified.
+- **Build provenance**: no SBOM is published, and only the web client's build is verified as reproducible (D038).
 
 **Status**: F22 accepted.
 
@@ -348,7 +348,7 @@ The full list is in section 5 of the threat model. These are the ones a reader o
 - **Not covered by this assessment**:
   - OS packages of the Caddy image;
   - an SBOM;
-  - reproducible builds;
+  - a reproducible build of the server; the web client's build is checked in CI (D038);
   - alerting;
   - update pull requests for the Semgrep and ZAP images.
 

@@ -4,7 +4,7 @@ vault-share is an end-to-end encrypted file sharing service. Its security docume
 
 ## Supported Versions
 
-The project has no releases. Only the latest commit on `main` is supported, and fixes land there.
+Only the latest commit on `main` is supported, and fixes land there.
 
 ## Reporting a Vulnerability
 
