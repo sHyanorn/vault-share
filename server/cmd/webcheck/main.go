@@ -177,7 +177,7 @@ func verify(args []string, stdout io.Writer) (int, error) {
 		return 0, fmt.Errorf("manifest: %w", err)
 	}
 	if m.Index == "" || len(m.Files) == 0 {
-		return 0, errors.New("manifest lists no files")
+		return 0, errors.New("manifest has no index or lists no files")
 	}
 	r := report{out: stdout}
 	if *dir != "" {

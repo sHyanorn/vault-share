@@ -21,7 +21,7 @@ func Read(dir, name string) ([]byte, error) {
 		return nil, err
 	}
 	if len(key) != Size {
-		return nil, fmt.Errorf("%s has the wrong length", name)
+		return nil, fmt.Errorf("%s has %d bytes, want %d", name, len(key), Size)
 	}
 	return key, nil
 }
