@@ -79,16 +79,17 @@ func TestOpenIsIdempotentAndPrivate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open %d: %v", i, err)
 		}
+		// SQLite removes the WAL and shared-memory files on close.
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			info, err := os.Stat(path + suffix)
+			if err != nil {
+				t.Fatalf("open %d: %v", i, err)
+			}
+			if mode := info.Mode().Perm(); mode != 0o600 {
+				t.Errorf("%s has mode %o, want 600", path+suffix, mode)
+			}
+		}
 		s.Close()
-	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		info, err := os.Stat(path + suffix)
-		if err != nil {
-			continue // WAL files may be removed on close
-		}
-		if mode := info.Mode().Perm(); mode != 0o600 {
-			t.Errorf("%s has mode %o, want 600", path+suffix, mode)
-		}
 	}
 }
 

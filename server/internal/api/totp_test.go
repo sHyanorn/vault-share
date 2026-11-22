@@ -479,6 +479,9 @@ func TestTOTPAuditAndLogs(t *testing.T) {
 		}
 	}
 	out := logs.String()
+	if !strings.Contains(out, `"path":"/api/v1/session/totp"`) {
+		t.Fatalf("request log missing: %s", out)
+	}
 	for name, secret := range map[string]string{
 		"TOTP secret":   setup.Secret,
 		"otpauth URI":   "otpauth",
