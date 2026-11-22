@@ -243,6 +243,28 @@ describe('a sign-out the server did not confirm', () => {
     expect(storage.size).toBe(0)
   }, 30_000)
 
+  it('is confirmed by a 204 and by no other answer', async () => {
+    await signedUp()
+    const actual = await vi.importActual<typeof api>('./api.ts')
+    vi.mocked(api.signOut).mockImplementation(actual.signOut)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200 })),
+    )
+    vi.useFakeTimers()
+    const answered200 = signOut()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await answered200).toBe(false)
+    expect(signOutOwed()).toBe(true)
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 204 })),
+    )
+    expect(await signOut()).toBe(true)
+    expect(signOutOwed()).toBe(false)
+  }, 30_000)
+
   it('is owed from before its request, in case the page closes', async () => {
     await signedUp()
     let owedAtRequest = false

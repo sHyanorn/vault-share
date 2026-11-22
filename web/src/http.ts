@@ -27,10 +27,14 @@ export function onSessionEnded(handler: (error: ApiError) => void): () => void {
   }
 }
 
+/**
+ * With status, that is the one success status the endpoint answers and any
+ * other answer is an error.
+ */
 export async function request<T>(
   method: string,
   path: string,
-  options: { body?: unknown; ownerToken?: string } = {},
+  options: { body?: unknown; ownerToken?: string; status?: number } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {}
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
@@ -47,7 +51,7 @@ export async function request<T>(
   } catch {
     throw new ApiError(0, 'network')
   }
-  if (!res.ok) {
+  if (!res.ok || (options.status && res.status !== options.status)) {
     const error = new ApiError(res.status, errorCode(await res.text()))
     if (error.code === 'unauthenticated') sessionEnded?.(error)
     throw error

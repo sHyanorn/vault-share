@@ -120,6 +120,9 @@ test('a sign-out that got no answer is sent again at the next load', async () =>
   await expect(page.getByText(pendingSignOut)).toBeHidden()
   expect(await stored(page)).toEqual([])
   expect(await sessionStatus(page)).toBe(401)
+
+  await page.getByRole('button', { name: 'Dismiss' }).click()
+  await expect(page.getByText('You are signed out.')).toBeHidden()
 })
 
 test('a pending sign-out does not end a sign-in made since in another tab', async () => {
@@ -160,6 +163,11 @@ test('a session check that fails is not shown as signed out', async () => {
     await expect(page.getByLabel('Username')).toBeHidden()
     expect(fail.requests).toBe(1)
     expect(await stored(page)).toEqual(['vault-share/account'])
+    for (const path of ['/signin', '/signup']) {
+      await page.goto(path)
+      await expect(page.getByText(unchecked)).toBeVisible()
+      await expect(page.getByLabel('Username')).toBeHidden()
+    }
 
     await page.unroute(session, fail)
     await page.getByRole('button', { name: 'Try again' }).click()

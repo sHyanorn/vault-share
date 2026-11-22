@@ -79,7 +79,7 @@ export function getSession(): Promise<SessionResponse> {
 }
 
 export function signOut(): Promise<void> {
-  return request('DELETE', '/session')
+  return request('DELETE', '/session', { status: 204 })
 }
 
 export function changePassword(req: PasswordRequest): Promise<SessionResponse> {
