@@ -134,9 +134,10 @@ async function signedIn(
 }
 
 /**
- * The account this browser is signed in to, or null. Throws when the server
- * did not say whether the session lasts: the stored key then stays, and so
- * may the session.
+ * The account this browser is signed in to, or null. A stored key that the
+ * session does not open is signed out, so that the session ends with it.
+ * Throws when the server did not say whether the session lasts: the stored
+ * key then stays, and so may the session.
  */
 export async function restore(): Promise<Account | null> {
   const stored = load()
@@ -156,7 +157,7 @@ export async function restore(): Promise<Account | null> {
     // malformed storage: start over
   }
   if (!raw) {
-    forget()
+    await signOut()
     return null
   }
   return accountFrom(resp, raw)

@@ -163,17 +163,21 @@ describe('restore', () => {
     expect((await restore())?.raw).toEqual(account.raw)
   }, 30_000)
 
-  it('forgets the key once the session is gone or no longer matches', async () => {
+  it('signs out when the session does not open the stored key', async () => {
     await signedUp()
     vi.mocked(api.getSession).mockResolvedValueOnce(session())
     expect(await restore()).toBeNull()
+    expect(api.signOut).toHaveBeenCalledTimes(1)
     expect(storage.size).toBe(0)
+  }, 30_000)
 
+  it('forgets the key, and sends no sign-out, once the session is gone', async () => {
     await signedUp()
     vi.mocked(api.getSession).mockRejectedValueOnce(
       new ApiError(401, 'unauthenticated'),
     )
     expect(await restore()).toBeNull()
+    expect(api.signOut).not.toHaveBeenCalled()
     expect(storage.size).toBe(0)
   }, 30_000)
 

@@ -182,3 +182,46 @@ test('a session that could not be checked can still be signed out', async () => 
   expect(await stored(page)).toEqual([])
   expect(await sessionStatus(page)).toBe(401)
 })
+
+/** Leaves tab with a stored key that the session it signs in to does not open. */
+async function withStaleKey(tab: Page) {
+  const key = 'vault-share/account'
+  await signedIn(tab)
+  const old = await tab.evaluate((k) => localStorage.getItem(k), key)
+  await signOut(tab)
+  await signedIn(tab)
+  await tab.evaluate(({ k, v }) => localStorage.setItem(k, v), {
+    k: key,
+    v: old!,
+  })
+}
+
+test('a stored key the session does not open ends the session', async () => {
+  await withStaleKey(page)
+  const sent = failing('DELETE', (route) => route.fallback())
+  await page.route(session, sent)
+  await page.reload()
+  await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible()
+  await expect(page.getByText(pendingSignOut)).toBeHidden()
+  expect(sent.requests).toBe(1)
+  expect(await stored(page)).toEqual([])
+  expect(await sessionStatus(page)).toBe(401)
+  await page.unroute(session, sent)
+})
+
+test('that sign-out stays pending until the server confirms it', async () => {
+  await withStaleKey(page)
+  const drop = failing('DELETE', noAnswer)
+  await page.route(session, drop)
+  await page.reload()
+  await expect(page.getByText(pendingSignOut)).toBeVisible()
+  expect(drop.requests).toBe(2)
+  expect(await stored(page)).toEqual(['vault-share/sign-out'])
+
+  await page.unroute(session, drop)
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('You are signed out.')).toBeVisible()
+  await expect(page.getByText(pendingSignOut)).toBeHidden()
+  expect(await stored(page)).toEqual([])
+  expect(await sessionStatus(page)).toBe(401)
+})

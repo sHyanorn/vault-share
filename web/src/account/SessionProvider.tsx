@@ -77,7 +77,10 @@ function stateOf(account: Account | null): AccountState {
 async function find(): Promise<Found> {
   if (signOutOwed()) return leave()
   try {
-    return { state: stateOf(await restore()) }
+    const account = await restore()
+    if (account) return { state: stateOf(account) }
+    // A key the session did not open was signed out, which may have failed.
+    return { state: { status: 'signed-out', pending: signOutOwed() } }
   } catch {
     return { state: { status: 'unchecked' } }
   }
