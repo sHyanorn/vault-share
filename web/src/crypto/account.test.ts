@@ -64,12 +64,11 @@ describe('account credentials', () => {
 
   it('depend on the salt and normalize the password', async () => {
     const salt = newAccountSalt()
-    const a = await deriveAccountCredentials('café au lait, extra hot', salt)
-    const b = await deriveAccountCredentials('café au lait, extra hot', salt)
-    const c = await deriveAccountCredentials(
-      'café au lait, extra hot',
-      newAccountSalt(),
-    )
+    const nfc = 'café au lait, extra hot'.normalize('NFC')
+    const nfd = nfc.normalize('NFD')
+    const a = await deriveAccountCredentials(nfc, salt)
+    const b = await deriveAccountCredentials(nfd, salt)
+    const c = await deriveAccountCredentials(nfc, newAccountSalt())
     expect(toHex(a.authSecret)).toBe(toHex(b.authSecret))
     expect(toHex(a.authSecret)).not.toBe(toHex(c.authSecret))
     await expect(
