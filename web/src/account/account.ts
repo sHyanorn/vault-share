@@ -133,7 +133,11 @@ async function signedIn(
   }
 }
 
-/** The account this browser is signed in to, or null. */
+/**
+ * The account this browser is signed in to, or null. Throws when the server
+ * did not say whether the session lasts: the stored key then stays, and so
+ * may the session.
+ */
 export async function restore(): Promise<Account | null> {
   const stored = load()
   if (!stored) return null
@@ -141,9 +145,9 @@ export async function restore(): Promise<Account | null> {
   try {
     resp = await api.getSession()
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) forget()
-    if (error instanceof ApiError && error.status !== 0) return null
-    throw error
+    if (!(error instanceof ApiError && error.status === 401)) throw error
+    forget()
+    return null
   }
   let raw: Uint8Array<ArrayBuffer> | null = null
   try {

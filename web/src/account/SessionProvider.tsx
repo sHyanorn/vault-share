@@ -53,6 +53,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       value={{
         state,
         setAccount: (account) => setState(stateOf(account)),
+        check: async () => show(await find()),
         signOut: async () => {
           // Signed out, this repeats a pending sign-out. A key stored since
           // then is a sign-in from another tab, whose session it would end.
@@ -75,7 +76,11 @@ function stateOf(account: Account | null): AccountState {
 /** What a page load finds: an owed sign-out is sent before anything else. */
 async function find(): Promise<Found> {
   if (signOutOwed()) return leave()
-  return { state: stateOf(await restore().catch(() => null)) }
+  try {
+    return { state: stateOf(await restore()) }
+  } catch {
+    return { state: { status: 'unchecked' } }
+  }
 }
 
 /**

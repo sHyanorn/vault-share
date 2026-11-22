@@ -15,6 +15,7 @@ const username = `e2e-${randomBytes(4).toString('hex')}`
 const password = 'correct horse battery staple'
 const session = '**/api/v1/session'
 const pendingSignOut = /^The server did not confirm your sign-out/
+const unchecked = /^Your session could not be checked/
 
 let context: BrowserContext
 let page: Page
@@ -142,4 +143,42 @@ test('a pending sign-out does not end a sign-in made since in another tab', asyn
   await other.reload()
   await expect(account(other)).toBeVisible()
   await other.close()
+})
+
+test('a session check that fails is not shown as signed out', async () => {
+  await signedIn(page)
+  for (const answer of [
+    noAnswer,
+    refused(429, 'rate_limited'),
+    refused(500, 'internal'),
+  ]) {
+    const fail = failing('GET', answer)
+    await page.route(session, fail)
+    await page.goto('/files')
+    await expect(page.getByText(unchecked)).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Sign in' })).toBeHidden()
+    await expect(page.getByLabel('Username')).toBeHidden()
+    expect(fail.requests).toBe(1)
+    expect(await stored(page)).toEqual(['vault-share/account'])
+
+    await page.unroute(session, fail)
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect(account(page)).toBeVisible()
+    await expect(page.getByText(unchecked)).toBeHidden()
+  }
+})
+
+test('a session that could not be checked can still be signed out', async () => {
+  await signedIn(page)
+  const drop = failing('GET', noAnswer)
+  await page.route(session, drop)
+  await page.goto('/')
+  await expect(page.getByText(unchecked)).toBeVisible()
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible()
+  await expect(page.getByText(unchecked)).toBeHidden()
+
+  await page.unroute(session, drop)
+  expect(await stored(page)).toEqual([])
+  expect(await sessionStatus(page)).toBe(401)
 })

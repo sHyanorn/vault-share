@@ -177,13 +177,22 @@ describe('restore', () => {
     expect(storage.size).toBe(0)
   }, 30_000)
 
-  it('asks the server nothing without a stored key, and keeps it offline', async () => {
+  it('asks the server nothing without a stored key', async () => {
     expect(await restore()).toBeNull()
     expect(api.getSession).not.toHaveBeenCalled()
+  })
+
+  it('takes a check that failed for no sign-out, and keeps the key', async () => {
     await signedUp()
-    vi.mocked(api.getSession).mockRejectedValueOnce(new ApiError(0, 'network'))
-    await expect(restore()).rejects.toThrow('network')
-    expect(storage.size).toBe(1)
+    for (const failure of [
+      new ApiError(0, 'network'),
+      new ApiError(429, 'rate_limited'),
+      new ApiError(500, 'internal'),
+    ]) {
+      vi.mocked(api.getSession).mockRejectedValueOnce(failure)
+      await expect(restore()).rejects.toBe(failure)
+      expect([...storage.keys()]).toEqual(['vault-share/account'])
+    }
   }, 30_000)
 
   it('forgets the key at sign-out', async () => {

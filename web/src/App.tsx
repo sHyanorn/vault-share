@@ -35,7 +35,7 @@ export default function App() {
 
 function Shell() {
   const { path } = useRouter()
-  const { state, signOut, notice, setNotice } = useSession()
+  const { state, check, signOut, notice, setNotice } = useSession()
   const signedIn = state.status === 'signed-in'
 
   return (
@@ -82,6 +82,15 @@ function Shell() {
             text="The server did not confirm your sign-out, so your session in this browser may still be open. It ends an hour after its last use."
             actions={[
               { label: 'Try again', busy: 'Signing out…', run: signOut },
+            ]}
+          />
+        )}
+        {state.status === 'unchecked' && (
+          <SessionAlert
+            text="Your session could not be checked. This browser may still be signed in."
+            actions={[
+              { label: 'Try again', busy: 'Checking…', run: check },
+              { label: 'Sign out', busy: 'Signing out…', run: signOut },
             ]}
           />
         )}
@@ -158,6 +167,8 @@ function Page({ path }: { path: string }) {
   const gated = path === '/files' || path === '/account'
   if ((gated || accountPage) && state.status === 'loading')
     return <div className="card placeholder-card" aria-busy="true" />
+  // A sign-in form would say that this browser is signed out.
+  if ((gated || accountPage) && state.status === 'unchecked') return null
   if (path === '/signin') return account ? null : <SignInPage then="/" />
   if (path === '/signup') return account ? null : <SignUpPage />
   if (gated && !account) return <SignInPage />
