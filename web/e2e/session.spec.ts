@@ -37,17 +37,35 @@ function account(tab: Page) {
   return tab.getByRole('link', { name: username })
 }
 
-/** Loads the app in tab and signs in unless it already is. */
+// A sign-in sends two requests, the salt lookup and the sign-in, and the
+// server's sign-in budget refills one request in 6 s. After a shorter wait the
+// lookup takes the one request that has refilled and the sign-in is refused.
+const budgetRefill = 12_000
+const budgetSpent = /^Too many attempts from your network/
+
+/**
+ * Loads the app in tab and signs in unless it already is. Every test is the
+ * same client to the sign-in budget, so a refused sign-in is sent again once
+ * the budget has refilled, for up to a minute.
+ */
 async function signedIn(tab: Page) {
   await tab.goto('/signin')
   const form = tab.getByLabel('Username')
   await expect(form.or(account(tab))).toBeVisible()
-  if (await form.isVisible()) {
-    await form.fill(username)
-    await tab.getByLabel('Password').fill(password)
+  if (!(await form.isVisible())) return
+  await form.fill(username)
+  await tab.getByLabel('Password').fill(password)
+  const failure = tab.locator('form').getByRole('alert')
+  const deadline = Date.now() + 60_000
+  for (;;) {
     await tab.getByRole('button', { name: 'Sign in' }).click()
+    await expect(account(tab).or(failure)).toBeVisible({ timeout: 60_000 })
+    if (await account(tab).isVisible()) return
+    await expect(failure, 'the sign-in failed').toHaveText(budgetSpent)
+    if (Date.now() > deadline)
+      throw new Error('the sign-in was still refused after a minute')
+    await tab.waitForTimeout(budgetRefill)
   }
-  await expect(account(tab)).toBeVisible({ timeout: 60_000 })
 }
 
 async function signOut(tab: Page) {
