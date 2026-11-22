@@ -82,7 +82,7 @@ The exact formats are in D012 and D019.
 1. The browser derives `master = Argon2id(password, salt)` with a random salt per account, then with HKDF-SHA256 the `authSecret` it sends at sign-in and the `wrappingKey` it keeps
 2. A random 256-bit account key, sealed with AES-256-GCM under `wrappingKey`, is stored on the server; the server stores only an Argon2id hash of `authSecret` besides it, so neither the password nor anything that opens the account key reaches it
 3. For each file shared while signed in, the browser seals an entry under the account key, bound to the file id: the share secret, the link key and the delete token. "My files" lists the entries and their encrypted metadata; only the browser opens them
-4. Between page loads the browser keeps the account key sealed under a device key that the server derives from the session token, so it opens only while the session lasts
+4. Between page loads the browser keeps the account key sealed under a device key that the server derives from the session token, so it opens only while the session lasts. A sign-out removes that copy at once and counts as finished only when the server confirms it (D040)
 5. Optional TOTP (RFC 6238) adds a second step at sign-in, with recovery codes (D029)
 
 ### Known limitations (to be documented in the threat model and README)
@@ -168,7 +168,7 @@ The server never sees a file's password (D019); the threat model lists how it ca
 | POST | `/api/v1/session` | Sign in; returns a session, or a ticket when the account has a second step |
 | POST | `/api/v1/session/totp` | Complete a sign-in with a TOTP or recovery code |
 | GET | `/api/v1/session` | The signed-in account and the device key |
-| DELETE | `/api/v1/session` | Sign out |
+| DELETE | `/api/v1/session` | Sign out; 204 with or without a live session |
 | POST | `/api/v1/account/password` | Change the password, which ends every other session |
 | DELETE | `/api/v1/account` | Delete the account and the files it keeps |
 | POST | `/api/v1/account/totp/setup` | Draw a TOTP secret for an authenticator app |
@@ -225,7 +225,7 @@ Sharing needs no account. With one, every file you share appears under My files,
 
 - **The password stays in the browser.** Argon2id turns it into a master key, from which the browser derives the secret it signs in with and the key that seals a random account key. The server hashes that secret again with Argon2id and stores the sealed account key; neither opens anything.
 - **My files.** For each file the browser seals the share secret, the link key and the delete token under the account key, bound to the file id. The server lists these entries; only your browser opens them, and through them the names.
-- **Sessions.** An HttpOnly `__Host-` cookie with SameSite=Strict, ending after an hour idle or a day in all. Between page loads the browser keeps the account key sealed under a key the server releases only to the live session.
+- **Sessions.** An HttpOnly `__Host-` cookie with SameSite=Strict, ending after an hour idle or a day in all. Between page loads the browser keeps the account key sealed under a key the server releases only to the live session. A sign-out the server did not confirm is shown as pending and sent again, and a session that could not be checked is shown as such, not as signed out.
 - **Two-factor sign-in.** Optional TOTP with any authenticator app, and ten one-time recovery codes.
 
 There is no password reset: a forgotten password loses the account and its list, while the links you shared keep working. `VAULT_SIGNUP=closed` turns sign-ups off.

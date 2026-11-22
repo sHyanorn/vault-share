@@ -63,3 +63,5 @@
 - [x] Second implementation of the share format, with fixed vectors for malformed streams
 - [x] Damaged downloads reported as such (F69)
 - [x] Normalize share passwords (F70)
+- [x] Failed sign-outs kept pending and sent again (F71)
+- [x] Failed session checks shown as such (F72)
