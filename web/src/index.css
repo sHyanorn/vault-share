@@ -421,6 +421,11 @@ button {
   color: var(--danger);
 }
 
+.link-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Progress */
 
 .progress {
@@ -672,6 +677,24 @@ button {
   color: var(--muted);
   font-size: 20px;
   line-height: 1;
+}
+
+.notice.alert {
+  flex-direction: column;
+  gap: 10px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
+.notice.alert .actions {
+  display: flex;
+  gap: 18px;
+}
+
+.notice.alert .link-btn {
+  margin: 0;
+  color: var(--accent);
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .fine {

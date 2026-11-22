@@ -17,6 +17,7 @@ import {
   restore,
   signIn,
   signOut,
+  signOutOwed,
   signUp,
 } from './account.ts'
 import * as api from './api.ts'
@@ -50,6 +51,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 function session(over: Partial<api.SessionResponse> = {}): api.SessionResponse {
@@ -189,6 +191,70 @@ describe('restore', () => {
     await signOut()
     expect(storage.size).toBe(0)
     expect(api.signOut).toHaveBeenCalled()
+  }, 30_000)
+})
+
+describe('a sign-out the server did not confirm', () => {
+  // No answer queued by one test is left for the next.
+  beforeEach(() => void vi.mocked(api.signOut).mockReset())
+
+  const failures = [
+    new ApiError(0, 'network'),
+    new ApiError(429, 'rate_limited'),
+  ]
+
+  it('is sent once more, a second later, and stays owed', async () => {
+    await signedUp()
+    for (const failure of failures)
+      vi.mocked(api.signOut).mockRejectedValueOnce(failure)
+    vi.useFakeTimers()
+    const confirmed = signOut()
+    await vi.advanceTimersByTimeAsync(999)
+    expect(api.signOut).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await confirmed).toBe(false)
+    expect(api.signOut).toHaveBeenCalledTimes(2)
+    expect([...storage.keys()]).toEqual(['vault-share/sign-out'])
+    expect(storage.get('vault-share/sign-out')).toBe('1')
+    expect(signOutOwed()).toBe(true)
+  }, 30_000)
+
+  it('leaves nothing owed once the second attempt is confirmed', async () => {
+    await signedUp()
+    vi.mocked(api.signOut).mockRejectedValueOnce(new ApiError(500, 'internal'))
+    vi.useFakeTimers()
+    const confirmed = signOut()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await confirmed).toBe(true)
+    expect(api.signOut).toHaveBeenCalledTimes(2)
+    expect(storage.size).toBe(0)
+  }, 30_000)
+
+  it('is owed from before its request, in case the page closes', async () => {
+    await signedUp()
+    let owedAtRequest = false
+    vi.mocked(api.signOut).mockImplementationOnce(async () => {
+      owedAtRequest = signOutOwed()
+    })
+    expect(await signOut()).toBe(true)
+    expect(owedAtRequest).toBe(true)
+    expect(signOutOwed()).toBe(false)
+  }, 30_000)
+
+  it('is no longer owed after a sign-in, which ends the old session', async () => {
+    const { sent } = await signedUp()
+    for (const failure of failures)
+      vi.mocked(api.signOut).mockRejectedValueOnce(failure)
+    vi.useFakeTimers()
+    const confirmed = signOut()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await confirmed).toBe(false)
+    vi.useRealTimers()
+    vi.mocked(api.signIn).mockResolvedValueOnce(
+      session({ sealed_key: sent.sealed_key }),
+    )
+    await signIn('alice', password)
+    expect([...storage.keys()]).toEqual(['vault-share/account'])
   }, 30_000)
 })
 

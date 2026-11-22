@@ -1,20 +1,36 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { onSessionEnded } from '../http.ts'
 import { describeError } from '../ui/errors.ts'
-import { forget, restore, type Account } from './account.ts'
+import {
+  forget,
+  remembered,
+  restore,
+  signOut,
+  signOutOwed,
+  type Account,
+} from './account.ts'
 import { SessionContext, type AccountState } from './session.ts'
+
+/** A state to show and, with it, something to tell the user once. */
+interface Found {
+  state: AccountState
+  notice?: string
+}
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AccountState>({ status: 'loading' })
   const [notice, setNotice] = useState<string | null>(null)
 
+  function show(found: Found) {
+    setState(found.state)
+    if (found.notice) setNotice(found.notice)
+  }
+
   useEffect(() => {
     let cancelled = false
-    restore()
-      .catch(() => null)
-      .then((account) => {
-        if (!cancelled) setState(stateOf(account))
-      })
+    void find().then((found) => {
+      if (!cancelled) show(found)
+    })
     return () => {
       cancelled = true
     }
@@ -37,6 +53,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       value={{
         state,
         setAccount: (account) => setState(stateOf(account)),
+        signOut: async () => {
+          // Signed out, this repeats a pending sign-out. A key stored since
+          // then is a sign-in from another tab, whose session it would end.
+          const overtaken = state.status === 'signed-out' && remembered()
+          show(await (overtaken ? find() : leave()))
+        },
         notice,
         setNotice,
       }}
@@ -48,4 +70,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
 function stateOf(account: Account | null): AccountState {
   return account ? { status: 'signed-in', account } : { status: 'signed-out' }
+}
+
+/** What a page load finds: an owed sign-out is sent before anything else. */
+async function find(): Promise<Found> {
+  if (signOutOwed()) return leave()
+  return { state: stateOf(await restore().catch(() => null)) }
+}
+
+/**
+ * Signs out. Of a sign-out that was owed the user has been told that it
+ * did not finish, so they are told when it does.
+ */
+async function leave(): Promise<Found> {
+  const owed = signOutOwed()
+  const confirmed = await signOut()
+  return {
+    state: { status: 'signed-out', pending: !confirmed },
+    notice: owed && confirmed ? 'You are signed out.' : undefined,
+  }
 }

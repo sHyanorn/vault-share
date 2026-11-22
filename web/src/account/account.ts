@@ -35,6 +35,11 @@ export interface Account {
 
 const usernamePattern = /^[a-z0-9][a-z0-9._-]{2,31}$/
 const storageKey = 'vault-share/account'
+// Present while this browser owes the server a sign-out (D040). Its value
+// says nothing.
+const signOutKey = 'vault-share/sign-out'
+// The wait a 429 for an empty request budget asks for (Retry-After: 1).
+const signOutRetryDelay = 1000
 
 /** Usernames are lowercase; what the user types is read that way. */
 export function normalizeUsername(username: string): string {
@@ -153,9 +158,49 @@ export async function restore(): Promise<Account | null> {
   return accountFrom(resp, raw)
 }
 
-export async function signOut(): Promise<void> {
+/**
+ * Signs this browser out. False means the server did not confirm it: the
+ * session may last, and the sign-out stays owed for the next page load.
+ */
+export async function signOut(): Promise<boolean> {
   forget()
-  await api.signOut()
+  // Owed from before the request, so that a page closed meanwhile leaves it.
+  try {
+    localStorage.setItem(signOutKey, '1')
+  } catch {
+    // Storage may be off; the sign-out is then owed until the page closes.
+  }
+  if (await endSession()) return true
+  await new Promise((resolve) => setTimeout(resolve, signOutRetryDelay))
+  return endSession()
+}
+
+async function endSession(): Promise<boolean> {
+  try {
+    await api.signOut()
+  } catch {
+    return false
+  }
+  try {
+    localStorage.removeItem(signOutKey)
+  } catch {
+    // nothing stored
+  }
+  return true
+}
+
+/** Whether a sign-out from this browser still waits for the server. */
+export function signOutOwed(): boolean {
+  try {
+    return localStorage.getItem(signOutKey) !== null
+  } catch {
+    return false
+  }
+}
+
+/** Whether this browser keeps an account key. */
+export function remembered(): boolean {
+  return load() !== null
 }
 
 /** Throws ApiError 403 wrong_password or wrong_code. */
@@ -243,6 +288,8 @@ async function remember(
   const sealed = await sealForDevice(fromBase64Url(resp.device_key), raw)
   try {
     localStorage.setItem(storageKey, toBase64Url(sealed))
+    // The server ended the session this browser held, so no sign-out is owed.
+    localStorage.removeItem(signOutKey)
   } catch {
     // Storage may be off; the account then lasts until the page closes.
   }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { SessionProvider } from './account/SessionProvider.tsx'
 import { useSession } from './account/session.ts'
 import AccountPage from './pages/AccountPage.tsx'
@@ -35,7 +35,7 @@ export default function App() {
 
 function Shell() {
   const { path } = useRouter()
-  const { state, notice, setNotice } = useSession()
+  const { state, signOut, notice, setNotice } = useSession()
   const signedIn = state.status === 'signed-in'
 
   return (
@@ -77,6 +77,14 @@ function Shell() {
         )}
       </header>
       <main className="stage">
+        {state.status === 'signed-out' && state.pending && (
+          <SessionAlert
+            text="The server did not confirm your sign-out, so your session in this browser may still be open. It ends an hour after its last use."
+            actions={[
+              { label: 'Try again', busy: 'Signing out…', run: signOut },
+            ]}
+          />
+        )}
         {notice && (
           <div className="notice enter" role="status">
             <span>{notice}</span>
@@ -91,6 +99,45 @@ function Shell() {
         )}
         <Page path={path} />
       </main>
+    </div>
+  )
+}
+
+interface AlertAction {
+  label: string
+  /** The label while the action runs. */
+  busy: string
+  run: () => Promise<void>
+}
+
+/** What the user must know about the session, and what they can do. */
+function SessionAlert({
+  text,
+  actions,
+}: {
+  text: string
+  actions: AlertAction[]
+}) {
+  const [running, setRunning] = useState<string | null>(null)
+  return (
+    <div className="notice alert enter" role="alert">
+      <span>{text}</span>
+      <div className="actions">
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            className="link-btn"
+            disabled={running !== null}
+            onClick={() => {
+              setRunning(action.label)
+              void action.run().finally(() => setRunning(null))
+            }}
+          >
+            {running === action.label ? action.busy : action.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

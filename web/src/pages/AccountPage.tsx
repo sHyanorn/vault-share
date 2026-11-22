@@ -5,7 +5,6 @@ import {
   disableTotp,
   enableTotp,
   setupTotp,
-  signOut,
   type Account,
 } from '../account/account.ts'
 import { useSession } from '../account/session.ts'
@@ -25,9 +24,10 @@ import { useRouter } from '../ui/router.ts'
 type Panel = 'totp' | 'password' | 'delete' | null
 
 export default function AccountPage({ account }: { account: Account }) {
-  const { setAccount, setNotice } = useSession()
+  const { setAccount, signOut, setNotice } = useSession()
   const { navigate } = useRouter()
   const [panel, setPanel] = useState<Panel>(null)
+  const [leaving, setLeaving] = useState(false)
   const [codes, setCodes] = useState<string[] | null>(null)
   const [totpSetup, setTotpSetup] = useState<Promise<TotpSetup> | null>(null)
 
@@ -48,8 +48,8 @@ export default function AccountPage({ account }: { account: Account }) {
   }
 
   async function leave() {
-    await signOut().catch(() => {})
-    setAccount(null)
+    setLeaving(true)
+    await signOut()
     navigate('/')
   }
 
@@ -108,8 +108,13 @@ export default function AccountPage({ account }: { account: Account }) {
         </Setting>
       </div>
       <div className="footer-actions">
-        <button type="button" className="link-btn" onClick={leave}>
-          Sign out
+        <button
+          type="button"
+          className="link-btn"
+          disabled={leaving}
+          onClick={leave}
+        >
+          {leaving ? 'Signing out…' : 'Sign out'}
         </button>
         <button
           type="button"
