@@ -26,7 +26,7 @@ const (
 // User is an account. AuthHash is the Argon2id hash of the auth secret in
 // the PHC string format; Salt and SealedKey are the browser's (D026).
 // TOTPSecret is sealed under a server key and nil while two-factor sign-in
-// is off; TOTPStep is the last time step a code was accepted for.
+// is off.
 type User struct {
 	ID         int64
 	Username   string
@@ -35,15 +35,14 @@ type User struct {
 	SealedKey  []byte
 	CreatedAt  time.Time
 	TOTPSecret []byte
-	TOTPStep   int64
 }
 
-const userColumns = `u.id, u.username, u.salt, u.auth_hash, u.sealed_key, u.created_at, u.totp_secret, u.totp_step`
+const userColumns = `u.id, u.username, u.salt, u.auth_hash, u.sealed_key, u.created_at, u.totp_secret`
 
 func scanUser(scan func(...any) error, extra ...any) (User, error) {
 	var u User
 	var created int64
-	err := scan(append([]any{&u.ID, &u.Username, &u.Salt, &u.AuthHash, &u.SealedKey, &created, &u.TOTPSecret, &u.TOTPStep}, extra...)...)
+	err := scan(append([]any{&u.ID, &u.Username, &u.Salt, &u.AuthHash, &u.SealedKey, &created, &u.TOTPSecret}, extra...)...)
 	u.CreatedAt = time.Unix(created, 0).UTC()
 	return u, err
 }
