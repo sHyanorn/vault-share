@@ -186,6 +186,21 @@ describe('restore', () => {
     expect(api.getSession).not.toHaveBeenCalled()
   })
 
+  it('takes a stored value that is not base64url for no key, and sends nothing', async () => {
+    storage.set('vault-share/account', 'not base64url!')
+    expect(await restore()).toBeNull()
+    expect(api.getSession).not.toHaveBeenCalled()
+    expect(api.signOut).not.toHaveBeenCalled()
+  })
+
+  it('signs out a stored value of the wrong length like a key that does not open', async () => {
+    storage.set('vault-share/account', toBase64Url(randomBytes(16)))
+    vi.mocked(api.getSession).mockResolvedValueOnce(session())
+    expect(await restore()).toBeNull()
+    expect(api.signOut).toHaveBeenCalledTimes(1)
+    expect(storage.size).toBe(0)
+  })
+
   it('takes a check that failed for no sign-out, and keeps the key', async () => {
     await signedUp()
     for (const failure of [
@@ -263,6 +278,7 @@ describe('a sign-out the server did not confirm', () => {
     )
     expect(await signOut()).toBe(true)
     expect(signOutOwed()).toBe(false)
+    vi.mocked(api.signOut).mockReset()
   }, 30_000)
 
   it('is owed from before its request, in case the page closes', async () => {
