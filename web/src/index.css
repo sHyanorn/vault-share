@@ -674,7 +674,7 @@ button {
 
 .notice button {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--text);
   font-size: 20px;
   line-height: 1;
 }
@@ -692,7 +692,7 @@ button {
 
 .notice.alert .link-btn {
   margin: 0;
-  color: var(--accent);
+  color: var(--accent-strong);
   font-size: inherit;
   line-height: inherit;
 }
