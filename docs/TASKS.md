@@ -65,3 +65,4 @@
 - [x] Normalize share passwords (F70)
 - [x] Failed sign-outs kept pending and sent again (F71)
 - [x] Failed session checks shown as such (F72)
+- [x] Stored keys the session does not open signed out (F73)
